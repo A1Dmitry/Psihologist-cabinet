@@ -1,29 +1,30 @@
 # Psihologist-cabinet
 
-Портал кабинетов психологов (клиентское SPA): каталог, запись, оплата/аванс, напоминания с подтверждением, перенос с согласием клиента, шифрование PII ключом из пароля психолога.
+Портал кабинетов психологов (SPA): каталог, запись, оплата/аванс, напоминания, перенос с согласием, шифрование PII.
+
+**Рабочий репозиторий:** https://github.com/A1Dmitry/Psihologist-cabinet  
+**Целевой (позже):** https://github.com/mikhailouskayanataliya-collab/Psihologist-cabinet
 
 ## Запуск
 
 ```bash
 python3 -m http.server 8765
 # или
-./serve.sh
+chmod +x serve.sh && ./serve.sh
 ```
 
-Откройте http://127.0.0.1:8765/
+Открыть: http://127.0.0.1:8765/
 
-## Архитектура
+## Структура
 
-- **MVVM** + Code First (`js/models`, `js/viewmodels`, `js/core/dbContext.js`)
-- **Изоляция кабинетов** по `psychologistId`
-- **Шифрование клиентов**: PBKDF2 + AES-GCM
-
-## Целевой репозиторий
-
-https://github.com/mikhailouskayanataliya-collab/Psihologist-cabinet
-
-Рабочая копия через подключённый GitHub-аккаунт (A1Dmitry).
+- `index.html` — UI
+- `js/models` — Code First
+- `js/core/dbContext.js` — хранилище
+- `js/viewmodels` — MVVM
+- `js/services` — auth, crypto, vault, payment, reminders, fraud
 
 ## Демо
 
-Вход психолога: email + код + **пароль** (ключ сейфа).
+Вход психолога: email + код + пароль (ключ AES).
+
+Полный исходник также в артефактах проекта (`portal/`).
