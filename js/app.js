@@ -509,7 +509,11 @@ function renderCabLink() {
 
 function renderBooking() {
   const slug = route.params.slug;
-  if (slug) bookingVm.loadBySlug(slug);
+  // ==== НОВАЯ ФУНКЦИОНАЛЬНОСТЬ: сохраняем состояние формы записи ====
+  // Перерисовка вызывается после выбора услуги, даты и времени. Повторный
+  // loadBySlug сбрасывал введённые данные и делал отправку записи невозможной.
+  if (slug && bookingVm.psychologist?.slug !== slug) bookingVm.loadBySlug(slug);
+  // ==== КОНЕЦ новой функциональности ====
   if (!bookingVm.psychologist) {
     $('#book-body').innerHTML = '<div class="text-center py-20 text-slate-400">Психолог не найден. <button class="text-indigo-600" onclick="navigate(\'portal\')">К каталогу</button></div>';
     return;
