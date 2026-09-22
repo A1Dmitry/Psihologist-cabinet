@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ПсихоПортал — кабинеты психологов</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+          colors: {
+            indigo: { 50:'#eef2ff',100:'#e0e7ff',600:'#4f46e5',700:'#4338ca' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: Inter, system-ui, sans-serif; }
+    .line-clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+    .modal-bg { background: rgba(15,23,42,.45); backdrop-filter: blur(4px); }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased min-h-screen">
+  <div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] hidden"></div>
+
+  <!-- ========== PORTAL ========== -->
+  <div id="page-portal" class="page hidden">
+    <header class="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-100">
+      <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
+        <button onclick="navigate('portal')" class="font-bold text-lg text-indigo-700 tracking-tight">ПсихоПортал</button>
+        <div class="flex items-center gap-3" id="nav-auth-area"></div>
+      </div>
+    </header>
+    <main class="max-w-6xl mx-auto px-4 py-10">
+      <div class="text-center mb-10">
+        <h1 class="text-3xl sm:text-4xl font-bold text-slate-900 mb-3">Портал психологов</h1>
+        <p class="text-slate-600 max-w-xl mx-auto">Запишитесь к специалисту или откройте свой кабинет: расписание, клиенты, Google Meet и услуги.</p>
+      </div>
+      <div class="flex flex-col sm:flex-row gap-3 mb-8 max-w-2xl mx-auto">
+        <input id="portal-search" type="search" placeholder="Поиск по имени, специализации…" class="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300">
+        <select id="portal-city" class="px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300">
+          <option value="">Все города</option>
+        </select>
+      </div>
+      <div id="portal-list" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5"></div>
+      <p class="text-center text-xs text-slate-400 mt-12">
+        Демо: natalia@example.com или ivan@example.com + пароль (задайте при первом входе) ·
+        <button type="button" id="btn-open-reply-demo" class="underline hover:text-indigo-600">ответ на напоминание</button> ·
+        <button onclick="resetPortalData()" class="underline hover:text-rose-500">сбросить данные</button>
+      </p>
+    </main>
+  </div>
+
+  <!-- ========== AUTH ========== -->
+  <div id="page-auth" class="page hidden">
+    <div class="min-h-screen flex items-center justify-center px-4 py-12">
+      <div class="w-full max-w-md bg-white rounded-2xl border border-slate-100 shadow-sm p-8">
+        <button onclick="navigate('portal')" class="text-sm text-slate-400 hover:text-indigo-600 mb-6">← На портал</button>
+        <div class="flex gap-2 mb-6">
+          <button data-auth-mode="login" class="flex-1 py-2 rounded-full text-sm font-medium bg-indigo-600 text-white">Вход</button>
+          <button data-auth-mode="register" class="flex-1 py-2 rounded-full text-sm font-medium bg-slate-100">Регистрация</button>
+        </div>
+        <h1 id="auth-title" class="text-2xl font-bold mb-1">Вход в кабинет</h1>
+        <p id="auth-subtitle" class="text-sm text-slate-500 mb-6">Войдите по коду, отправленному на email</p>
+
+        <div id="auth-error" class="hidden mb-4 text-sm text-rose-600 bg-rose-50 px-3 py-2 rounded-lg"></div>
+        <div id="auth-demo-code" class="hidden mb-4 text-sm bg-amber-50 text-amber-900 px-3 py-2 rounded-lg"></div>
+
+        <div id="auth-step-email" class="space-y-4">
+          <div>
+            <label class="text-sm font-medium">Email *</label>
+            <input id="auth-email" type="email" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="you@email.com">
+          </div>
+          <button id="auth-send" class="w-full py-3 rounded-full bg-indigo-600 text-white font-medium hover:bg-indigo-700">Получить код</button>
+        </div>
+
+        <div id="auth-step-code" class="hidden space-y-4">
+          <div>
+            <label class="text-sm font-medium">Код из письма *</label>
+            <input id="auth-code" type="text" inputmode="numeric" maxlength="6" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300 font-mono text-lg tracking-widest" placeholder="000000">
+          </div>
+          <div>
+            <label class="text-sm font-medium">Пароль кабинета * <span class="text-slate-400 font-normal">(ключ шифрования клиентов)</span></label>
+            <input id="auth-password" type="password" minlength="6" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="минимум 6 символов">
+            <p class="text-xs text-slate-400 mt-1">Пароль не хранится: из него выводится ключ AES. Без пароля чужие не прочитают ваших клиентов.</p>
+          </div>
+          <div id="auth-reg-fields" class="hidden space-y-3">
+            <div>
+              <label class="text-sm font-medium">ФИО *</label>
+              <input id="auth-fullname" type="text" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="Как в кабинете">
+            </div>
+            <div>
+              <label class="text-sm font-medium">Телефон</label>
+              <input id="auth-phone" type="tel" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300">
+            </div>
+            <div>
+              <label class="text-sm font-medium">Специализация</label>
+              <input id="auth-spec" type="text" value="Психолог" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300">
+            </div>
+            <div>
+              <label class="text-sm font-medium">Город</label>
+              <input id="auth-city" type="text" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="Гродно">
+            </div>
+          </div>
+          <button id="auth-confirm" class="w-full py-3 rounded-full bg-indigo-600 text-white font-medium hover:bg-indigo-700">Подтвердить</button>
+          <button id="auth-back-email" type="button" class="w-full text-sm text-slate-500 hover:text-indigo-600">← Другой email</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== CABINET ========== -->
+  <div id="page-cabinet" class="page hidden">
+    <div class="flex min-h-screen">
+      <aside class="w-56 bg-slate-900 text-white flex-shrink-0 hidden md:flex flex-col">
+        <div class="p-5 border-b border-slate-700">
+          <div class="text-sm font-semibold" id="cab-name">Психолог</div>
+          <div class="text-[10px] text-slate-400 mt-0.5" id="cab-spec">Кабинет</div>
+        </div>
+        <nav class="flex-1 p-3 space-y-0.5 text-sm">
+          <button data-tab="home" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg bg-slate-800 font-medium">Главная</button>
+          <button data-tab="schedule" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Расписание</button>
+          <button data-tab="clients" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Клиенты</button>
+          <button data-tab="services" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Услуги</button>
+          <button data-tab="waiting" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800 flex justify-between">Ожидание <span id="wait-badge" class="bg-rose-500 text-[10px] px-1.5 rounded-full hidden">0</span></button>
+          <button data-tab="stats" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Статистика</button>
+          <button data-tab="reminders" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Напоминания</button>
+          <button data-tab="payments" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Оплата и защита</button>
+          <button data-tab="link" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Ссылка записи</button>
+          <button data-tab="profile" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Профиль</button>
+        </nav>
+        <div class="p-3 border-t border-slate-700 space-y-1">
+          <button onclick="navigate('portal')" class="w-full text-left px-3 py-2 text-sm text-slate-400 hover:text-white">← Портал</button>
+          <button id="btn-logout" class="w-full text-left px-3 py-2 text-sm text-slate-500 hover:text-rose-400">Выйти</button>
+        </div>
+      </aside>
+      <main class="flex-1 overflow-auto">
+        <div class="md:hidden bg-slate-900 text-white px-4 h-14 flex items-center justify-between">
+          <span class="font-semibold">Кабинет</span>
+          <button onclick="navigate('portal')" class="text-sm text-slate-300">Портал</button>
+        </div>
+        <div class="md:hidden flex overflow-x-auto gap-1 px-3 py-2 bg-white border-b text-sm">
+          <button data-tab="home" class="cab-nav-btn px-3 py-1.5 rounded-full bg-indigo-600 text-white whitespace-nowrap">Главная</button>
+          <button data-tab="schedule" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Расписание</button>
+          <button data-tab="clients" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Клиенты</button>
+          <button data-tab="waiting" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Ожидание</button>
+          <button data-tab="services" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Услуги</button>
+        </div>
+        <div class="p-4 sm:p-6 max-w-5xl">
+          <div id="tab-home" class="cab-tab">
+            <h1 class="text-2xl font-bold mb-4">Главная</h1>
+            <div class="grid lg:grid-cols-3 gap-5">
+              <div class="lg:col-span-2">
+                <div class="flex justify-between mb-3">
+                  <h2 class="text-sm font-semibold text-slate-600">Ближайшие сессии</h2>
+                  <button id="btn-add-session" class="text-xs text-indigo-600">+ Сессия</button>
+                </div>
+                <div id="home-sessions" class="bg-white rounded-xl border border-slate-100"></div>
+              </div>
+              <div class="space-y-4">
+                <div class="bg-white rounded-xl border p-4">
+                  <div class="text-xs font-semibold text-amber-700 mb-1">Внимание</div>
+                  <div class="text-sm" id="home-waiting-text">—</div>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                  <div class="bg-white rounded-xl border p-4 text-center">
+                    <div class="text-2xl font-bold" id="stat-today-count">0</div>
+                    <div class="text-xs text-slate-500">сегодня</div>
+                  </div>
+                  <div class="bg-white rounded-xl border p-4 text-center">
+                    <div class="text-lg font-bold" id="stat-today-sum">0</div>
+                    <div class="text-xs text-slate-500">доход</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="tab-schedule" class="cab-tab hidden">
+            <div class="flex justify-between mb-4">
+              <h1 class="text-2xl font-bold">Расписание</h1>
+              <button onclick="document.getElementById('btn-add-session').click()" class="px-4 py-2 rounded-full bg-indigo-600 text-white text-sm">+ Сессия</button>
+            </div>
+            <div id="sch-range" class="flex flex-wrap gap-2 mb-3"></div>
+            <div id="sch-days" class="flex gap-2 overflow-x-auto mb-4 pb-1"></div>
+            <div id="sch-list" class="bg-white rounded-xl border"></div>
+          </div>
+          <div id="tab-clients" class="cab-tab hidden">
+            <div class="flex justify-between mb-4">
+              <h1 class="text-2xl font-bold">Клиенты</h1>
+              <button id="btn-add-client" class="px-4 py-2 rounded-full bg-indigo-600 text-white text-sm">+ Клиент</button>
+            </div>
+            <div id="clients-list" class="bg-white rounded-xl border"></div>
+          </div>
+          <div id="tab-services" class="cab-tab hidden">
+            <div class="flex justify-between mb-4">
+              <h1 class="text-2xl font-bold">Услуги</h1>
+              <button id="btn-add-service" class="px-4 py-2 rounded-full bg-indigo-600 text-white text-sm">+ Услуга</button>
+            </div>
+            <div id="services-list" class="space-y-3"></div>
+          </div>
+          <div id="tab-waiting" class="cab-tab hidden">
+            <h1 class="text-2xl font-bold mb-4">Лист ожидания</h1>
+            <div id="waiting-list" class="bg-white rounded-xl border"></div>
+          </div>
+          <div id="tab-stats" class="cab-tab hidden">
+            <h1 class="text-2xl font-bold mb-4">Статистика (7 дней)</h1>
+            <div class="grid sm:grid-cols-3 gap-4">
+              <div class="bg-white rounded-xl border p-5 text-center"><div class="text-3xl font-bold" id="stat-week-count">0</div><div class="text-sm text-slate-500">сессий</div></div>
+              <div class="bg-white rounded-xl border p-5 text-center"><div class="text-2xl font-bold" id="stat-week-sum">0</div><div class="text-sm text-slate-500">доход</div></div>
+              <div class="bg-white rounded-xl border p-5 text-center"><div class="text-3xl font-bold" id="stat-clients">0</div><div class="text-sm text-slate-500">клиентов</div></div>
+            </div>
+          </div>
+          <div id="tab-reminders" class="cab-tab hidden">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <div>
+                <h1 class="text-2xl font-bold">Напоминания клиентам</h1>
+                <p class="text-sm text-slate-500 mt-1">Подтверждение или отказ до сессии · по умолчанию за 24 ч (повтор за 12 ч)</p>
+              </div>
+              <button id="btn-process-reminders" class="px-4 py-2 rounded-full bg-indigo-600 text-white text-sm font-medium">Отправить due сейчас</button>
+            </div>
+            <div id="reminder-outbox" class="hidden mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm"></div>
+            <div id="reminders-list" class="bg-white rounded-xl border divide-y"></div>
+          </div>
+          <div id="tab-payments" class="cab-tab hidden">
+            <h1 class="text-2xl font-bold mb-2">Оплата и защита записи</h1>
+            <p class="text-sm text-slate-500 mb-6">Предоплата, аванс, 100% по чеку · антиспам и лимиты</p>
+            <div class="grid lg:grid-cols-2 gap-6">
+              <div class="bg-white rounded-xl border p-6 space-y-3 text-sm max-w-lg">
+                <div>
+                  <label class="font-medium">Политика оплаты</label>
+                  <select id="set-pay-policy" class="w-full mt-1 px-3 py-2 rounded-xl border">
+                    <option value="none">Без предоплаты</option>
+                    <option value="deposit">Аванс (% от цены)</option>
+                    <option value="full">100% предоплата = запись</option>
+                    <option value="hold">Резерв слота до оплаты</option>
+                  </select>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                  <div><label class="font-medium">Аванс %</label><input id="set-deposit-pct" type="number" class="w-full mt-1 px-3 py-2 rounded-xl border" value="30"></div>
+                  <div><label class="font-medium">Резерв, мин</label><input id="set-hold-min" type="number" class="w-full mt-1 px-3 py-2 rounded-xl border" value="60"></div>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                  <div><label class="font-medium">Макс. неоплаченных на номер</label><input id="set-max-unpaid" type="number" class="w-full mt-1 px-3 py-2 rounded-xl border" value="1"></div>
+                  <div><label class="font-medium">Записей/сутки на номер</label><input id="set-max-day" type="number" class="w-full mt-1 px-3 py-2 rounded-xl border" value="2"></div>
+                </div>
+                <div><label class="font-medium">Блок после N неявок</label><input id="set-block-noshow" type="number" class="w-full mt-1 px-3 py-2 rounded-xl border" value="2"></div>
+                <div class="pt-3 border-t">
+                  <div class="font-medium mb-2">Напоминания</div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div><label class="text-xs">Основное (часов до сессии)</label><input id="set-reminder-hours" type="number" class="w-full mt-1 px-3 py-2 rounded-xl border" value="24"></div>
+                    <div><label class="text-xs">Повтор, если нет ответа (0=выкл)</label><input id="set-reminder-second" type="number" class="w-full mt-1 px-3 py-2 rounded-xl border" value="12"></div>
+                  </div>
+                  <p class="text-xs text-slate-400 mt-2">Практика: 24 ч — основной запрос; 12 ч — если клиент не ответил.</p>
+                </div>
+                <button id="btn-save-pay-settings" class="px-6 py-2.5 rounded-full bg-indigo-600 text-white font-medium">Сохранить</button>
+              </div>
+              <div>
+                <h2 class="font-semibold mb-2">Ожидают оплаты</h2>
+                <div id="held-list" class="bg-white rounded-xl border"></div>
+                <ul class="mt-6 text-xs text-slate-500 space-y-1 list-disc pl-4">
+                  <li>Honeypot + минимальное время на форме</li>
+                  <li>Лимиты по телефону и отпечатку браузера</li>
+                  <li>Блок после повторных неявок</li>
+                  <li>Неоплаченный резерв истекает автоматически</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+          <div id="tab-link" class="cab-tab hidden">
+            <h1 class="text-2xl font-bold mb-2">Публичная ссылка записи</h1>
+            <p class="text-sm text-slate-500 mb-4">Отправьте клиентам. Slug: <code id="pub-slug" class="text-indigo-600"></code></p>
+            <div class="flex gap-2">
+              <input id="pub-link" readonly class="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 text-sm bg-slate-50">
+              <button id="btn-copy-link" class="px-4 py-2 rounded-full bg-indigo-600 text-white text-sm">Копировать</button>
+            </div>
+          </div>
+          <div id="tab-profile" class="cab-tab hidden">
+            <h1 class="text-2xl font-bold mb-4">Профиль</h1>
+            <div class="bg-white rounded-xl border p-6 max-w-lg space-y-3">
+              <p class="text-sm text-slate-500">Email: <span id="pf-email"></span></p>
+              <div><label class="text-sm font-medium">ФИО</label><input id="pf-name" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+              <div><label class="text-sm font-medium">Телефон</label><input id="pf-phone" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+              <div><label class="text-sm font-medium">Специализация</label><input id="pf-spec" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+              <div><label class="text-sm font-medium">Город</label><input id="pf-city" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+              <div><label class="text-sm font-medium">О себе</label><textarea id="pf-about" rows="3" class="w-full mt-1 px-3 py-2 rounded-xl border resize-none"></textarea></div>
+              <button id="btn-save-profile" class="px-6 py-2.5 rounded-full bg-indigo-600 text-white text-sm font-medium">Сохранить</button>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- ========== BOOKING ========== -->
+  <div id="page-booking" class="page hidden">
+    <header class="sticky top-0 z-40 bg-white border-b">
+      <div class="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
+        <button onclick="navigate('portal')" class="text-sm text-slate-500">← Каталог</button>
+        <span class="font-semibold">Запись</span>
+        <div class="w-16"></div>
+      </div>
+    </header>
+    <div id="book-body" class="max-w-3xl mx-auto px-4 py-10">
+      <div class="rounded-2xl bg-indigo-50 p-6 mb-8">
+        <h2 class="text-xl font-bold" id="book-psy-name">—</h2>
+        <p class="text-sm text-indigo-700" id="book-psy-spec"></p>
+        <p class="text-xs text-slate-500 mt-1" id="book-psy-city"></p>
+      </div>
+      <div id="book-error" class="hidden mb-4 text-sm text-rose-600 bg-rose-50 px-3 py-2 rounded-lg"></div>
+      <div id="book-payment-info" class="mb-6"></div>
+      <div id="book-pay-actions" class="hidden mb-8"></div>
+      <div id="book-form-block">
+      <h3 class="font-semibold mb-3">1. Услуга</h3>
+      <div id="book-services" class="space-y-3 mb-8"></div>
+      <h3 class="font-semibold mb-3">2. День и время</h3>
+      <div id="book-range" class="flex flex-wrap gap-2 mb-3"></div>
+      <div id="book-days" class="flex gap-2 overflow-x-auto mb-3 pb-1"></div>
+      <div id="book-slots" class="grid grid-cols-3 sm:grid-cols-4 gap-2 mb-8"></div>
+      <h3 class="font-semibold mb-3">3. Никнейм и контакт</h3>
+      <p class="text-xs text-slate-500 mb-3">Никнейм уникален в кабинете психолога · не менее 4 букв · нужен для связи и напоминаний</p>
+      <div class="space-y-3 mb-6">
+        <div>
+          <input id="bk-nickname" type="text" placeholder="Никнейм * (например, Anna_Grodno)" class="w-full px-4 py-2.5 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-300" autocomplete="username">
+          <div id="bk-nick-suggestions" class="flex flex-wrap gap-2 mt-2"></div>
+        </div>
+        <input id="bk-phone" type="tel" placeholder="Телефон для связи *" class="w-full px-4 py-2.5 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-300">
+        <input id="bk-contact" type="text" placeholder="Контакт обратной связи: Telegram / email *" class="w-full px-4 py-2.5 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-300">
+        <textarea id="bk-note" rows="2" placeholder="С чем хотите поработать (необязательно)" class="w-full px-4 py-2.5 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-300 resize-none"></textarea>
+        <label class="flex gap-2 text-sm text-slate-600"><input id="bk-consent" type="checkbox" checked class="mt-0.5 accent-indigo-600"> Согласие на обработку персональных данных</label>
+        <!-- honeypot: не заполнять -->
+        <div class="absolute -left-[9999px] opacity-0 h-0 overflow-hidden" aria-hidden="true">
+          <label>Сайт<input id="bk-website" type="text" tabindex="-1" autocomplete="off"></label>
+        </div>
+      </div>
+      <button id="book-submit" class="w-full py-3.5 rounded-full bg-indigo-600 text-white font-semibold hover:bg-indigo-700">Записаться</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== CLIENT REPLY ========== -->
+  <div id="page-client-reply" class="page hidden">
+    <div class="min-h-screen flex items-center justify-center px-4 py-12">
+      <div class="w-full max-w-md bg-white rounded-2xl border shadow-sm p-8 text-center">
+        <h1 class="text-xl font-bold mb-2">Ответ на напоминание</h1>
+        <p id="reply-message" class="text-sm text-slate-600 mb-6">—</p>
+        <div id="reply-actions" class="flex flex-col gap-3">
+          <button id="btn-reply-yes" class="w-full py-3 rounded-full bg-emerald-600 text-white font-medium">Подтвердить запись</button>
+          <button id="btn-reply-no" class="w-full py-3 rounded-full border border-rose-300 text-rose-700 font-medium">Отказаться / отменить</button>
+        </div>
+        <p id="reply-done" class="hidden text-emerald-700 font-medium mt-4"></p>
+        <button onclick="navigate('portal')" class="mt-6 text-sm text-slate-400 hover:text-indigo-600">На портал</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== SUCCESS ========== -->
+  <div id="page-success" class="page hidden">
+    <div class="min-h-screen flex items-center justify-center px-4">
+      <div class="text-center max-w-md">
+        <div class="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 text-3xl flex items-center justify-center mx-auto mb-6">✓</div>
+        <h2 class="text-2xl font-bold mb-3">Заявка принята</h2>
+        <p id="success-text" class="text-slate-600 mb-8">—</p>
+        <button onclick="navigate('portal')" class="px-8 py-3 rounded-full bg-indigo-600 text-white font-medium">К каталогу</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modals -->
+  <div id="modal-session" class="fixed inset-0 z-50 hidden items-center justify-center modal-bg p-4">
+    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl max-h-[90vh] overflow-y-auto">
+      <h3 class="text-lg font-bold mb-4">Сессия</h3>
+      <input type="hidden" id="sess-id">
+      <div class="space-y-3 text-sm">
+        <div><label class="font-medium">Клиент</label><select id="sess-client" class="w-full mt-1 px-3 py-2 rounded-xl border"></select></div>
+        <div><label class="font-medium">Услуга</label><select id="sess-service" class="w-full mt-1 px-3 py-2 rounded-xl border"></select></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="font-medium">Дата</label><input type="date" id="sess-date" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+          <div><label class="font-medium">Время</label><input type="time" id="sess-time" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+        </div>
+        <div id="sess-reschedule-block" class="rounded-xl bg-amber-50 border border-amber-100 p-3 space-y-2">
+          <p class="text-xs text-amber-900">При смене даты/времени клиенту уйдёт запрос <strong>подтвердить согласие</strong> на перенос.</p>
+          <input type="text" id="sess-change-reason" placeholder="Причина переноса (увидит клиент)" class="w-full px-3 py-2 rounded-xl border text-sm">
+          <label class="flex gap-2 text-xs text-slate-600"><input type="checkbox" id="sess-notify-client" checked class="accent-indigo-600"> Уведомить клиента и ждать согласия</label>
+        </div>
+        <div><label class="font-medium">Статус</label>
+          <select id="sess-status" class="w-full mt-1 px-3 py-2 rounded-xl border">
+            <option value="confirmed">Подтверждено</option>
+            <option value="pending">Ожидает</option>
+            <option value="paid">Оплачено</option>
+            <option value="done">Проведено</option>
+            <option value="cancelled">Отменено</option>
+          </select>
+        </div>
+        <div>
+          <label class="font-medium">Видеосвязь</label>
+          <select id="sess-platform" class="w-full mt-1 px-3 py-2 rounded-xl border">
+            <option value="">— очно —</option>
+            <option value="google_meet">Google Meet</option>
+            <option value="zoom">Zoom</option>
+            <option value="telegram">Telegram</option>
+            <option value="whatsapp">WhatsApp</option>
+            <option value="other">Другое</option>
+          </select>
+          <div id="sess-meet-wrap" class="mt-2 hidden">
+            <input type="url" id="sess-meet" placeholder="https://meet.google.com/..." class="w-full px-3 py-2 rounded-xl border text-sm">
+          </div>
+        </div>
+        <div><label class="font-medium">Заметка</label><textarea id="sess-note" rows="2" class="w-full mt-1 px-3 py-2 rounded-xl border resize-none"></textarea></div>
+      </div>
+      <div class="flex gap-3 mt-6">
+        <button id="sess-save" class="flex-1 py-2.5 rounded-full bg-indigo-600 text-white font-medium">Сохранить</button>
+        <button onclick="closeModal('modal-session')" class="px-5 py-2.5 rounded-full border">Отмена</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-client" class="fixed inset-0 z-50 hidden items-center justify-center modal-bg p-4">
+    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl">
+      <h3 class="text-lg font-bold mb-4">Клиент</h3>
+      <input type="hidden" id="cl-id">
+      <div class="space-y-3 text-sm">
+        <div><label class="font-medium">Имя / никнейм *</label><input id="cl-name" class="w-full mt-1 px-3 py-2 rounded-xl border" placeholder="уникальный никнейм"></div>
+        <div><label class="font-medium">Никнейм (если отличается)</label><input id="cl-nickname" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+        <div><label class="font-medium">Телефон</label><input id="cl-phone" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+        <div><label class="font-medium">Контакт</label><input id="cl-contact" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+        <div><label class="font-medium">Заметка</label><textarea id="cl-note" rows="2" class="w-full mt-1 px-3 py-2 rounded-xl border resize-none"></textarea></div>
+      </div>
+      <div class="flex gap-3 mt-6">
+        <button id="cl-save" class="flex-1 py-2.5 rounded-full bg-indigo-600 text-white font-medium">Сохранить</button>
+        <button onclick="closeModal('modal-client')" class="px-5 py-2.5 rounded-full border">Отмена</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-service" class="fixed inset-0 z-50 hidden items-center justify-center modal-bg p-4">
+    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl">
+      <h3 class="text-lg font-bold mb-4">Услуга</h3>
+      <div class="space-y-3 text-sm">
+        <div><label class="font-medium">Название *</label><input id="sv-name" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="font-medium">Цена</label><input id="sv-price" type="number" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+          <div><label class="font-medium">Валюта</label><select id="sv-currency" class="w-full mt-1 px-3 py-2 rounded-xl border"><option value="BYN">BYN</option><option value="RUB">RUB</option></select></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="font-medium">Минут</label><input id="sv-duration" type="number" value="60" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+          <div><label class="font-medium">Формат</label><select id="sv-format" class="w-full mt-1 px-3 py-2 rounded-xl border"><option value="offline">Очно</option><option value="online">Онлайн</option></select></div>
+        </div>
+      </div>
+      <div class="flex gap-3 mt-6">
+        <button id="sv-save" class="flex-1 py-2.5 rounded-full bg-indigo-600 text-white font-medium">Сохранить</button>
+        <button onclick="closeModal('modal-service')" class="px-5 py-2.5 rounded-full border">Отмена</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
