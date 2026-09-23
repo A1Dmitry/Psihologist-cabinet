@@ -32,11 +32,19 @@ function gcalDateTime(date, time) {
 }
 
 function addMinutes(date, time, minutes) {
-  const d = new Date(`${date}T${time || '00:00'}:00`);
-  d.setMinutes(d.getMinutes() + (Number(minutes) || 60));
+  // Calendar template dates are wall-clock values in `ctz`; using Date here
+  // would silently apply the preview/browser timezone and break around UTC/DST.
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(date || ''));
+  const timeMatch = /^(\d{1,2}):(\d{2})$/.exec(String(time || '00:00'));
+  if (!match || !timeMatch) return { date, time: time || '00:00' };
+  const total = Number(timeMatch[1]) * 60 + Number(timeMatch[2]) + (Number(minutes) || 60);
+  const dayOffset = Math.floor(total / 1440);
+  const dayMinutes = ((total % 1440) + 1440) % 1440;
+  const d = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  d.setUTCDate(d.getUTCDate() + dayOffset);
   return {
     date: d.toISOString().slice(0, 10),
-    time: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+    time: `${String(Math.floor(dayMinutes / 60)).padStart(2, '0')}:${String(dayMinutes % 60).padStart(2, '0')}`
   };
 }
 
@@ -126,4 +134,4 @@ export async function fetchGoogleBusyBlocks(icalUrl, psychologistId) {
   }
 }
 
-export const calendarService = { googleAddLink, parseIcs, icsEventsToBlocks, fetchGoogleBusyBlocks };
+export const calendarService = { googleAddLink, parseIcs, icsEventsToBlocks, fetchGoogleBusyBlocks, addMinutes };

@@ -578,29 +578,54 @@
       <div id="book-payment-info" class="mb-6"></div>
       <div id="book-pay-actions" class="hidden mb-8"></div>
       <div id="book-form-block">
-      <h3 class="font-semibold mb-3">1. Услуга</h3>
-      <div id="book-services" class="space-y-3 mb-8"></div>
-      <h3 class="font-semibold mb-3">2. День и время</h3>
-      <div id="book-range" class="flex flex-wrap gap-2 mb-3"></div>
-      <div id="book-days" class="flex gap-2 overflow-x-auto mb-3 pb-1"></div>
-      <div id="book-slots" class="grid grid-cols-3 sm:grid-cols-4 gap-2 mb-8"></div>
-      <h3 class="font-semibold mb-3">3. Никнейм и контакт</h3>
-      <p class="text-xs text-slate-500 mb-3">Никнейм уникален в кабинете психолога · не менее 4 букв · нужен для связи и напоминаний</p>
-      <div class="space-y-3 mb-6">
-        <div>
-          <input id="bk-nickname" type="text" placeholder="Никнейм * (например, Anna_Grodno)" class="w-full px-4 py-2.5 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-300" autocomplete="username">
-          <div id="bk-nick-suggestions" class="flex flex-wrap gap-2 mt-2"></div>
-        </div>
-        <input id="bk-phone" type="tel" placeholder="Телефон для связи *" class="w-full px-4 py-2.5 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-300">
-        <input id="bk-contact" type="text" placeholder="Контакт обратной связи: Telegram / email *" class="w-full px-4 py-2.5 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-300">
-        <textarea id="bk-note" rows="2" placeholder="С чем хотите поработать (необязательно)" class="w-full px-4 py-2.5 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-300 resize-none"></textarea>
-        <label class="flex gap-2 text-sm text-slate-600"><input id="bk-consent" type="checkbox" checked class="mt-0.5 accent-indigo-600"> Согласие на обработку персональных данных</label>
-        <!-- honeypot: не заполнять -->
-        <div class="absolute -left-[9999px] opacity-0 h-0 overflow-hidden" aria-hidden="true">
-          <label>Сайт<input id="bk-website" type="text" tabindex="-1" autocomplete="off"></label>
-        </div>
-      </div>
-      <button id="book-submit" class="w-full py-3.5 rounded-full bg-indigo-600 text-white font-semibold hover:bg-indigo-700">Записаться</button>
+        <nav id="book-progress" aria-label="Шаги записи" class="flex items-center gap-2 mb-8">
+          <button type="button" data-book-step="1" onclick="window.bookingWizard?.go(1)" class="flex-1 px-3 py-2 rounded-full text-xs font-semibold bg-indigo-600 text-white" aria-current="step">1. Услуга</button>
+          <span class="text-slate-300" aria-hidden="true">→</span>
+          <button type="button" data-book-step="2" onclick="window.bookingWizard?.go(2)" class="flex-1 px-3 py-2 rounded-full text-xs font-semibold bg-slate-100 text-slate-500">2. Время</button>
+          <span class="text-slate-300" aria-hidden="true">→</span>
+          <button type="button" data-book-step="3" onclick="window.bookingWizard?.go(3)" class="flex-1 px-3 py-2 rounded-full text-xs font-semibold bg-slate-100 text-slate-500">3. Контакт</button>
+        </nav>
+
+        <section data-book-step-panel="1" aria-labelledby="book-step-service-title">
+          <h3 id="book-step-service-title" class="font-semibold mb-3">1. Выберите услугу</h3>
+          <div id="book-services" class="space-y-3 mb-6"></div>
+          <button type="button" onclick="window.bookingWizard?.next()" class="w-full sm:w-auto px-6 py-2.5 rounded-full bg-indigo-600 text-white text-sm font-semibold">Далее: выбрать время →</button>
+        </section>
+
+        <section data-book-step-panel="2" aria-labelledby="book-step-time-title" class="hidden">
+          <h3 id="book-step-time-title" class="font-semibold mb-1">2. День и время</h3>
+          <p id="book-timezone-note" class="text-xs text-indigo-700 mb-3">Время в вашем поясе</p>
+          <div id="book-range" class="flex flex-wrap gap-2 mb-3"></div>
+          <div id="book-days" class="flex gap-2 overflow-x-auto mb-3 pb-1"></div>
+          <div id="book-slots" class="grid grid-cols-3 sm:grid-cols-4 gap-2 mb-6"></div>
+          <div class="flex flex-col-reverse sm:flex-row gap-2 sm:justify-between">
+            <button type="button" onclick="window.bookingWizard?.back()" class="px-6 py-2.5 rounded-full border border-slate-300 text-slate-700 text-sm">← Назад к услуге</button>
+            <button type="button" onclick="window.bookingWizard?.next()" class="px-6 py-2.5 rounded-full bg-indigo-600 text-white text-sm font-semibold">Далее: контакт →</button>
+          </div>
+        </section>
+
+        <section data-book-step-panel="3" aria-labelledby="book-step-contact-title" class="hidden">
+          <h3 id="book-step-contact-title" class="font-semibold mb-3">3. Никнейм и контакт</h3>
+          <p class="text-xs text-slate-500 mb-3">Никнейм уникален в кабинете психолога · не менее 4 букв · нужен для связи и напоминаний</p>
+          <div class="space-y-3 mb-6">
+            <div>
+              <input id="bk-nickname" type="text" placeholder="Никнейм * (например, Anna_Grodno)" class="w-full px-4 py-2.5 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-300" autocomplete="username">
+              <div id="bk-nick-suggestions" class="flex flex-wrap gap-2 mt-2"></div>
+            </div>
+            <input id="bk-phone" type="tel" placeholder="Телефон для связи *" class="w-full px-4 py-2.5 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-300">
+            <input id="bk-contact" type="text" placeholder="Контакт обратной связи: Telegram / email *" class="w-full px-4 py-2.5 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-300">
+            <textarea id="bk-note" rows="2" placeholder="С чем хотите поработать (необязательно)" class="w-full px-4 py-2.5 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-300 resize-none"></textarea>
+            <label class="flex gap-2 text-sm text-slate-600"><input id="bk-consent" type="checkbox" checked class="mt-0.5 accent-indigo-600"> Согласие на обработку персональных данных</label>
+            <!-- honeypot: не заполнять -->
+            <div class="absolute -left-[9999px] opacity-0 h-0 overflow-hidden" aria-hidden="true">
+              <label>Сайт<input id="bk-website" type="text" tabindex="-1" autocomplete="off"></label>
+            </div>
+          </div>
+          <div class="flex flex-col-reverse sm:flex-row gap-2 sm:justify-between">
+            <button type="button" onclick="window.bookingWizard?.back()" class="px-6 py-2.5 rounded-full border border-slate-300 text-slate-700 text-sm">← Назад ко времени</button>
+            <button id="book-submit" class="w-full sm:w-auto px-8 py-3.5 rounded-full bg-indigo-600 text-white font-semibold hover:bg-indigo-700">Записаться</button>
+          </div>
+        </section>
       </div>
     </div>
   </div>
