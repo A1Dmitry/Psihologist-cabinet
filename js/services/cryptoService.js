@@ -149,6 +149,10 @@ export class CryptoService {
       specialization: p.specialization,
       city: p.city,
       about: p.about,
+      website: p.website || '',
+      sourceUrl: p.sourceUrl || '',
+      address: p.address || '',
+      experience: p.experience || '',
       slug: p.slug,
       isActive: p.isActive
     };

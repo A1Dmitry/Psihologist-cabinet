@@ -125,53 +125,43 @@ export class DbContext {
     }
   }
 
-  /** Демо-данные портала (несколько психологов) */
+  /** Публичный каталог психологов Минска и Гродно.
+   * Данные собраны из открытых профилей; реальные email/пароли не создаются.
+   * example.invalid используется только как технический маркер записи для синхронизации.
+   */
   _seed() {
-    const n1 = new Psychologist({
-      id: uid('psy'),
-      email: 'natalia@example.com',
-      fullName: 'Наталия Михайловская',
-      phone: '+375 29 780-45-45',
-      specialization: 'Гештальт-терапевт, кризисный и семейный психолог',
-      city: 'Гродно',
-      about: 'Использую методы из различных направлений психотерапии, подбирая их под особенности клиента.',
-      slug: 'natalia-mikhailovskaya'
-    });
-    const n2 = new Psychologist({
-      id: uid('psy'),
-      email: 'ivan@example.com',
-      fullName: 'Иван Петров',
-      phone: '+375 29 100-20-30',
-      specialization: 'Когнитивно-поведенческий психолог',
-      city: 'Минск',
-      about: 'Работа с тревогой, депрессией и навыками саморегуляции.',
-      slug: 'ivan-petrov'
-    });
+    const catalog = [
+      { fullName: 'Анастасия Мартынова', city: 'Минск', specialization: 'Семейный психолог; тревожность, эмоции, отношения, созависимость', about: 'Публичная анкета: семейное консультирование, работа с тревожностью и эмоциями, отношениями и созависимостью. Очный и онлайн-форматы.', website: 'https://www.b17.ru/max367/', sourceUrl: 'https://www.b17.ru/max367/', experience: '3 года на B17' },
+      { fullName: 'Екатерина Шалахман', city: 'Минск', specialization: 'Психолог, экзистенциальный терапевт; индивидуальная и парная работа', about: 'Публичная анкета: выгорание, тревога, синдром самозванца, кризисы в отношениях, сепарация, прокрастинация и страх ошибки.', website: 'https://www.b17.ru/kaosipova/', sourceUrl: 'https://www.b17.ru/kaosipova/', experience: 'Более 8 лет практики по описанию профиля' },
+      { fullName: 'Егор Ильин', city: 'Минск', specialization: 'Психолог, магистр психологии; отношения и самооценка', about: 'Публичная анкета: расставания, ревность, обида, любовная зависимость, вина, стыд, отношения, семейные конфликты, одиночество и стресс.', website: 'https://www.b17.ru/egor_iluo__/', sourceUrl: 'https://www.b17.ru/egor_iluo__/', experience: 'Магистр психологии; 2 года на B17' },
+      { fullName: 'Абрамович Инна', city: 'Минск', specialization: 'Практический психолог; анализ поведения и эффективная коммуникация', about: 'Публичная анкета: помощь в адаптации к сложным обстоятельствам, конфликтам с близкими и трудным рабочим ситуациям.', website: 'https://www.b17.ru/abramovich_inna/', sourceUrl: 'https://www.b17.ru/abramovich_inna/', experience: 'Более 15 лет опыта по описанию профиля' },
+      { fullName: 'Белко Лариса Станиславовна', city: 'Минск', specialization: 'Психолог, EMDR-терапевт, травма-терапевт, бизнес-психолог', about: 'Публичная анкета: работа с травмой, жизненными сценариями и бизнес-запросами; указаны EMDR, кинезиология и символдрама.', website: 'https://www.b17.ru/larisabelko/', sourceUrl: 'https://www.b17.ru/larisabelko/', experience: '5 лет на B17' },
+      { fullName: 'Гурко Михаил Владимирович', city: 'Минск', specialization: 'Психолог, системный семейный терапевт, гештальт-подход', about: 'Публичная анкета: индивидуальная и парная работа, зависимость, тревога, панические атаки, депрессия, выгорание, развод и кризисы.', website: 'https://www.b17.ru/id1033842/', sourceUrl: 'https://www.b17.ru/id1033842/', experience: '41 год; 2 года на B17' },
+      { fullName: 'Семён Красильников', city: 'Минск', specialization: 'Психоаналитик, сексолог, секс-терапевт', about: 'Публичная анкета: работа на пересечении психологических трудностей и вопросов сексуальности.', website: 'https://www.b17.ru/id942230/', sourceUrl: 'https://www.b17.ru/id942230/', experience: '3 года на B17' },
+      { fullName: 'Наталья Денисьева', city: 'Минск', specialization: 'Кризисный и провокативный психолог; интегративный подход', about: 'Сайт центра: индивидуальная и семейная терапия, кризисные состояния, телесно-ориентированная терапия, арт-терапия, ДПДГ и КПТ.', website: 'https://psy-provocator.com/', sourceUrl: 'https://psyprosto-help.by/', experience: '17 лет практического опыта по данным сайта центра' },
+      { fullName: 'Снежана Сковинская', city: 'Минск', specialization: 'Кризисный психолог', about: 'Специалист центра кризисной психологии «Просто жить!»; запись и актуальные условия опубликованы на сайте центра.', website: 'https://psyprosto-help.by/uslugi', sourceUrl: 'https://psyprosto-help.by/', experience: 'Публичный профиль центра' },
+      { fullName: 'Наталия Корнукова', city: 'Минск', specialization: 'Кризисный психолог, специалист по психодиагностике', about: 'Специалист центра кризисной психологии «Просто жить!»; также указаны игропрактика и обучающие программы.', website: 'https://psyprosto-help.by/uslugi', sourceUrl: 'https://psyprosto-help.by/', experience: 'Публичный профиль центра' },
+      { fullName: 'Елена Костюченко', city: 'Гродно', phone: '+375 (29) 778-44-38', specialization: 'Кандидат психологических наук, доцент; КПТ, схема-терапия, семейная и детская психология', about: 'Индивидуальные и групповые консультации, работа с семьями, супругами и детьми. Также указаны майндфулнесс, CFT, экзистенциальное консультирование, травматерапия, ДПДТ и ACT.', website: 'https://psihologgrodno.by/', sourceUrl: 'https://psihologgrodno.by/', address: 'г. Гродно, ул. Врублевского, 3', experience: 'Много лет практической психологии; кандидат психологических наук, доцент' },
+      { fullName: 'Валерия Соловьёва', city: 'Гродно', phone: '+375 (29) 207-57-15', specialization: 'Практический психолог, магистр психологии; КПТ, детская и семейная практика', about: 'Работа со взрослыми, детьми и родителями; темы расставаний, тревоги, депрессивных состояний, самооценки и воспитания.', website: 'https://solovushka.by/', sourceUrl: 'https://solovushka.by/obo-mne/', address: 'г. Гродно, ул. Горького 91, каб. 306', experience: 'Практика с 2018 года; магистр психологии с 2020 года' },
+      { fullName: 'Алла Карчик', city: 'Гродно', specialization: 'Психолог; самооценка и тревожные мысли', about: 'Публичная анкета: повышение самооценки, работа с тревожными мыслями, самостоятельные навыки преодоления трудностей.', website: 'https://www.b17.ru/karchik/', sourceUrl: 'https://www.b17.ru/karchik/', experience: '4 года на B17' },
+      { fullName: 'Владислав Селицкий', city: 'Гродно', specialization: 'Врач-психотерапевт, онлайн-консультант', about: 'Публичная анкета: депрессия, панические атаки, тревога, фобии, стресс, психосоматика и зависимости.', website: 'https://www.b17.ru/selitskij/', sourceUrl: 'https://www.b17.ru/selitskij/', experience: '9 лет на B17' },
+      { fullName: 'Лариса Волкова', city: 'Гродно', specialization: 'Психолог высшей квалификационной категории; КПТ, семейная терапия', about: 'Публичная анкета: кризисы, депрессии, психосоматические расстройства, семейные проблемы, страхи и тревога.', website: 'https://www.b17.ru/id423802/', sourceUrl: 'https://www.b17.ru/id423802/', experience: 'Более 20 лет стажа по описанию профиля' },
+      { fullName: 'Мария Вакер', city: 'Гродно', specialization: 'Психолог; экзистенциальный подход', about: 'Публичная анкета: практикующий психолог, индивидуальное и парное консультирование, очный и онлайн-форматы.', website: 'https://www.b17.ru/vaker_mariya/', sourceUrl: 'https://www.b17.ru/vaker_mariya/', experience: 'Практика с 2012 года по описанию профиля' },
+      { fullName: 'Павел Гаврилик', city: 'Гродно', specialization: 'Психолог для пар и индивидуальных клиентов', about: 'Публичная анкета: диалог в отношениях, тревога и самооценка; очный и онлайн-форматы.', website: 'https://www.b17.ru/haurylik_pavel/', sourceUrl: 'https://www.b17.ru/haurylik_pavel/', experience: '2000+ часов практики по описанию профиля' },
+      { fullName: 'Александр Кох', city: 'Гродно', specialization: 'Психолог, системный семейный психолог', about: 'Публичная анкета: системная семейная психотерапия; автор книги «Разговор со Страхом».', website: 'https://www.b17.ru/koh/', sourceUrl: 'https://www.b17.ru/koh/', experience: '7 лет на B17' }
+    ].map((p, index) => new Psychologist({
+      ...p,
+      id: `psy_catalog_${String(index + 1).padStart(2, '0')}`,
+      email: `catalog+${Psychologist.makeSlug(p.fullName)}-${index + 1}@example.invalid`,
+      slug: Psychologist.makeSlug(p.fullName) + '-' + (index + 1)
+    }));
 
-    this.psychologists = [n1, n2];
-    this.services = [
-      new Service({ id: uid('svc'), psychologistId: n1.id, name: 'Очная консультация', price: 80, currency: 'BYN', duration: 60, format: 'offline' }),
-      new Service({ id: uid('svc'), psychologistId: n1.id, name: 'Семейная консультация', price: 110, currency: 'BYN', duration: 90, format: 'offline' }),
-      new Service({ id: uid('svc'), psychologistId: n1.id, name: 'Онлайн-консультация', price: 3000, currency: 'RUB', duration: 60, format: 'online' }),
-      new Service({ id: uid('svc'), psychologistId: n2.id, name: 'Индивидуальная КПТ', price: 90, currency: 'BYN', duration: 50, format: 'offline' }),
-      new Service({ id: uid('svc'), psychologistId: n2.id, name: 'Онлайн КПТ', price: 70, currency: 'BYN', duration: 50, format: 'online' })
-    ];
-    this.settings = [
-      new SessionSettings({
-        psychologistId: n1.id,
-        defaultVideoPlatform: 'google_meet',
-        paymentPolicy: PaymentPolicy.DEPOSIT,
-        depositPercent: 30,
-        holdMinutes: 60
-      }),
-      new SessionSettings({
-        psychologistId: n2.id,
-        defaultVideoPlatform: 'google_meet',
-        workHours: 'Пн–Сб 9:00–18:00',
-        paymentPolicy: PaymentPolicy.FULL,
-        holdMinutes: 45
-      })
-    ];
+    this.psychologists = catalog;
+    this.services = catalog.flatMap(p => [
+      new Service({ id: uid('svc'), psychologistId: p.id, name: 'Очная консультация', price: 0, currency: 'BYN', duration: 60, format: 'offline' }),
+      new Service({ id: uid('svc'), psychologistId: p.id, name: 'Онлайн-консультация', price: 0, currency: 'BYN', duration: 60, format: 'online' })
+    ]);
+    this.settings = catalog.map(p => new SessionSettings({ psychologistId: p.id }));
     this.clients = [];
     this.sessions = [];
     this.payments = [];

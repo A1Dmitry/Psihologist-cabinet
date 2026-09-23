@@ -42,10 +42,14 @@ export class Psychologist {
     email = '',
     fullName = '',
     phone = '',
-    specialization = 'Психолог',
-    city = '',
-    about = '',
-    slug = '',
+      specialization = 'Психолог',
+      city = '',
+      about = '',
+      website = '',
+      sourceUrl = '',
+      address = '',
+      experience = '',
+      slug = '',
     isActive = true,
     /** { salt, iv, data } — verifier ключа из пароля; пароль не хранится */
     keyVerifier = null,
@@ -58,6 +62,10 @@ export class Psychologist {
     this.specialization = specialization;
     this.city = city;
     this.about = about;
+    this.website = website;
+    this.sourceUrl = sourceUrl;
+    this.address = address;
+    this.experience = experience;
     this.slug = slug || Psychologist.makeSlug(fullName || email);
     this.isActive = isActive;
     this.keyVerifier = keyVerifier;
