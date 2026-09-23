@@ -8,6 +8,8 @@ import { nicknameService } from '../services/nicknameService.js';
 import { clientVaultService } from '../services/clientVaultService.js';
 import { supabaseApi } from '../services/supabaseApi.js';
 import { telegramService } from '../services/telegramService.js';
+import { clientCabinetService } from '../services/clientCabinetService.js';
+import { formatOffset, weekdayOf } from '../services/timezoneService.js';
 import {
   detectClientTimeZone, formatTimeZoneCaption, convertPsySlotToClient,
   workWindowEnd, slotFitsDuration, isPastSlot, timeToMinutes,
@@ -48,6 +50,7 @@ export class BookingViewModel extends BaseViewModel {
     this.contact = '';
     this.note = '';
     this.consent = true;
+    this.wantRecurring = false; // T-08 / SR-106: «хочу постоянное время»
     this.honeypot = ''; // bots fill this — must stay empty
     this.done = false;
     this.successText = '';
@@ -202,6 +205,7 @@ export class BookingViewModel extends BaseViewModel {
       this.contact = '';
       this.note = '';
       this.consent = true;
+      this.wantRecurring = false;
     }
   }
 
@@ -522,7 +526,7 @@ export class BookingViewModel extends BaseViewModel {
       const isOnline = svc?.format === 'online';
       const payFields = paymentService.buildSessionPaymentFields(this.psychologist.id, svc);
       const tzNote = this.clientTimeZone
-        ? `Пояс клиента: ${this.clientTimeZone} (UTC${formatUtcOffset(clientUtcOffsetMinutes(this.clientTimeZone))})`
+        ? `Пояс клиента: ${this.clientTimeZone} (UTC${formatOffset(clientUtcOffsetMinutes(this.clientTimeZone))})`
         : '';
       const userNote = this.note.trim() ? `Запрос клиента: ${this.note.trim()}` : '';
       const sessionNote = [userNote, tzNote].filter(Boolean).join('\n');
@@ -549,6 +553,31 @@ export class BookingViewModel extends BaseViewModel {
       session.clientTimeZone = this.clientTimeZone;
       session.clientUtcOffsetMin = clientUtcOffsetMinutes(this.clientTimeZone);
       db.saveChanges();
+
+      if (this.wantRecurring) {
+        try {
+          const waiting = db.addWaiting({
+            psychologistId: this.psychologist.id,
+            clientId: client.id,
+            type: 'wait',
+            name: this.nickname || this.name,
+            phone,
+            note: `Хочет постоянное время: ${this.date} ${this.time}`
+          });
+          if (waiting?.id) {
+            clientCabinetService.setWaitingPref(waiting.id, {
+              recurring: true,
+              desiredDate: this.date,
+              desiredTime: this.time,
+              weekday: weekdayOf(this.date),
+              intervalWeeks: 1,
+              sessionId: session.id
+            });
+          }
+        } catch (e) {
+          console.warn('[Booking] recurring wait', e);
+        }
+      }
 
       fraudProtectionService.logAttempt({
         psychologistId: this.psychologist.id,
@@ -624,12 +653,4 @@ export class BookingViewModel extends BaseViewModel {
     this.notify();
     return true;
   }
-}
-
-function formatUtcOffset(min) {
-  const sign = min < 0 ? '−' : '+';
-  const abs = Math.abs(Number(min) || 0);
-  const h = String(Math.floor(abs / 60)).padStart(2, '0');
-  const m = String(abs % 60).padStart(2, '0');
-  return `${sign}${h}:${m}`;
 }

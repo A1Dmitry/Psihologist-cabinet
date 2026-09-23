@@ -6,13 +6,18 @@
  *    in iCal format», basic.ics): события календаря превращаются в блокировки занятости.
  *    Импорт идёт браузером психолога (адрес — секретный, публично не отдаётся);
  *    публично видны только итоговые free/busy блоки.
- * 3) Часовые пояса клиента/специалиста (T-03) и проверка длительности слота (T-02).
+ * 3) Часовые пояса клиента/специалиста (T-03) — через timezoneService Агента 3 (T-23).
  * 4) T-22: черновик события Meet через Calendar API — см. meetEventDraft()
  *    (OAuth на стороне владельца, поля — заявка SR-002).
  */
+import {
+  DEFAULT_TIMEZONE,
+  browserZone, offsetMinutes, formatOffset, zoneLabel, isValidZone,
+  zonedToInstant, instantToZoned, convertWallClock
+} from './timezoneService.js';
 
 const GCAL_TEMPLATE = 'https://calendar.google.com/calendar/render';
-const DEFAULT_TZ = 'Europe/Minsk';
+const DEFAULT_TZ = DEFAULT_TIMEZONE;
 
 /** Ссылка «Добавить событие в Google Calendar» */
 export function googleAddLink({ title, date, time, durationMin = 60, details = '', location = '', timezone = DEFAULT_TZ }) {
@@ -76,93 +81,40 @@ export function workWindowEnd(settings) {
 }
 
 export function detectClientTimeZone() {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || DEFAULT_TZ;
-  } catch {
-    return DEFAULT_TZ;
-  }
+  return browserZone();
 }
 
 export function timeZoneOffsetLabel(timeZone, at = new Date()) {
-  try {
-    const fmt = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'shortOffset' });
-    const part = fmt.formatToParts(at).find(p => p.type === 'timeZoneName');
-    return part?.value || '';
-  } catch {
-    return '';
-  }
+  return 'UTC' + formatOffset(offsetMinutes(at, timeZone));
 }
 
 export function clientUtcOffsetMinutes(timeZone, at = new Date()) {
-  try {
-    const label = timeZoneOffsetLabel(timeZone, at); // GMT+2 / UTC+2 / GMT-5
-    const m = /([+-])(\d{1,2})(?::?(\d{2}))?/.exec(label || '');
-    if (!m) return 0;
-    const sign = m[1] === '-' ? -1 : 1;
-    return sign * (Number(m[2]) * 60 + Number(m[3] || 0));
-  } catch {
-    return 0;
-  }
+  return offsetMinutes(at, isValidZone(timeZone) ? timeZone : DEFAULT_TZ);
 }
 
 export function formatTimeZoneCaption(clientTz, psyTz) {
-  const clientBit = formatTz(clientTz);
+  const clientBit = zoneLabel(clientTz);
   if (!psyTz || psyTz === clientTz) return `Время в вашем поясе: ${clientBit}`;
-  return `Время в вашем поясе: ${clientBit}. У специалиста: ${formatTz(psyTz)}`;
-}
-
-function formatTz(tz) {
-  const off = timeZoneOffsetLabel(tz);
-  return off ? `${tz} (${off})` : tz;
-}
-
-/** Смещение зоны относительно UTC для данного инстанта (мс). */
-function tzOffsetMs(instant, timeZone) {
-  const dtf = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hourCycle: 'h23'
-  });
-  const map = Object.fromEntries(dtf.formatToParts(instant).map(p => [p.type, p.value]));
-  const asUTC = Date.UTC(+map.year, +map.month - 1, +map.day, +map.hour, +map.minute, +map.second);
-  return asUTC - instant.getTime();
+  return `Время в вашем поясе: ${clientBit}. У специалиста: ${zoneLabel(psyTz)}`;
 }
 
 /** Настенные date+time в зоне timeZone → UTC Date. */
 export function zonedLocalToUtc(date, time, timeZone) {
-  const [y, m, d] = String(date).split('-').map(Number);
-  const [hh, mm] = String(time || '00:00').split(':').map(Number);
-  let utc = Date.UTC(y, (m || 1) - 1, d || 1, hh || 0, mm || 0, 0);
-  const guess = new Date(utc);
-  utc -= tzOffsetMs(guess, timeZone || DEFAULT_TZ);
-  const again = tzOffsetMs(new Date(utc), timeZone || DEFAULT_TZ);
-  const first = tzOffsetMs(guess, timeZone || DEFAULT_TZ);
-  if (again !== first) utc = Date.UTC(y, (m || 1) - 1, d || 1, hh || 0, mm || 0, 0) - again;
-  return new Date(utc);
+  return zonedToInstant(date, time, timeZone || DEFAULT_TZ) || new Date(NaN);
 }
 
 export function wallTimeInZone(instant, timeZone) {
-  const dtf = new Intl.DateTimeFormat('en-CA', {
-    timeZone: timeZone || DEFAULT_TZ,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit',
-    hourCycle: 'h23'
-  });
-  const map = Object.fromEntries(dtf.formatToParts(instant).map(p => [p.type, p.value]));
-  return {
-    date: `${map.year}-${map.month}-${map.day}`,
-    time: `${map.hour}:${map.minute}`
-  };
+  const z = instantToZoned(instant, timeZone || DEFAULT_TZ);
+  return z ? { date: z.date, time: z.time } : { date: '', time: '' };
 }
 
 /** Слот специалиста (его пояс) → подпись во поясе клиента. */
 export function convertPsySlotToClient(date, time, psyTz, clientTz) {
-  const psy = psyTz || DEFAULT_TZ;
-  const cli = clientTz || psy;
+  const psy = isValidZone(psyTz) ? psyTz : DEFAULT_TZ;
+  const cli = isValidZone(clientTz) ? clientTz : psy;
   if (cli === psy) return { date, time, label: time, dayShift: 0 };
-  const utc = zonedLocalToUtc(date, time, psy);
-  const wall = wallTimeInZone(utc, cli);
+  const wall = convertWallClock(date, time, psy, cli);
+  if (!wall) return { date, time, label: time, dayShift: 0 };
   let dayShift = 0;
   if (wall.date > date) dayShift = 1;
   else if (wall.date < date) dayShift = -1;

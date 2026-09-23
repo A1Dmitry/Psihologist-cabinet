@@ -24,40 +24,67 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Слаги активных специалистов — из публичного каталога Supabase
+      # (view public_profiles). Секреты SUPABASE_URL/SUPABASE_ANON_KEY опциональны:
+      # без них сайт деплоится, маршруты /psy/<slug> обслуживает 404.html-fallback.
+      - name: Fetch public slugs (optional)
+        id: slugs
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          : > slugs.txt
+          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_ANON_KEY" ]; then
+            curl -sf "$SUPABASE_URL/rest/v1/public_profiles?is_active=eq.true&select=slug" \
+              -H "apikey: $SUPABASE_ANON_KEY" \
+              | python3 -c 'import json,sys
+          try:
+              for r in json.load(sys.stdin):
+                  s=(r.get("slug") or "").strip()
+                  if s: print(s)
+          except Exception as e:
+              print(f"slugs: catalog unavailable ({e})", file=sys.stderr)' > slugs.txt || true
+          fi
+          echo "first_slug=$(head -n1 slugs.txt)" >> "$GITHUB_OUTPUT"
+          echo "slugs fetched: $(grep -c . slugs.txt || true)"
+
       # Статический сайт: только UI-часть (index.html + js/).
-      # %BASE% → /<repo>/, index.html дублируется в 404.html — SPA-fallback
-      # для индексируемых URL специалистов вида /<repo>/psy/<slug>.
-      - name: Build site (inject base path + SPA fallback)
+      # %BASE% → /<repo>/, index.html дублируется в 404.html — SPA-fallback.
+      # Маршруты приложения и страницы /psy|/book каждого активного слага
+      # раскладываются как реальные папки с index.html → GitHub Pages отдаёт
+      # их с HTTP 200 (важно для SEO: 404.html-fallback отдаёт статус 404).
+      - name: Build site (inject base path + static routes + SPA fallback)
         run: |
           mkdir -p _site
           cp -r js _site/js
           sed "s|%BASE%|/${GITHUB_REPOSITORY#*/}/|g" index.html > _site/index.html
           cp _site/index.html _site/404.html
+          for r in cabinet auth booking-done reply; do
+            mkdir -p "_site/$r"
+            cp _site/index.html "_site/$r/index.html"
+          done
+          while read -r slug; do
+            [ -n "$slug" ] || continue
+            mkdir -p "_site/psy/$slug" "_site/book/$slug"
+            cp _site/index.html "_site/psy/$slug/index.html"
+            cp _site/index.html "_site/book/$slug/index.html"
+          done < slugs.txt
 
-      # SEO: sitemap со страницами специалистов (слаги — из публичного каталога
-      # Supabase, если заданы секреты SUPABASE_URL/SUPABASE_ANON_KEY) + robots.txt
+      # SEO: sitemap со страницами специалистов + robots.txt
       - name: Generate sitemap.xml + robots.txt
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
           SITE="https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}"
-          export SITE
           {
             echo '<?xml version="1.0" encoding="UTF-8"?>'
             echo '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
             echo "  <url><loc>${SITE}/</loc></url>"
-            if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_ANON_KEY" ]; then
-              curl -sf "$SUPABASE_URL/rest/v1/public_profiles?is_active=eq.true&select=slug" \
-                -H "apikey: $SUPABASE_ANON_KEY" \
-                | SITE="$SITE" python3 -c 'import json,sys,os,urllib.parse
-site=os.environ["SITE"]
-try:
-    for r in json.load(sys.stdin):
-        print(f"  <url><loc>{site}/psy/{urllib.parse.quote(r[\"slug\"])}</loc></url>")
-except Exception as e:
-    print(f"<!-- sitemap: profiles unavailable ({e}) -->", file=sys.stderr)' || true
-            fi
+            while read -r slug; do
+              [ -n "$slug" ] || continue
+              SITE="$SITE" SLUG="$slug" python3 -c 'import os, urllib.parse
+          site = os.environ["SITE"]
+          slug = urllib.parse.quote(os.environ["SLUG"])
+          print(f"  <url><loc>{site}/psy/{slug}</loc></url>")'
+            done < slugs.txt
             echo '</urlset>'
           } > _site/sitemap.xml
           {
@@ -81,3 +108,14 @@ except Exception as e:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      # Смоук задеплоенного сайта (глубокие ссылки, %BASE%, битые ассеты).
+      # Не блокирует деплой: без секретов Supabase часть проверок слагов
+      # ожидаемо падает — результат виден в логе job'а.
+      - name: Smoke check deployed site (verify_pages.py)
+        if: success()
+        continue-on-error: true
+        env:
+          BASE_URL: ${{ steps.deployment.outputs.page_url }}
+          CHECK_SLUG: ${{ steps.slugs.outputs.first_slug }}
+        run: python3 verify_pages.py

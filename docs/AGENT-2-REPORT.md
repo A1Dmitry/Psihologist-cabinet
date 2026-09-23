@@ -61,6 +61,13 @@
 2. `python3 verify_pages.py` против `devserver.py` (порт 8765) — без регрессий маршрутов.
 3. Демо-контур: wizard вперёд/назад, клик по услуге скроллит к окнам, подпись пояса видна.
 
+## Merge с `main` (Агенты 1 и 3)
+
+- Конфликт только в `docs/SCHEMA-REQUESTS.md`: оставлены SR-001/002 (Агент 2) и SR-101…109 (Агент 3); нумерация по диапазонам. **SR-108 покрыт SR-001** (`client_timezone` + `client_utc_offset_min` + `starts_at`, без `zone_offset_min`).
+- Wizard / слоты / TZ записи сохранены. `timezoneService` Агента 3 — канон конвертации; `calendarService` делегирует T-03 туда.
+- Клик по услуге на профиле снова передаёт `service` в `navigate('booking')`.
+- Галочка «хочу постоянное время» (T-08 / SR-106) пишет лист ожидания + `clientCabinetService.setWaitingPref` без правок schema/entities.
+
 ## Зона
 
 Изменены: `BookingViewModel.js`, `calendarService.js`, `seoService.js`, `psyMapper.js`, блоки `#page-booking`/`#page-profile` в `index.html`, обвязка записи в `js/app.js`, `docs/SCHEMA-REQUESTS.md`, этот отчёт, `docs/T-22-MEET.md`.

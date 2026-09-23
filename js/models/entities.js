@@ -19,7 +19,8 @@ export const EntityNames = {
   ScheduleBlock: 'ScheduleBlocks',
   Task: 'Tasks',
   PsyNote: 'PsyNotes',
-  ClientEntry: 'ClientEntries'
+  ClientEntry: 'ClientEntries',
+  ClientErrorLog: 'ClientErrorLogs'   // server-only: приложение не читает, только пишет (errorLogService)
 };
 
 /**
@@ -681,6 +682,38 @@ export class ClientEntry {
     this.sessionId = sessionId || null;
     this.date = date || new Date().toISOString().slice(0, 10);
     this.text = String(text || '');
+    this.createdAt = createdAt || new Date().toISOString();
+  }
+}
+
+/**
+ * Запись журнала критичных ошибок фронтенда (Supabase: client_error_logs).
+ * Server-side only: приложение НЕ читает эти строки в DbContext — только
+ * отправляет через js/services/errorLogService.js. RLS: insert для всех,
+ * select отсутствует (чтение — из SQL Editor/дашборда).
+ */
+export class ClientErrorLog {
+  constructor({
+    id = null,
+    level = 'error',        // error | rejection | boot | catalog
+    message = '',
+    stack = '',
+    route = '',
+    url = '',
+    userAgent = '',
+    appVersion = '',
+    extra = {},
+    createdAt = null
+  } = {}) {
+    this.id = id;
+    this.level = String(level || 'error');
+    this.message = String(message || '');
+    this.stack = String(stack || '');
+    this.route = String(route || '');
+    this.url = String(url || '');
+    this.userAgent = String(userAgent || '');
+    this.appVersion = String(appVersion || '');
+    this.extra = extra && typeof extra === 'object' ? extra : {};
     this.createdAt = createdAt || new Date().toISOString();
   }
 }
