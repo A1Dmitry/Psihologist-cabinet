@@ -2,7 +2,9 @@ import { BaseViewModel } from './BaseViewModel.js';
 import { authService } from '../services/authService.js';
 
 /**
- * ViewModel: регистрация / вход по коду email
+ * ViewModel: вход/регистрация по коду из письма (Supabase Auth OTP).
+ * «Получить код» → окно ожидания ввода 2 минуты (таймер повторной отправки) →
+ * код совпал → email подтверждён → кабинет открыт.
  */
 export class AuthViewModel extends BaseViewModel {
   constructor() {
@@ -11,38 +13,58 @@ export class AuthViewModel extends BaseViewModel {
     this.step = 'email'; // email | code
     this.email = '';
     this.code = '';
-    this.demoCode = ''; // только для демо-стенда
     this.fullName = '';
     this.phone = '';
     this.specialization = 'Психолог';
     this.city = '';
     this.about = '';
-    this.password = '';
+    this.password = ''; // пароль сейфа клиентов (опция, не для входа)
+    this.resendIn = 0;  // сек до повторной отправки (окно ожидания)
+  }
+
+  get resendLabel() {
+    if (this.resendIn <= 0) return 'Отправить код снова';
+    const m = Math.floor(this.resendIn / 60);
+    const s = String(this.resendIn % 60).padStart(2, '0');
+    return `Повторная отправка через ${m}:${s}`;
   }
 
   setMode(mode) {
     this.mode = mode === 'register' ? 'register' : 'login';
     this.step = 'email';
     this.code = '';
-    this.demoCode = '';
     this.error = '';
     this.notify();
+  }
+
+  _startWindow() {
+    clearInterval(this._win);
+    this.resendIn = 120; // 2 минуты на ввод кода
+    this._win = setInterval(() => {
+      this.resendIn = Math.max(0, this.resendIn - 1);
+      if (this.resendIn === 0) clearInterval(this._win);
+      this.notify();
+    }, 1000);
   }
 
   async requestCode() {
     this.error = '';
     this.busy = true;
     try {
-      const purpose = this.mode === 'register' ? 'register' : 'login';
-      const res = authService.sendCode(this.email, purpose);
+      const res = await authService.requestCode(this.email);
       if (!res.ok) {
         this.error = res.message;
         return false;
       }
       this.step = 'code';
-      this.demoCode = res.demoCode || '';
+      this._startWindow();
       this.showToast(res.message);
       return true;
+    } catch (ex) {
+      this.error = /rate|часто/i.test(String(ex?.message))
+        ? 'Слишком часто. Подождите минуту и попробуйте снова.'
+        : `Не удалось отправить код: ${ex?.message || ex}`;
+      return false;
     } finally {
       this.busy = false;
     }
@@ -52,8 +74,7 @@ export class AuthViewModel extends BaseViewModel {
     this.error = '';
     this.busy = true;
     try {
-      const purpose = this.mode === 'register' ? 'register' : 'login';
-      const res = await authService.verifyCode(this.email, this.code, purpose, {
+      const res = await authService.verifyCode(this.email, this.code, {
         fullName: this.fullName,
         phone: this.phone,
         specialization: this.specialization,
@@ -65,6 +86,8 @@ export class AuthViewModel extends BaseViewModel {
         this.error = res.message;
         return null;
       }
+      clearInterval(this._win);
+      this.resendIn = 0;
       this.showToast(res.message);
       return res.psychologist;
     } finally {
@@ -76,7 +99,6 @@ export class AuthViewModel extends BaseViewModel {
     authService.logout();
     this.step = 'email';
     this.code = '';
-    this.demoCode = '';
     this.notify();
   }
 }

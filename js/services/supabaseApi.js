@@ -18,14 +18,21 @@ const PUBLIC_PROFILE_COLUMNS = 'id,full_name,phone,specialization,city,about,web
 // пилотная схема (без расширенных колонок) — на случай, если миграция ещё не применена
 const PUBLIC_PROFILE_COLUMNS_LEGACY = 'id,full_name,phone,specialization,city,about,website,source_url,address,experience,slug,is_active,created_at';
 
+/** Bearer-токен пользователя Supabase Auth (после OTP-входа) */
+let userToken = null;
+export function setAuthToken(token) {
+  userToken = token || null;
+}
+
 function headers(extra = {}) {
-  return {
+  const h = {
     apikey: SUPABASE_ANON_KEY,
-    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    Authorization: `Bearer ${userToken || SUPABASE_ANON_KEY}`,
     'Content-Type': 'application/json',
     Prefer: 'return=representation',
     ...extra
   };
+  return h;
 }
 
 async function request(path, options = {}) {
@@ -120,6 +127,60 @@ export const supabaseApi = {
   async createBooking(payload) {
     const rows = await request('rpc/create_booking', { method: 'POST', body: JSON.stringify(payload) });
     return Array.isArray(rows) ? rows[0] : rows;
+  },
+
+  // ——— Supabase Auth: вход по коду из письма (OTP) ———
+  /** Отправить 6-значный код на email (Supabase Auth → письмо). */
+  async requestEmailOtp(email) {
+    if (!isSupabaseConfigured()) throw new Error('Supabase не настроен');
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/otp`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: String(email).toLowerCase().trim() })
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      let msg = body;
+      try { msg = JSON.parse(body).msg || JSON.parse(body).message || body; } catch (_) {}
+      throw new Error(msg || `HTTP ${res.status}`);
+    }
+    return true;
+  },
+
+  /** Проверить код из письма → сессия (access_token). */
+  async verifyEmailOtp(email, token) {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/verify`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: String(email).toLowerCase().trim(), token: String(token).trim(), type: 'email' })
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      let msg = body;
+      try { msg = JSON.parse(body).msg || JSON.parse(body).error_description || body; } catch (_) {}
+      throw new Error(msg || `HTTP ${res.status}`);
+    }
+    return res.json();
+  },
+
+  /** Привязать/создать профиль психолога по подтверждённому email (security definer). */
+  async claimPsychologist({ email, fullName = '', specialization = '', city = '' }) {
+    const rows = await request('rpc/claim_psychologist_profile', {
+      method: 'POST',
+      body: JSON.stringify({
+        p_email: String(email).toLowerCase().trim(),
+        p_full_name: fullName || '',
+        p_specialization: specialization || '',
+        p_city: city || ''
+      })
+    });
+    return Array.isArray(rows) ? rows[0] : rows;
+  },
+
+  /** Свой профиль по id (RLS: только владелец). */
+  async fetchOwnPsychologist(id) {
+    const rows = await request(`psychologists?id=eq.${encodeURIComponent(id)}&select=*&limit=1`);
+    return rows?.[0] || null;
   },
 
   async getSettings(psychologistId) {

@@ -337,6 +337,14 @@ function renderPortal() {
   }).join('');
 }
 
+function collectAuthRegFields() {
+  if (authVm.mode !== 'register') return;
+  authVm.fullName = $('#auth-fullname')?.value || '';
+  authVm.phone = $('#auth-phone')?.value || '';
+  authVm.specialization = $('#auth-spec')?.value || 'Психолог';
+  authVm.city = $('#auth-city')?.value || '';
+}
+
 function renderAuth() {
   if (route.params.mode) authVm.setMode(route.params.mode);
   const title = $('#auth-title');
@@ -345,7 +353,8 @@ function renderAuth() {
   const codeStep = $('#auth-step-code');
   const regFields = $('#auth-reg-fields');
   const err = $('#auth-error');
-  const demo = $('#auth-demo-code');
+  const hint = $('#auth-code-hint');
+  const resend = $('#auth-resend');
 
   if (title) title.textContent = authVm.mode === 'register' ? 'Регистрация психолога' : 'Вход в кабинет';
   if (subtitle) {
@@ -364,13 +373,16 @@ function renderAuth() {
     err.textContent = authVm.error || '';
     err.classList.toggle('hidden', !authVm.error);
   }
-  if (demo) {
-    if (authVm.demoCode) {
-      demo.classList.remove('hidden');
-      demo.innerHTML = `<strong>Демо-код:</strong> <span class="font-mono text-lg">${authVm.demoCode}</span> <span class="text-slate-400">(в продакшене уходит на email)</span>`;
-    } else {
-      demo.classList.add('hidden');
-    }
+  if (hint) {
+    hint.textContent = authVm.step === 'code'
+      ? `Код отправлен на ${authVm.email}. Проверьте письмо (и папку «Спам»). На ввод кода — 2 минуты.`
+      : '';
+  }
+  if (resend) {
+    resend.textContent = authVm.resendLabel;
+    resend.disabled = authVm.resendIn > 0;
+    resend.classList.toggle('opacity-50', authVm.resendIn > 0);
+    resend.classList.toggle('cursor-not-allowed', authVm.resendIn > 0);
   }
 
   // mode tabs
@@ -736,7 +748,46 @@ function renderCabClients() {
       btn.onclick = () => { cabinetVm.selectClient(btn.dataset.selClient); renderCabClients(); };
     });
   }
+  renderVaultPanel();
   renderClientDetail();
+}
+
+// ——— Сейф клиентов: статус и разблокировка паролем ———
+function renderVaultPanel() {
+  const box = $('#vault-panel');
+  if (!box) return;
+  const p = cabinetVm.psychologist;
+  if (!p) { box.innerHTML = ''; return; }
+  if (!p.keyVerifier) {
+    box.innerHTML = `<div class="mb-6 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm">
+      <div class="font-medium text-amber-900 mb-1">Сейф клиентов не настроен</div>
+      <p class="text-amber-800 mb-2">Задайте пароль — из него выводится ключ шифрования карточек клиентов (пароль не хранится).</p>
+      <div class="flex flex-wrap gap-2"><input id="vault-pass" type="password" placeholder="Пароль (мин. 6)" class="flex-1 min-w-[180px] px-3 py-2 rounded-xl border"><button id="btn-vault-init" class="px-4 py-2 rounded-full bg-amber-600 text-white text-sm font-medium">Задать и открыть</button></div>
+    </div>`;
+  } else if (!authService.isVaultUnlocked()) {
+    box.innerHTML = `<div class="mb-6 rounded-xl border p-4 text-sm">
+      <div class="font-medium mb-1">🔒 Сейф клиентов закрыт</div>
+      <div class="flex flex-wrap gap-2"><input id="vault-pass" type="password" placeholder="Пароль сейфа" class="flex-1 min-w-[180px] px-3 py-2 rounded-xl border"><button id="btn-vault-unlock" class="px-4 py-2 rounded-full bg-slate-900 text-white text-sm font-medium">Открыть</button></div>
+    </div>`;
+  } else {
+    box.innerHTML = '<div class="mb-6 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">🔓 Сейф открыт — карточки клиентов расшифрованы</div>';
+    return;
+  }
+  const init = $('#btn-vault-init');
+  if (init) init.onclick = async () => {
+    const r = await authService.initVaultPassword(p.id, $('#vault-pass')?.value);
+    showToast(r.message, !r.ok);
+    if (r.ok) {
+      supabaseSync.pushProfile(p); // key_verifier → сервер (владелец, по своей сессии)
+      renderCabClients();
+    }
+  };
+  const unl = $('#btn-vault-unlock');
+  if (unl) unl.onclick = async () => {
+    const r = await authService.unlockVault(p.id, $('#vault-pass')?.value);
+    showToast(r.message, !r.ok);
+    if (r.ok) renderCabClients();
+  };
 }
 
 // ——— Карточка клиента: сессии + записи (журнал работы) ———
@@ -1318,20 +1369,20 @@ function bindEvents() {
   });
   $('#auth-send')?.addEventListener('click', async () => {
     authVm.email = $('#auth-email')?.value || '';
+    collectAuthRegFields();
     await authVm.requestCode();
     renderAuth();
-    if (authVm.demoCode) showToast('Код: ' + authVm.demoCode);
+  });
+  $('#auth-resend')?.addEventListener('click', async () => {
+    if (authVm.resendIn > 0) return;
+    await authVm.requestCode();
+    renderAuth();
   });
   $('#auth-confirm')?.addEventListener('click', async () => {
     authVm.email = $('#auth-email')?.value || authVm.email;
     authVm.code = $('#auth-code')?.value || '';
     authVm.password = $('#auth-password')?.value || '';
-    if (authVm.mode === 'register') {
-      authVm.fullName = $('#auth-fullname')?.value || '';
-      authVm.phone = $('#auth-phone')?.value || '';
-      authVm.specialization = $('#auth-spec')?.value || 'Психолог';
-      authVm.city = $('#auth-city')?.value || '';
-    }
+    collectAuthRegFields();
     const psy = await authVm.confirmCode();
     renderAuth();
     if (psy) {
@@ -1341,7 +1392,6 @@ function bindEvents() {
   });
   $('#auth-back-email')?.addEventListener('click', () => {
     authVm.step = 'email';
-    authVm.demoCode = '';
     authVm.error = '';
     authVm.notify();
     renderAuth();
@@ -1876,3 +1926,6 @@ function boot() {
 }
 
 boot();
+
+// экспорт для смоук-тестов (verify_app / auth-flow)
+export { portalVm, authVm, cabinetVm, bookingVm };

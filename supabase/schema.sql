@@ -570,3 +570,74 @@ $$;
 
 revoke execute on function public.create_booking(text, text, text, text, text, text, text, text, text, text, text, text, text, text, numeric, numeric, text) from public;
 grant execute on function public.create_booking(text, text, text, text, text, text, text, text, text, text, text, text, text, text, numeric, numeric, text) to anon, authenticated;
+
+-- ============================================================
+-- claim_psychologist_profile — привязка профиля к подтверждённому email.
+-- Вызывается ПОСЛЕ проверки кода (authenticated, auth.uid() задан):
+--   1) находит психолога по email → присваивает owner_id (владение кабинетом);
+--   2) если профиля нет (регистрация) → создаёт со slug из имени/email.
+-- ============================================================
+create or replace function public.claim_psychologist_profile(
+  p_email          text,
+  p_full_name      text default '',
+  p_specialization text default 'Психолог',
+  p_city           text default ''
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_id    text;
+  v_owner uuid := auth.uid();
+  v_base  text;
+  v_slug  text;
+  v_i     int := 0;
+begin
+  if v_owner is null then
+    return jsonb_build_object('ok', false, 'error', 'Email не подтверждён');
+  end if;
+
+  select id into v_id
+  from psychologists
+  where lower(trim(email)) = lower(trim(p_email))
+  order by created_at
+  limit 1;
+
+  if v_id is not null then
+    update psychologists
+    set owner_id = coalesce(owner_id, v_owner),
+        is_active = true
+    where id = v_id;
+    return jsonb_build_object('ok', true, 'id', v_id);
+  end if;
+
+  v_base := lower(regexp_replace(coalesce(nullif(trim(p_full_name), ''), split_part(trim(p_email), '@', 1)),
+                                 '[^0-9a-zA-Zа-яё]+', '-', 'gi'));
+  if v_base is null or v_base in ('', '-') then
+    v_base := 'specialist';
+  end if;
+  v_slug := v_base;
+  while exists (select 1 from psychologists where slug = v_slug) loop
+    v_i := v_i + 1;
+    v_slug := v_base || '-' || v_i;
+  end loop;
+
+  insert into psychologists (email, full_name, specialization, city, slug, owner_id, is_active)
+  values (
+    lower(trim(p_email)),
+    coalesce(nullif(trim(p_full_name), ''), split_part(trim(p_email), '@', 1)),
+    coalesce(nullif(trim(p_specialization), ''), 'Психолог'),
+    coalesce(trim(p_city), ''),
+    v_slug,
+    v_owner,
+    true
+  )
+  returning id into v_id;
+
+  return jsonb_build_object('ok', true, 'id', v_id, 'created', true);
+end;
+$$;
+
+revoke execute on function public.claim_psychologist_profile(text, text, text, text) from public, anon;
+grant execute on function public.claim_psychologist_profile(text, text, text, text) to authenticated;

@@ -139,7 +139,8 @@
               <input id="auth-city" type="text" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="Гродно">
             </div>
           </div>
-          <button id="auth-confirm" class="w-full py-3 rounded-full bg-indigo-600 text-white font-medium hover:bg-indigo-700">Подтвердить</button>
+          <button id="auth-confirm" class="w-full py-3 rounded-full bg-indigo-600 text-white font-medium hover:bg-indigo-700">Подтвердить и войти</button>
+          <button id="auth-resend" type="button" class="w-full text-sm text-indigo-600 hover:underline">Отправить код снова</button>
           <button id="auth-back-email" type="button" class="w-full text-sm text-slate-500 hover:text-indigo-600">← Другой email</button>
         </div>
       </div>
@@ -272,6 +273,7 @@
               <h1 class="text-2xl font-bold">Клиенты</h1>
               <button id="btn-add-client" class="px-4 py-2 rounded-full bg-indigo-600 text-white text-sm">+ Клиент</button>
             </div>
+            <div id="vault-panel"></div>
             <div id="clients-list" class="bg-white rounded-xl border"></div>
             <div id="client-detail" class="mt-6"></div>
           </div>
@@ -640,6 +642,6 @@
     </div>
   </div>
 
-  <script type="module" src="%BASE%js/app.js?v=20260923d"></script>
+  <script type="module" src="%BASE%js/app.js?v=20260923e"></script>
 </body>
 </html>
