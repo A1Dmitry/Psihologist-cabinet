@@ -2,8 +2,11 @@
 
 Портал кабинетов психологов (SPA): каталог, запись, оплата/аванс, напоминания, перенос с согласием, шифрование PII.
 
-**Рабочий репозиторий:** https://github.com/A1Dmitry/Psihologist-cabinet  
-**Целевой (позже):** https://github.com/mikhailouskayanataliya-collab/Psihologist-cabinet
+**Репозиторий (основной):** https://github.com/A1Dmitry/Psihologist-cabinet  
+Перенос в `mikhailouskayanataliya-collab/Psihologist-cabinet` отложен: целевой
+репозиторий недоступен (приглашение коллаборатору не принято/нет доступа).
+Инструкции сохранены в `docs/archive/repo-transfer/` — статус: открытый вопрос
+к владельцу продукта. До решения текущий репозиторий — единственный источник истины.
 
 ## Запуск
 
@@ -28,6 +31,8 @@ chmod +x serve.sh && ./serve.sh  # простой статический сер�
 - `supabase/seed.sql` — референс-данные профиля с сайта nataliamikhailouskaya.by
 - `docs/DATA-MODEL.md` — модель данных сайта, сверка и маппинг в БД
 - `docs/ROADMAP-OKNA.md` — роадмап: сверка функций с okna.one и бэклог задач (T-01…T-25)
+- `docs/INFRA.md` — продакшен-инфраструктура: runbook Supabase/Resend/Pages, статус, чек-лист
+- `docs/SCHEMA-REQUESTS.md` — очередь заявок на изменение схемы (правила для агентов 2–5)
 - `devserver.py` — локальный сервер со SPA-fallback (глубокие ссылки `/psy/{slug}`)
 - `verify_pages.py` — смоук-проверка маршрутов (локально или GitHub Pages)
 

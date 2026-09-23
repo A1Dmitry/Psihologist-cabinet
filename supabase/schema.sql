@@ -669,3 +669,32 @@ $$;
 
 revoke execute on function public.claim_psychologist_profile(text, text, text, text) from public, anon;
 grant execute on function public.claim_psychologist_profile(text, text, text, text) to authenticated;
+
+-- ============================================================
+-- client_error_logs — критичные ошибки фронтенда (boot, runtime, catalog).
+-- Пишет только клиентский errorLogService (insert, fire-and-forget, анонимно).
+-- Чтение — ТОЛЬКО через service_role (SQL Editor / дашборд): select-политики
+-- намеренно отсутствуют, логи недоступны по REST ни anon, ни authenticated.
+-- Чистка старых записей — вручную или по расписанию (см. docs/INFRA.md).
+-- ============================================================
+create table if not exists client_error_logs (
+  id          bigint generated always as identity primary key,
+  created_at  timestamptz not null default now(),
+  level       text not null default 'error',     -- error | rejection | boot | catalog
+  message     text not null default '',
+  stack       text not null default '',
+  route       text not null default '',          -- location.pathname
+  url         text not null default '',          -- полный URL (base path включён)
+  user_agent  text not null default '',
+  app_version text not null default '',          -- ?v= из index.html / версия сборки
+  extra       jsonb not null default '{}'::jsonb
+);
+
+alter table client_error_logs enable row level security;
+
+drop policy if exists client_error_logs_insert on client_error_logs;
+create policy client_error_logs_insert on client_error_logs
+  for insert to anon, authenticated
+  with check (true);
+
+grant insert on client_error_logs to anon, authenticated;

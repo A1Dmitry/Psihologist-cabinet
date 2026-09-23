@@ -11,7 +11,9 @@
   <meta property="og:type" content="website" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <!-- Видимый отчёт об ошибках: белый экран без диагностики исключён.
-       Ловит и ошибки загрузки/парсинга модулей (capture), и runtime-ошибки. -->
+       Ловит и ошибки загрузки/парсинга модулей (capture), и runtime-ошибки.
+       Критичные ошибки также уходят в Supabase (client_error_logs) через
+       errorLogService — чтобы не зависеть от скриншотов пользователя. -->
   <script>
     (function () {
       function show(msg) {
@@ -25,12 +27,27 @@
         }
         el.textContent += (el.textContent ? '\n' : '') + msg;
       }
+      // Отправка в client_error_logs; модуль загружается лениво, ошибки логера
+      // глушатся — визуальный баннер выше остаётся главным каналом для пользователя.
+      function report(level, msg, stack) {
+        try {
+          import('%BASE%js/services/errorLogService.js').then(function (m) {
+            m.reportClientError(level, { message: msg, stack: stack });
+          }).catch(function () { /* offline / Supabase недоступен — только баннер */ });
+        } catch (_) { /* старые браузеры без import() — только баннер */ }
+      }
       window.addEventListener('error', function (e) {
-        if (e.target && e.target.tagName === 'SCRIPT') show('Не загрузился скрипт: ' + (e.target.src || '') );
-        else if (e.message) show('Ошибка: ' + e.message + (e.filename ? ' @ ' + e.filename + ':' + e.lineno : ''));
+        if (e.target && e.target.tagName === 'SCRIPT') {
+          show('Не загрузился скрипт: ' + (e.target.src || '') );
+          report('boot', 'script load failed: ' + (e.target.src || ''));
+        } else if (e.message) {
+          show('Ошибка: ' + e.message + (e.filename ? ' @ ' + e.filename + ':' + e.lineno : ''));
+          report('error', e.message, e.error && e.error.stack ? e.error.stack : (e.filename + ':' + e.lineno));
+        }
       }, true);
       window.addEventListener('unhandledrejection', function (e) {
         show('Promise: ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason));
+        report('rejection', (e.reason && (e.reason.message || String(e.reason))), e.reason && e.reason.stack);
       });
     })();
   </script>
