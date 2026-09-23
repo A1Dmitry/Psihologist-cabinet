@@ -19,6 +19,7 @@ import { reportClientError } from './services/errorLogService.js';
 import { isSupabaseConfigured } from './services/supabaseConfig.js';
 import { applyProfileSeo, applyPortalSeo, applyBookingSeo, applyNoIndex } from './services/seoService.js';
 import { googleAddLink } from './services/calendarService.js';
+import { todayStr } from './services/timezoneService.js';
 // [Агент 3 · кабинет и клиенты] новые блоки кабинета и страница клиента по ссылке
 import { cabinetUi } from './views/cabinetUi.js';
 
@@ -885,11 +886,11 @@ function renderTgClients() {
   box.innerHTML = clients.map(c => {
     const invite = `https://t.me/${cfg.botName || 'ваш_бот'}?start=${c.id}`;
     return `<div class="p-3 flex justify-between items-center gap-2 border-b last:border-0 text-sm">
-      <div><span class="font-medium">${escHtml(c.nickname || c.name)}</span>
+      <div><span class="font-medium">${esc(c.nickname || c.name)}</span>
         ${c.telegramChat ? '<span class="text-emerald-600 text-xs"> · ✓ подключен</span>' : '<span class="text-slate-400 text-xs"> · не подключен</span>'}</div>
       ${c.telegramChat
         ? `<button data-tg-unlink="${c.id}" class="text-xs text-rose-500">Отключить</button>`
-        : `<button data-tg-copy-invite="${escHtml(invite)}" class="text-xs text-indigo-600">Скопировать приглашение</button>`}
+        : `<button data-tg-copy-invite="${esc(invite)}" class="text-xs text-indigo-600">Скопировать приглашение</button>`}
     </div>`;
   }).join('');
   box.querySelectorAll('[data-tg-copy-invite]').forEach(btn => {
@@ -918,7 +919,7 @@ function bindTelegramTab() {
     out.textContent = 'Проверяем…'; out.className = 'text-xs mt-1 text-slate-400';
     try {
       const name = await telegramService.testToken(token);
-      out.innerHTML = `✓ Бот найден: <b>@${escHtml(name)}</b>`;
+      out.innerHTML = `✓ Бот найден: <b>@${esc(name)}</b>`;
       out.className = 'text-xs mt-1 text-emerald-600';
     } catch (e) {
       out.textContent = `✗ ${e.message}. Проверьте токен (формат 1234567890:AA…).`;
@@ -940,8 +941,8 @@ function bindTelegramTab() {
       }
       box.innerHTML = chats.slice(0, 5).map((ch, i) => `
         <button data-i="${i}" class="w-full text-left px-3 py-2 rounded-xl border hover:bg-indigo-50 text-xs">
-          <b>${escHtml(ch.name || 'Чат ' + ch.chatId)}</b> · chat_id <code>${escHtml(ch.chatId)}</code>
-          ${ch.text ? ` · «${escHtml(ch.text.slice(0, 30))}»` : ''}
+          <b>${esc(ch.name || 'Чат ' + ch.chatId)}</b> · chat_id <code>${esc(ch.chatId)}</code>
+          ${ch.text ? ` · «${esc(ch.text.slice(0, 30))}»` : ''}
         </button>`).join('');
       box.querySelectorAll('button[data-i]').forEach(b => {
         b.onclick = () => {
@@ -951,7 +952,7 @@ function bindTelegramTab() {
         };
       });
     } catch (e) {
-      box.innerHTML = `<div class="text-xs text-rose-500">✗ ${escHtml(e.message)}</div>`;
+      box.innerHTML = `<div class="text-xs text-rose-500">✗ ${esc(e.message)}</div>`;
     }
   });
 
@@ -1014,7 +1015,7 @@ function renderClientTelegramBlock(c) {
   </div>`;
 }
 
-window.bindClientTelegramBlock = function (box) {
+function bindClientTelegramBlock(box) {
   box.querySelectorAll('[data-tg-invite]').forEach(btn => {
     btn.onclick = () => box.querySelector('[data-tg-invite-box]')?.classList.toggle('hidden');
   });
@@ -1024,7 +1025,9 @@ window.bindClientTelegramBlock = function (box) {
       catch (_) { window.prompt('Скопируйте ссылку:', btn.dataset.tgCopy); }
     };
   });
-};
+}
+// оставляем ссылку на функции в window: на неё опираются обработчики из разметки
+window.bindClientTelegramBlock = bindClientTelegramBlock;
 
 function renderClientDetail() {
   const box = $('#client-detail');

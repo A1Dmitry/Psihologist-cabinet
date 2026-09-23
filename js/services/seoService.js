@@ -57,6 +57,10 @@ export function setRobots(content = 'index,follow') {
 export function setMeta({ title, description, url, image, ogType = 'website', robots }) {
   if (title) document.title = title;
   setRobots(robots || 'index,follow');
+  // Абсолютные адреса для og:url/og:image и canonical (относительные пути
+  // разворачиваются в текущий origin); без них ссылки в разметке не работают.
+  const resolvedUrl = url ? seoUrl(url) : '';
+  const resolvedImage = image ? seoUrl(image) : '';
   const set = (selector, attr, key, value, create) => {
     if (!value) return;
     const el = upsertMeta(selector, create);
@@ -221,6 +225,7 @@ export function applyProfileSeo(psy, services, pageUrl, { bookUrl } = {}) {
   const title = `${psy.fullName} — ${psy.specialization || profession.label.toLowerCase()} · запись онлайн`;
   const description = [psy.greeting, psy.about].filter(Boolean).join(' ').slice(0, 300)
     || `Запись на консультацию: ${psy.fullName}. ${psy.city || ''}`.trim();
+  const canonicalUrl = seoUrl(pageUrl);
   setMeta({
     title,
     description,
