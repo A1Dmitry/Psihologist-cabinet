@@ -31,3 +31,21 @@ export function mapPsy(row) {
     createdAt: row.created_at
   });
 }
+
+/** Относительные пути публичных страниц (без origin — origin задаётся в seoService.SITE_ORIGIN). */
+export function psyPublicPaths(slug) {
+  const s = encodeURIComponent(slug || '');
+  return {
+    profile: `psy/${s}`,
+    book: `book/${s}`
+  };
+}
+
+/** Query для глубокой ссылки на шаг записи (услуга / шаг wizard). */
+export function bookDeepLinkQuery({ serviceId, step } = {}) {
+  const q = new URLSearchParams();
+  if (serviceId) q.set('service', serviceId);
+  if (step) q.set('step', String(step));
+  const s = q.toString();
+  return s ? `?${s}` : '';
+}

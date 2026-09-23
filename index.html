@@ -547,12 +547,27 @@
       <div id="book-payment-info" class="mb-6"></div>
       <div id="book-pay-actions" class="hidden mb-8"></div>
       <div id="book-form-block">
+      <nav id="book-progress" class="flex items-center gap-2 mb-6 text-sm" aria-label="Шаги записи">
+        <button type="button" data-book-goto="1" class="book-prog flex-1 px-3 py-2 rounded-xl border font-medium">1. Услуга</button>
+        <span class="text-slate-300" aria-hidden="true">→</span>
+        <button type="button" data-book-goto="2" class="book-prog flex-1 px-3 py-2 rounded-xl border font-medium">2. Время</button>
+        <span class="text-slate-300" aria-hidden="true">→</span>
+        <button type="button" data-book-goto="3" class="book-prog flex-1 px-3 py-2 rounded-xl border font-medium">3. Контакт</button>
+      </nav>
+      <div id="book-choice-summary" class="hidden mb-4 text-sm text-slate-600 bg-slate-50 border border-slate-100 rounded-xl px-4 py-2"></div>
+      <section id="book-step-service" data-book-step="1">
       <h3 class="font-semibold mb-3">1. Услуга</h3>
+      <p class="text-xs text-slate-500 mb-3">Выберите услугу — сразу покажем свободные окна</p>
       <div id="book-services" class="space-y-3 mb-8"></div>
-      <h3 class="font-semibold mb-3">2. День и время</h3>
+      </section>
+      <section id="book-step-time" data-book-step="2" class="hidden">
+      <h3 class="font-semibold mb-1">2. День и время</h3>
+      <p id="book-tz-label" class="text-xs text-slate-500 mb-3">Время в вашем поясе</p>
       <div id="book-range" class="flex flex-wrap gap-2 mb-3"></div>
       <div id="book-days" class="flex gap-2 overflow-x-auto mb-3 pb-1"></div>
       <div id="book-slots" class="grid grid-cols-3 sm:grid-cols-4 gap-2 mb-8"></div>
+      </section>
+      <section id="book-step-contact" data-book-step="3" class="hidden">
       <h3 class="font-semibold mb-3">3. Никнейм и контакт</h3>
       <p class="text-xs text-slate-500 mb-3">Никнейм уникален в кабинете психолога · не менее 4 букв · нужен для связи и напоминаний</p>
       <div class="space-y-3 mb-6">
@@ -569,7 +584,12 @@
           <label>Сайт<input id="bk-website" type="text" tabindex="-1" autocomplete="off"></label>
         </div>
       </div>
-      <button id="book-submit" class="w-full py-3.5 rounded-full bg-indigo-600 text-white font-semibold hover:bg-indigo-700">Записаться</button>
+      </section>
+      <div id="book-wizard-nav" class="flex flex-col sm:flex-row gap-3">
+        <button type="button" id="book-back" class="hidden sm:w-40 py-3.5 rounded-full border border-slate-300 text-slate-700 font-medium hover:bg-slate-50">Назад</button>
+        <button type="button" id="book-next" class="flex-1 py-3.5 rounded-full bg-indigo-600 text-white font-semibold hover:bg-indigo-700">Далее</button>
+        <button type="button" id="book-submit" class="hidden flex-1 py-3.5 rounded-full bg-indigo-600 text-white font-semibold hover:bg-indigo-700">Записаться</button>
+      </div>
       </div>
     </div>
   </div>

@@ -1381,12 +1381,12 @@ function renderProfile() {
       <h3 class="font-semibold text-slate-900 mt-6">Услуги и стоимость</h3>
       <div class="mt-2 divide-y border rounded-xl overflow-hidden">
         ${services.map(x => `
-        <div class="p-3 flex justify-between items-start gap-3 text-sm">
+        <a href="${esc(bookUrl)}?service=${encodeURIComponent(x.id)}" data-spa-book data-slug="${esc(p.slug)}" data-service="${esc(x.id)}" class="p-3 flex justify-between items-start gap-3 text-sm hover:bg-indigo-50/60">
           <div><div class="font-medium">${esc(x.name)}</div>
           <div class="text-slate-500">${esc(serviceMetaLine(x))}</div>
           ${x.description ? `<div class="text-slate-500">${esc(x.description)}</div>` : ''}</div>
           <div class="font-semibold text-indigo-700 whitespace-nowrap">${esc(x.priceLabel())}</div>
-        </div>`).join('')}
+        </a>`).join('')}
       </div>` : ''}
 
       ${eduBasic.length ? `<h3 class="font-semibold text-slate-900 mt-6">Психологическое образование</h3>${eduList(eduBasic)}` : ''}
@@ -1418,6 +1418,7 @@ function renderBooking() {
   // Перерисовка вызывается после выбора услуги, даты и времени. Повторный
   // loadBySlug сбрасывал введённые данные и делал отправку записи невозможной.
   if (slug && bookingVm.psychologist?.slug !== slug) bookingVm.loadBySlug(slug);
+  bookingVm.applyDeepLink({ search: location.search, hash: location.hash, serviceId: route.params.service || '' });
   // ==== КОНЕЦ новой функциональности ====
   if (!bookingVm.psychologist) {
     $('#book-body').innerHTML = '<div class="text-center py-20 text-slate-400">Психолог не найден. <button class="text-indigo-600" onclick="navigate(\'portal\')">К каталогу</button></div>';
@@ -1442,6 +1443,28 @@ function renderBooking() {
   // SEO страницы записи (лёгкое: JSON-LD остаётся на профиле)
   try { applyBookingSeo(p, urlFor.book(p.slug)); } catch (e) { console.warn('seo', e); }
 
+  $$('[data-book-step]').forEach(sec => {
+    sec.classList.toggle('hidden', Number(sec.dataset.bookStep) !== bookingVm.step);
+  });
+  $$('.book-prog').forEach(btn => {
+    const n = Number(btn.dataset.bookGoto);
+    const on = n === bookingVm.step;
+    const done = n < bookingVm.step;
+    btn.className = 'book-prog flex-1 px-3 py-2 rounded-xl border font-medium ' +
+      (on ? 'bg-indigo-600 text-white border-indigo-600' : done ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-white text-slate-500 border-slate-200');
+  });
+  const summary = $('#book-choice-summary');
+  if (summary) {
+    const text = bookingVm.choiceSummary;
+    summary.textContent = text;
+    summary.classList.toggle('hidden', bookingVm.step === 1 || !text);
+  }
+  const tz = $('#book-tz-label');
+  if (tz) tz.textContent = bookingVm.timeZoneCaption;
+  $('#book-back')?.classList.toggle('hidden', bookingVm.step <= 1);
+  $('#book-next')?.classList.toggle('hidden', bookingVm.step >= 3);
+  $('#book-submit')?.classList.toggle('hidden', bookingVm.step !== 3);
+
   const svcBox = $('#book-services');
   if (svcBox) {
     svcBox.innerHTML = bookingVm.services.map(s => `
@@ -1453,8 +1476,14 @@ function renderBooking() {
         ${s.payUrl ? `<a href="${esc(s.payUrl)}" target="_blank" rel="noopener" class="inline-block mt-1 text-sm text-indigo-600 hover:underline" onclick="event.stopPropagation()">Оплатить ↗</a>` : ''}</div>
         <div class="font-semibold text-indigo-700">${esc(s.priceLabel())}</div>
       </label>`).join('');
-    svcBox.querySelectorAll('input').forEach(inp => {
-      inp.onchange = () => { bookingVm.selectService(inp.value); renderBooking(); };
+    svcBox.querySelectorAll('label').forEach(lab => {
+      lab.onclick = e => {
+        if (e.target.closest('a')) return;
+        const id = lab.querySelector('input')?.value;
+        if (!id) return;
+        bookingVm.selectService(id, { revealSlots: true });
+        renderBooking();
+      };
     });
   }
 
@@ -1484,9 +1513,9 @@ function renderBooking() {
   const slotsBox = $('#book-slots');
   if (slotsBox) {
     slotsBox.innerHTML = bookingVm.slots.map(s => `
-      <button type="button" data-time="${s.time}" ${s.busy ? 'disabled' : ''}
+      <button type="button" data-time="${s.time}" ${s.busy ? 'disabled' : ''} title="${esc(s.title || (bookingVm.timeZonesDiffer ? 'у специалиста ' + s.time : ''))}"
         class="py-2.5 rounded-lg border text-sm font-medium ${s.busy ? 'opacity-35 line-through' : ''} ${bookingVm.time === s.time ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-200 hover:border-indigo-300'}">
-        ${s.time}
+        ${esc(s.label || s.time)}${s.subLabel ? `<span class="block text-[10px] font-normal opacity-70">${esc(s.subLabel)}</span>` : ''}
       </button>`).join('');
     slotsBox.querySelectorAll('button:not([disabled])').forEach(btn => {
       btn.onclick = () => { bookingVm.selectTime(btn.dataset.time); renderBooking(); };
@@ -1529,6 +1558,13 @@ function renderBooking() {
   } else {
     formBlock?.classList.remove('hidden');
     payActions?.classList.add('hidden');
+  }
+
+  if (bookingVm.pendingScrollToSlots) {
+    bookingVm.pendingScrollToSlots = false;
+    requestAnimationFrame(() => {
+      $('#book-step-time')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   }
 }
 
@@ -1909,7 +1945,21 @@ function bindEvents() {
     renderCabinet();
   });
 
-  // Booking submit
+  // Booking wizard (T-01) + submit
+  $('#book-next')?.addEventListener('click', () => {
+    bookingVm.goNext();
+    renderBooking();
+  });
+  $('#book-back')?.addEventListener('click', () => {
+    bookingVm.goBack();
+    renderBooking();
+  });
+  document.addEventListener('click', e => {
+    const goto = e.target.closest('[data-book-goto]');
+    if (!goto || !document.getElementById('page-booking') || document.getElementById('page-booking').classList.contains('hidden')) return;
+    bookingVm.goToStep(goto.dataset.bookGoto);
+    renderBooking();
+  });
   $('#bk-nickname')?.addEventListener('input', e => {
     bookingVm.onNicknameInput(e.target.value);
     const box = $('#bk-nick-suggestions');
