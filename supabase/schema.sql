@@ -240,6 +240,22 @@ alter table session_settings add column if not exists last_notified_session_at  
 -- chat_id клиента для напоминаний (подключение бота по /start <clientId>)
 alter table clients add column if not exists telegram_chat text not null default '';
 
+-- Одноразовые коды входа специалиста (6–8 букв/цифр, окно 2 минуты).
+-- Письмо отправляет Edge Function auth-code (Resend) — шаблоны Supabase Auth
+-- не участвуют. Код хранится хешем (SHA-256), одноразовый (used_at),
+-- max 5 попыток. RLS без policies: доступ только сервисным ключом функции.
+create table if not exists auth_login_codes (
+  id         uuid primary key default gen_random_uuid(),
+  email      text not null,
+  code_hash  text not null,
+  attempts   int not null default 0,
+  expires_at timestamptz not null,
+  used_at    timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists auth_login_codes_email_idx on auth_login_codes (email);
+alter table auth_login_codes enable row level security;
+
 -- ——— Платёж / чек ———
 create table if not exists payments (
   id              text primary key default ('pay_' || extract(epoch from now())::bigint::text || '_' || substr(md5(random()::text), 1, 6)),

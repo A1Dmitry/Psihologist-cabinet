@@ -422,6 +422,8 @@ function renderAuth() {
   emailStep?.classList.toggle('hidden', authVm.step !== 'email');
   codeStep?.classList.toggle('hidden', authVm.step !== 'code');
   regFields?.classList.toggle('hidden', authVm.mode !== 'register' || authVm.step !== 'code');
+  const passWrap = $('#auth-pass-wrap');
+  passWrap?.classList.toggle('hidden', authVm.mode !== 'register'); // при входе пароль не нужен
 
   $('#auth-email') && ($('#auth-email').value = authVm.email);
   $('#auth-code') && ($('#auth-code').value = authVm.code);
@@ -431,7 +433,7 @@ function renderAuth() {
   }
   if (hint) {
     hint.textContent = authVm.step === 'code'
-      ? `Код отправлен на ${authVm.email}. Проверьте письмо (и папку «Спам»). На ввод кода — 2 минуты.`
+      ? `Код отправлен на ${authVm.email}: 6–8 букв и цифр, действует 2 минуты. Проверьте письмо (и папку «Спам»).`
       : '';
   }
   if (resend) {
@@ -1649,6 +1651,10 @@ function bindEvents() {
       startTelegramLoops(psy.id);
       navigate('cabinet');
     }
+  });
+  $('#auth-code')?.addEventListener('input', e => {
+    // только латиница/цифры, верхний регистр — код из письма вводится без ошибок
+    e.target.value = String(e.target.value).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
   });
   $('#auth-back-email')?.addEventListener('click', () => {
     authVm.step = 'email';

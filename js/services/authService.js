@@ -1,7 +1,11 @@
 /**
- * AuthService — вход/регистрация ТОЛЬКО через сервер (Supabase Auth OTP):
- *   1) «Получить код» → Supabase отправляет 6-значный код на email;
- *   2) 2 минуты на ввод (окно ожидания с таймером в UI);
+ * AuthService — вход/регистрация ТОЛЬКО через сервер, по одноразовому коду
+ * из письма (6–8 букв и цифр, окно ввода 2 минуты):
+ *   1) «Получить код» → код генерируется в БД (auth_login_codes) и отправляется
+ *      на email специалиста Edge Function auth-code (Resend); сессия браузера —
+ *      через hashed_token → /auth/v1/verify, код после входа гасится (used_at);
+ *   2) если функция auth-code ещё не задеплоена — запасной канал: встроенная
+ *      почта Supabase Auth (OTP; требует шаблона с {{ .Token }} в дашборде);
  *   3) код совпал → email подтверждён → claim профиля по email:
  *      существующая запись психолога становится его кабинетом (owner_id),
  *      отсутствующая — создаётся (регистрация).
@@ -24,6 +28,7 @@ function emailError(email) {
 export class AuthService {
   constructor() {
     this.session = null; // { access_token, refresh_token, expires_at }
+    this.channel = null; // как был выслан текущий код: 'fn' (auth-code) | 'otp' (Supabase)
     this.resendIn = 0;   // сек до возможности повторной отправки
     this._timer = null;
   }
@@ -34,9 +39,28 @@ export class AuthService {
     const err = emailError(e);
     if (err) return { ok: false, message: err };
 
-    await supabaseApi.requestEmailOtp(e);
+    let viaFn = true;
+    try {
+      await supabaseApi.requestLoginCode(e);
+    } catch (ex) {
+      if (ex?.status === 404) {
+        // функция auth-code не задеплоена → запасной канал: встроенная почта Supabase
+        viaFn = false;
+        try { await supabaseApi.requestEmailOtp(e); }
+        catch (ex2) { return { ok: false, message: friendlyAuthError(ex2) }; }
+      } else {
+        // функция есть, но отказ (нет RESEND_API_KEY, частые запросы…) — честная ошибка
+        return { ok: false, message: ex?.message ? `Не удалось отправить код: ${ex.message}` : friendlyAuthError(ex) };
+      }
+    }
+    this.channel = viaFn ? 'fn' : 'otp';
     this._startResendCountdown();
-    return { ok: true, message: `Код отправлен на ${e}. Письмо идёт 1–3 минуты, окно ввода — 2 минуты.` };
+    return {
+      ok: true,
+      message: viaFn
+        ? `Код отправлен на ${e}. Он действует 2 минуты.`
+        : `Код отправлен на ${e} (запасной канал Supabase). Проверьте письмо и «Спам», окно ввода — 2 минуты.`
+    };
   }
 
   _startResendCountdown() {
@@ -51,14 +75,22 @@ export class AuthService {
   // ——— Шаг 2: проверить код из письма → подтверждение → вход ———
   async verifyCode(email, code, profile = {}) {
     const e = String(email || '').toLowerCase().trim();
-    const c = String(code || '').trim();
+    const c = String(code || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
     const err = emailError(e);
     if (err) return { ok: false, message: err };
-    if (!/^\d{4,8}$/.test(c)) return { ok: false, message: 'Введите код из письма' };
+    if (!/^[A-Z0-9]{6,8}$/.test(c)) return { ok: false, message: 'Введите код из письма: 6–8 букв и цифр' };
 
     let session;
     try {
-      session = await supabaseApi.verifyEmailOtp(e, c);
+      if (this.channel === 'otp') {
+        session = await supabaseApi.verifyEmailOtp(e, c);
+      } else if (this.channel === 'fn') {
+        session = await supabaseApi.verifyLoginCode(e, c);
+      } else {
+        // канал неизвестен (например, страница перезагружена между шагами)
+        session = await supabaseApi.verifyLoginCode(e, c)
+          .catch(() => supabaseApi.verifyEmailOtp(e, c));
+      }
     } catch (ex) {
       return { ok: false, message: friendlyAuthError(ex) };
     }

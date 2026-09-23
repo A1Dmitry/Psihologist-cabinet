@@ -2,11 +2,13 @@
 /**
  * Смоук серверной авторизации и серверного кабинета (мок Supabase):
  *   node verify_auth.mjs
- * Проверяет: OTP (create_user), перебор type при verify, окно 2 минуты,
- * claim → вход, pull кабинета, write-through задач/заметок/блокировок.
+ * Проверяет: свой код входа (Edge Function auth-code: 6–8 букв/цифр, uppercase,
+ * hashed_token → сессия, честные ошибки без magic-link), запасной OTP-канал
+ * (create_user, перебор type при verify), окно 2 минуты, claim → вход,
+ * pull кабинета, write-through задач/заметок/блокировок.
  */
 const calls = [];
-const state = { otpTypes: [], verifyTypes: [], claimCalls: 0 };
+const state = { otpTypes: [], verifyTypes: [], verifyHashes: [], claimCalls: 0, fnMode: 'missing', fnRequests: [], fnVerify: [] };
 globalThis.fetch = async (url, opts = {}) => {
   const u = String(url);
   const body = opts.body ? JSON.parse(opts.body) : {};
@@ -17,6 +19,12 @@ globalThis.fetch = async (url, opts = {}) => {
     return resp(200, {});
   }
   if (u.endsWith('/auth/v1/verify')) {
+    if (body.token_hash) {
+      // сессия по hashed_token (канал auth-code)
+      state.verifyHashes.push(body.token_hash);
+      if (body.token_hash === 'ht_1') return resp(200, { access_token: 'jwt-fn', refresh_token: 'r-fn' });
+      return resp(400, { msg: 'Invalid token_hash' });
+    }
     state.verifyTypes.push(body.type);
     if (body.token === '000000') return resp(400, { msg: 'Invalid token' });
     if (body.token === '111111') {
@@ -30,6 +38,22 @@ globalThis.fetch = async (url, opts = {}) => {
       return resp(400, { msg: 'Invalid type' });
     }
     return resp(400, { msg: 'Invalid token' });
+  }
+  if (u.includes('/functions/v1/auth-code')) {
+    // Edge Function auth-code: свой код в БД (письмо через Resend)
+    if (state.fnMode === 'missing') return resp(404, { msg: 'Function not found' });
+    state.fnRequests.push(body);
+    if (body.action === 'request') {
+      if (body.email === 'noresend@x.by') return resp(500, { ok: false, error: 'Почта не настроена: задайте секрет RESEND_API_KEY (supabase secrets set RESEND_API_KEY=re_...)' });
+      if (body.email === 'ratelimit@x.by') return resp(429, { ok: false, error: 'Слишком часто: подождите около 30 секунд' });
+      return resp(200, { ok: true, ttl_seconds: 120 });
+    }
+    if (body.action === 'verify') {
+      state.fnVerify.push(body.code);
+      if (body.code === 'ABCD2345') return resp(200, { ok: true, hashed_token: 'ht_1' });
+      return resp(400, { ok: false, error: 'Неверный код' });
+    }
+    return resp(400, { ok: false, error: 'Неизвестное действие' });
   }
   if (u.includes('/rpc/claim_psychologist_profile')) {
     state.claimCalls++;
@@ -165,6 +189,38 @@ state.verifyTypes = [];
 const psy2 = await authVm.confirmCode();
 ok('verify fallback signup → psychologist', !!psy2 && psy2.id === 'psy_test_1');
 ok('type chain magiclink→signup', state.verifyTypes.includes('magiclink') && state.verifyTypes.includes('signup'));
+
+// —— собственный код входа: Edge Function auth-code (письмо через Resend) ——
+state.fnMode = 'on';
+authService.logout();
+authVm.step = 'email'; authVm.error = ''; authVm.email = 'doc@x.by'; authVm.code = ''; authVm.mode = 'login';
+r = await authVm.requestCode();
+ok('fn: код отправлен через auth-code', r === true && state.fnRequests.length === 1 && state.fnRequests[0].action === 'request' && state.fnRequests[0].email === 'doc@x.by');
+ok('fn: канал fn + окно 120с', authService.channel === 'fn' && authVm.resendIn === 120);
+
+authVm.code = 'AB12'; // 4 символа
+const badPsy = await authVm.confirmCode();
+ok('fn: код короче 6 символов отклонён', badPsy === null && /6–8/.test(authVm.error));
+
+authVm.code = 'abcd2345'; // нижний регистр → нормализация в uppercase
+const psyFn = await authVm.confirmCode();
+ok('fn: код → hashed_token → сессия браузера', !!psyFn && psyFn.id === 'psy_test_1' && authService.session?.access_token === 'jwt-fn');
+ok('fn: сессия по token_hash (magiclink)', state.verifyHashes.includes('ht_1'));
+
+authService.logout();
+authVm.step = 'email'; authVm.error = ''; authVm.email = 'noresend@x.by'; authVm.code = '';
+r = await authVm.requestCode();
+ok('fn: RESEND_API_KEY не задан → честная ошибка, не magic-link', r === false && /RESEND_API_KEY/.test(authVm.error));
+
+authVm.email = 'ratelimit@x.by'; authVm.error = '';
+r = await authVm.requestCode();
+ok('fn: 30-сек кулдаун → честная ошибка', r === false && /30 секунд/.test(authVm.error));
+
+authVm.email = 'doc@x.by'; authVm.error = '';
+await authVm.requestCode();
+authVm.code = 'WRONG01';
+await authVm.confirmCode();
+ok('fn: неверный код → понятная ошибка', /Код неверный|Неверный код/.test(authVm.error));
 
 let failed = 0;
 for (const [n, p] of checks) { console.log((p ? 'PASS' : 'FAIL') + '  ' + n); if (!p) failed++; }

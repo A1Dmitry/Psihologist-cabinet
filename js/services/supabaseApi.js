@@ -172,6 +172,55 @@ export const supabaseApi = {
     throw new Error(lastMsg);
   },
 
+  // ——— Собственный код входа (Edge Function auth-code; письмо через Resend,
+  //     шаблоны Supabase Auth не участвуют; код живёт в таблице auth_login_codes) ———
+  async _authCodeFn(action, payload) {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/auth-code`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, ...payload })
+    });
+    if (res.status === 404) {
+      const e = new Error('Функция auth-code не задеплоена');
+      e.status = 404;
+      throw e;
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) {
+      const e = new Error(data.error || `HTTP ${res.status}`);
+      e.status = res.status;
+      throw e;
+    }
+    return data;
+  },
+
+  /** Запросить код входа (письмо с 6–8-символьным кодом, окно 2 минуты). */
+  async requestLoginCode(email) {
+    if (!isSupabaseConfigured()) throw new Error('Supabase не настроен');
+    await this._authCodeFn('request', { email: String(email).toLowerCase().trim() });
+    return true;
+  },
+
+  /** Проверить код → hashed_token → сессия (access_token) для браузера. */
+  async verifyLoginCode(email, code) {
+    const { hashed_token } = await this._authCodeFn('verify', {
+      email: String(email).toLowerCase().trim(),
+      code: String(code).trim().toUpperCase()
+    });
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/verify`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'magiclink', token_hash: hashed_token })
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      let msg = body;
+      try { msg = JSON.parse(body).msg || JSON.parse(body).error_description || body; } catch (_) {}
+      throw new Error(msg || `HTTP ${res.status}`);
+    }
+    return res.json();
+  },
+
   /** Привязать/создать профиль психолога по подтверждённому email (security definer). */
   async claimPsychologist({ email, fullName = '', specialization = '', city = '' }) {
     const rows = await request('rpc/claim_psychologist_profile', {
