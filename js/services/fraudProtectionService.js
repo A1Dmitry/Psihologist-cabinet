@@ -55,7 +55,7 @@ export class FraudProtectionService {
     return risk;
   }
 
-  logAttempt({ psychologistId, phone, success, reason }) {
+  logAttempt({ psychologistId, phone, success, reason, consent = false, consentAt = null }) {
     const phoneKey = normalizePhone(phone);
     db.bookingAttempts.push(new BookingAttempt({
       id: uid('att'),
@@ -63,7 +63,9 @@ export class FraudProtectionService {
       phoneKey,
       fingerprint: getFingerprint(),
       success,
-      reason
+      reason,
+      consent,
+      consentAt
     }));
     // keep last 500
     if (db.bookingAttempts.length > 500) {

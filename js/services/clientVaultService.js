@@ -257,7 +257,9 @@ export class ClientVaultService {
       contact: data.contact || '',
       note: data.note || '',
       needsEncryption: true,
-      trustLevel: data.trustLevel || 'new'
+      trustLevel: data.trustLevel || 'new',
+      consent: !!data.consent,        // T-25
+      consentAt: data.consentAt || null
     });
     row.nicknameHash = await this.hashNick(psychologistId, row.nickname);
     db.saveChanges();

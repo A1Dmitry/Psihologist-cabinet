@@ -93,24 +93,46 @@ function showToast(msg, isError) {
   setTimeout(() => el.classList.add('hidden'), 3000);
 }
 
-// ——— Router (indexable URLs: /psy/{slug}, /cabinet, /auth) ———
+// ——— Router: режим Hash History (#/psy/{slug}) ———
+// Весь сайт — одна страница index.html: сервер (GitHub Pages и любой статический
+// хостинг) игнорирует всё после #, а приложение само считает хвост ссылки и
+// рендерит нужный кабинет. Ссылки: .../project/#/psy/{slug}, .../#/book/{slug}.
+// Старые ссылки (.../psy/slug, ?book=, /psy/slug#book) при загрузке прозрачно
+// нормализуются в hash (replaceState, без перезагрузки).
+
 function computeBasePath() {
   let p = location.pathname;
   if (p.endsWith('/index.html')) p = p.slice(0, -'index.html'.length);
+  // legacy-сегменты в пути (ссылки до перехода на hash-роутинг)
   p = p.replace(/\/(psy\/[^/]+|book\/[^/]+|cabinet|auth|booking-done|reply)\/?$/i, '');
   return p.endsWith('/') ? p : p + '/';
 }
 const BASE = computeBasePath();
+/** Абсолютная база сайта (https://host/<repo>/) — с текущим pathname:
+ *  учитывает подпуть GitHub Pages и legacy-сегменты до нормализации. */
+const siteBase = () => location.origin + computeBasePath();
+
+/** Hash-части ссылок (источник истины для маршрутизации) */
+const hashPath = {
+  home: () => '/',
+  psy: slug => `/psy/${encodeURIComponent(slug)}`,
+  book: slug => `/book/${encodeURIComponent(slug)}`,
+  cabinet: () => '/cabinet',
+  auth: mode => (mode && mode !== 'login') ? `/auth?mode=${encodeURIComponent(mode)}` : '/auth',
+  success: () => '/booking-done',
+  reply: token => `/reply?reply=${encodeURIComponent(token)}`
+};
+
 const urlFor = {
-  home: () => BASE,
-  psy: slug => `${BASE}psy/${encodeURIComponent(slug)}`,
-  book: slug => `${BASE}book/${encodeURIComponent(slug)}`,
-  cabinet: () => `${BASE}cabinet`,
-  auth: () => `${BASE}auth`,
-  success: () => `${BASE}booking-done`,
-  reply: token => `${BASE}reply?reply=${encodeURIComponent(token)}`,
+  home: () => `${siteBase()}#/`,
+  psy: slug => `${siteBase()}#${hashPath.psy(slug)}`,
+  book: slug => `${siteBase()}#${hashPath.book(slug)}`,
+  cabinet: () => `${siteBase()}#/cabinet`,
+  auth: () => `${siteBase()}#/auth`,
+  success: () => `${siteBase()}#/booking-done`,
+  reply: token => `${siteBase()}#${hashPath.reply(token)}`,
   /** Публичная (индексируемая) ссылка записи для клиентов */
-  bookingLink: slug => `${location.origin}${urlFor.book(slug)}`
+  bookingLink: slug => urlFor.book(slug)
 };
 
 function routeUrl(r) {
@@ -118,33 +140,65 @@ function routeUrl(r) {
   if (r.name === 'booking' && r.params.slug) return urlFor.book(r.params.slug);
   if (r.name === 'portal') return urlFor.home();
   if (r.name === 'cabinet') return urlFor.cabinet();
-  if (r.name === 'auth') return urlFor.auth();
+  if (r.name === 'auth') return `${siteBase()}#${hashPath.auth(r.params && r.params.mode)}`;
   if (r.name === 'success') return urlFor.success();
   if (r.name === 'clientReply' && r.params.token) return urlFor.reply(r.params.token);
   return null;
 }
 
-/** Маршрут из URL (path /psy/slug, /cabinet + легаси ?book=, ?reply=) */
+function safeSlug(name, raw) {
+  try { return { name, params: { slug: decodeURIComponent(raw) } }; }
+  catch { return { name, params: { slug: raw } }; }
+}
+
+/** Legacy-ссылка без hash-хвоста → нормализация в .../#/… (без перезагрузки). */
+function normalizeLegacyUrl() {
+  const h = location.hash.replace(/^#/, '');
+  if (h.startsWith('/')) return; // уже в режиме Hash History
+  const r = routeFromUrl();
+  if (r.name === 'portal') return;
+  const target = routeUrl(r);
+  if (!target) return;
+  history.replaceState(null, '', target);
+}
+
+function sameRoute(a, b) {
+  if (!a || !b || a.name !== b.name) return false;
+  return JSON.stringify(a.params || {}) === JSON.stringify(b.params || {});
+}
+
+/** Маршрут из URL: сначала hash (#/psy/slug…), иначе legacy path/query */
 function routeFromUrl() {
+  const h = location.hash.replace(/^#/, '');
+  if (h.startsWith('/')) {
+    const q = h.indexOf('?');
+    const path = q === -1 ? h : h.slice(0, q);
+    const qs = new URLSearchParams(q === -1 ? '' : h.slice(q + 1));
+    let m = path.match(/^\/book\/([^/]+)\/?$/);
+    if (m) return safeSlug('booking', m[1]);
+    m = path.match(/^\/psy\/([^/]+)\/?$/);
+    if (m) return safeSlug('profile', m[1]);
+    if (/^\/cabinet\/?$/.test(path)) return { name: 'cabinet', params: {} };
+    if (/^\/auth\/?$/.test(path)) return { name: 'auth', params: { mode: qs.get('mode') || 'login' } };
+    if (/^\/booking-done\/?$/.test(path)) return { name: 'success', params: {} };
+    if (/^\/reply\/?$/.test(path)) {
+      const token = qs.get('reply') || qs.get('token');
+      if (token) return { name: 'clientReply', params: { token } };
+    }
+    return { name: 'portal', params: {} };
+  }
+  // legacy: /psy/{slug}, /book/{slug}, ?book=, /reply?reply=, якорь /psy/{slug}#book
   const qs = new URLSearchParams(location.search);
-  const book = qs.get('book');          // легаси-ссылка
-  if (book) return { name: 'booking', params: { slug: book } };
+  const book = qs.get('book');
+  if (book) return safeSlug('booking', book);
   const reply = qs.get('reply') || qs.get('token');
   if (reply && /\/reply\/?$/.test(location.pathname)) return { name: 'clientReply', params: { token: reply } };
-  let m = location.pathname.match(/\/book\/([^/]+)\/?$/);
+  let m = location.pathname.match(/\/book\/([^/]+)\/?$/i);
+  if (m) return safeSlug('booking', m[1]);
+  m = location.pathname.match(/\/psy\/([^/]+)\/?$/i);
   if (m) {
-    try { return { name: 'booking', params: { slug: decodeURIComponent(m[1]) } }; }
-    catch { return { name: 'booking', params: { slug: m[1] } }; }
-  }
-  m = location.pathname.match(/\/psy\/([^/]+)\/?$/);
-  if (m) {
-    // легаси: /psy/{slug}#book раньше открывал форму — ведём на отдельную страницу записи
-    if (location.hash === '#book') {
-      try { return { name: 'booking', params: { slug: decodeURIComponent(m[1]) } }; }
-      catch { return { name: 'booking', params: { slug: m[1] } }; }
-    }
-    try { return { name: 'profile', params: { slug: decodeURIComponent(m[1]) } }; }
-    catch { return { name: 'profile', params: { slug: m[1] } }; }
+    if (h === 'book') return safeSlug('booking', m[1]); // legacy-якорь #book
+    return safeSlug('profile', m[1]);
   }
   if (/\/cabinet\/?$/.test(location.pathname)) return { name: 'cabinet', params: {} };
   if (/\/auth\/?$/.test(location.pathname)) return { name: 'auth', params: { mode: qs.get('mode') || 'login' } };
@@ -158,24 +212,33 @@ function navigate(name, params = {}, { push = true } = {}) {
     route = { name: 'auth', params: { mode: 'login' } };
   }
   if (push) {
+    // Hash History: запись в location.hash создаёт нативную запись истории;
+    // «свой» hashchange не вызывает повторный рендер (проверка sameRoute)
     const url = routeUrl(route);
-    if (url && url !== location.pathname + location.search) {
-      history.pushState({ name: route.name, params: route.params }, '', url);
+    if (url) {
+      const hash = url.slice(url.indexOf('#') + 1);
+      if (location.hash.slice(1) !== hash) location.hash = hash;
     }
   }
   render();
   window.scrollTo(0, 0);
 }
 
-window.addEventListener('popstate', () => {
-  route = routeFromUrl();
+// Назад/вперёд браузера и внешнее изменение хвоста ссылки
+window.addEventListener('hashchange', () => {
+  const r = routeFromUrl();
+  if (sameRoute(r, route)) return;
+  route = r;
   if (route.name === 'cabinet' && !authService.isAuthenticated()) {
     route = { name: 'auth', params: { mode: 'login' } };
   }
   render();
+  window.scrollTo(0, 0);
 });
 
 window.navigate = navigate;
+// debug/тесты: доступ к внутренностям роутера (Hash History)
+window.__router = { routeFromUrl, routeUrl, normalizeLegacyUrl, hashPath, sameRoute };
 window.resetPortalData = () => {
   if (!confirm('Сбросить все данные портала?')) return;
   db.resetToSeed();
@@ -651,7 +714,8 @@ function renderCabJournal() {
     const canConfirm = ['pending', 'held'].includes(s.status);
     return `<div class="p-4 border-b last:border-0">
       <div class="flex items-center gap-3 flex-wrap">
-        <div class="font-mono text-sm text-slate-500 w-32 shrink-0">${formatDate(s.date)} · ${s.time}</div>
+        <div class="font-mono text-sm text-slate-500 w-32 shrink-0">${formatDate(s.date)} · ${s.time}
+          ${s.timezoneOffset ? `<div class="text-[10px] text-indigo-400 font-sans" title="Запись в вашем времени; разница с поясом клиента (T-03)">клиент ${esc(s.timezoneOffset)}</div>` : ''}</div>
         <div class="flex-1 min-w-[140px]">
           <div class="font-medium">${cl?.name || cl?.nickname || '—'}</div>
           <div class="text-sm text-slate-500">${sv?.name || ''} ${sv ? '· ' + sv.priceLabel() : ''}
@@ -1436,8 +1500,18 @@ function renderProfile() {
   try { applyProfileSeo(p, services, urlFor.psy(p.slug), { bookUrl: urlFor.book(p.slug) }); } catch (e) { console.warn('seo', e); }
 }
 
+/** T-01: сохранить введённые поля формы в VM перед перерисовкой (без потери данных) */
+function captureBookingForm() {
+  const nick = $('#bk-nickname'); if (nick) bookingVm.nickname = nick.value;
+  const phone = $('#bk-phone'); if (phone) bookingVm.phone = phone.value;
+  const contact = $('#bk-contact'); if (contact) bookingVm.contact = contact.value;
+  const note = $('#bk-note'); if (note) bookingVm.note = note.value;
+  const consent = $('#bk-consent'); if (consent) bookingVm.consent = consent.checked;
+}
+
 function renderBooking() {
   const slug = route.params.slug;
+  captureBookingForm(); // T-01: данные шагов живут в VM и переживают любую перерисовку
   // ==== НОВАЯ ФУНКЦИОНАЛЬНОСТЬ: сохраняем состояние формы записи ====
   // Перерисовка вызывается после выбора услуги, даты и времени. Повторный
   // loadBySlug сбрасывал введённые данные и делал отправку записи невозможной.
@@ -1644,6 +1718,42 @@ function renderBooking() {
       : (canNext ? '' : (bookingVm.step === 2 ? 'Выберите свободное время выше' : 'Выберите услугу'));
   }
 
+  // ——— T-01: навигация между шагами + сводка на шаге 3 ———
+  const back2 = $('#book-back-2'); if (back2) back2.onclick = () => bookingVm.prevStep();
+  const next2 = $('#book-next-2'); if (next2) next2.onclick = () => bookingVm.nextStep();
+  const back3 = $('#book-back-3'); if (back3) back3.onclick = () => bookingVm.prevStep();
+
+  const sumBox = $('#book-contact-summary');
+  if (sumBox) {
+    const sv = bookingVm.selectedService;
+    const parts = [
+      sv ? esc(sv.name) : '',
+      bookingVm.time ? `${formatDate(bookingVm.date)} в ${bookingVm.time}${bookingVm.tzDiffMin ? bookingVm._clientTimeNote() : ''}` : ''
+    ].filter(Boolean);
+    if (parts.length) {
+      sumBox.classList.remove('hidden');
+      sumBox.innerHTML = `
+        <div class="text-slate-700 font-medium">${parts.join(' · ')}</div>
+        <div class="text-xs mt-1">
+          <a href="#" data-goto-step="1" class="text-indigo-600 hover:underline">изменить услугу</a> ·
+          <a href="#" data-goto-step="2" class="text-indigo-600 hover:underline">изменить время</a>
+        </div>`;
+      sumBox.querySelectorAll('[data-goto-step]').forEach(a => {
+        a.onclick = e => { e.preventDefault(); bookingVm.goToStep(Number(a.dataset.gotoStep)); renderBooking(); };
+      });
+    } else {
+      sumBox.classList.add('hidden');
+    }
+  }
+
+  // T-01: восстановление введённых контактов после перерисовки (без потери данных)
+  const restoreVal = (id, v) => { const el = $(id); if (el && el.value !== v) el.value = v; };
+  restoreVal('#bk-nickname', bookingVm.nickname || '');
+  restoreVal('#bk-phone', bookingVm.phone || '');
+  restoreVal('#bk-contact', bookingVm.contact || '');
+  restoreVal('#bk-note', bookingVm.note || '');
+  const consentEl = $('#bk-consent'); if (consentEl) consentEl.checked = bookingVm.consent;
+
   const err = $('#book-error');
   if (err) {
     err.textContent = bookingVm.error || '';
@@ -1681,6 +1791,12 @@ function renderBooking() {
     formBlock?.classList.remove('hidden');
     payActions?.classList.add('hidden');
   }
+
+  // T-04: при смене шага — вверх, чтобы клиент сразу видел окна выбранной услуги
+  if (window.__lastBookStep !== undefined && window.__lastBookStep !== bookingVm.step) {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  window.__lastBookStep = bookingVm.step;
 }
 
 let pendingReplyToken = null;
@@ -2337,8 +2453,10 @@ window.enableDemoData = () => {
 function boot() {
   bindEvents();
   (async () => {
-    // стартовый маршрут — из URL (индексируемые ссылки /psy/{slug}, /book/{slug} + легаси)
+    // стартовый маршрут — из hash (Hash History: #/psy/{slug}, #/book/{slug});
+    // legacy-ссылки без # нормализуются в hash без перезагрузки
     bookingVm.onAvailability = () => { if (route.name === 'booking') renderBooking(); };
+    normalizeLegacyUrl();
     route = routeFromUrl();
     if (route.name === 'cabinet' && !authService.isAuthenticated()) {
       route = { name: 'auth', params: { mode: 'login' } };

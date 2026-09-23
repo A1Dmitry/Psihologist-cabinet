@@ -101,7 +101,7 @@ ok('index: поле токена', SRC.html.includes('id="tg-token"'));
 ok('index: «Найти чат»', SRC.html.includes('btn-tg-find-chat'));
 ok('index: 3 переключателя в UI', ['tg-notify-booking','tg-notify-reminders','tg-notify-payments'].every(x => SRC.html.includes(`id="${x}"`)));
 ok('index: «Проверить подключения»', SRC.html.includes('btn-tg-link-clients'));
-ok('index: cache-bust поднят', SRC.html.includes('app.js?v=20260923j'));
+ok('index: cache-bust поднят', SRC.html.includes('app.js?v=20260923l'));
 ok('config: NOTIFY_WEBHOOK_URL экспорт', /export const NOTIFY_WEBHOOK_URL = ''/.test(SRC.cfg));
 ok('app: outbox-цикл после входа', SRC.app.includes('startTelegramLoops(psy.id)'));
 ok('app: рендер+биндинг вкладки', SRC.app.includes('renderCabTelegram') && SRC.app.includes('bindTelegramTab'));
@@ -228,7 +228,8 @@ globalThis.document = { ...globalThis.document, querySelector: sel => (sel === '
 loc.pathname = '/psy/наталия-михайловская-19';
 await import(new URL('./js/app.js', 'file://' + process.cwd() + '/').href);
 await new Promise(rr => setTimeout(rr, 80));
-for (const fn of listeners['w:popstate'] || []) fn();
+// Hash History: legacy pathname уже обработан при boot (normalize + render после каталога)
+for (const fn of listeners['w:hashchange'] || []) fn();
 await new Promise(rr => setTimeout(rr, 60));
 ok('профиль: кнопка «Поделиться специалистом»', profHtml.includes('Поделиться специалистом') && profHtml.includes('sharePsyLink('));
 ok('профиль: глобальный sharePsyLink', typeof globalThis.window.sharePsyLink === 'function' || typeof globalThis.sharePsyLink === 'function');

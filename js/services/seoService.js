@@ -157,7 +157,9 @@ export function applyNoIndex(reason = '') {
  */
 export function buildProfileJsonLd(psy, services, pageUrl, { bookUrl } = {}) {
   const profession = Professions[psy.profession] || Professions.psychologist;
-  const personId = `${pageUrl}#person`;
+  // pageUrl может содержать hash (#/psy/slug) — @id строим от чистой части
+  const baseUrl = String(pageUrl || '').split('#')[0];
+  const personId = `${baseUrl}#person`;
   const offerCatalog = (services || []).filter(s => s.isActive !== false).map(s => ({
     '@type': 'Offer',
     name: s.name,

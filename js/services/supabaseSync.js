@@ -192,7 +192,12 @@ export const supabaseSync = {
       p_payment_status: session.paymentStatus || 'unpaid',
       p_amount_due: session.amountDue || 0,
       p_amount_paid: session.amountPaid || 0,
-      p_currency: session.currency || 'BYN'
+      p_currency: session.currency || 'BYN',
+      // T-03: разница пояса клиента с поясом психолога на дату сессии
+      p_timezone_offset: session.timezoneOffset || '',
+      // T-25: факт согласия на обработку ПДн
+      p_consent: !!client.consent,
+      p_consent_at: client.consentAt || null
     });
 
     if (!created?.ok) {

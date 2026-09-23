@@ -135,6 +135,8 @@ create table if not exists sessions (
 );
 
 alter table sessions add column if not exists google_event_id text not null default '';
+-- T-03: часовой пояс клиента (разница с поясом психолога на дату сессии: '+02:00'; '' = совпадает)
+alter table sessions add column if not exists timezone_offset text not null default '';
 
 create index if not exists sessions_psy_idx on sessions (psychologist_id, session_date);
 
@@ -240,6 +242,10 @@ alter table session_settings add column if not exists last_notified_session_at  
 -- chat_id клиента для напоминаний (подключение бота по /start <clientId>)
 alter table clients add column if not exists telegram_chat text not null default '';
 
+-- T-25: факт согласия на обработку ПДн (дано при записи через форму)
+alter table clients add column if not exists consent   boolean not null default false;
+alter table clients add column if not exists consent_at timestamptz;
+
 -- Одноразовые коды входа специалиста (6–8 букв/цифр, окно 2 минуты).
 -- Письмо отправляет Edge Function auth-code (Resend) — шаблоны Supabase Auth
 -- не участвуют. Код хранится хешем (SHA-256), одноразовый (used_at),
@@ -305,6 +311,9 @@ create table if not exists booking_attempts (
   fingerprint     text not null default '',
   success         boolean not null default false,
   reason          text not null default '',
+  -- T-25: согласие на обработку ПДн, данное при попытке записи
+  consent         boolean not null default false,
+  consent_at      timestamptz,
   created_at      timestamptz not null default now()
 );
 
@@ -481,11 +490,15 @@ create or replace view public_schedule_blocks as
   from schedule_blocks;
 
 -- 4) Занятые слоты (дата/время — без данных клиентов)
+--    duration_min — длительность услуги: 90-минутная сессия закрывает на
+--    клиенте и частичные перекрытия сетки (T-02)
 create or replace view public_booked_slots as
-  select psychologist_id, session_date, session_time
-  from sessions
-  where status not in ('cancelled', 'expired', 'no_show')
-    and (status <> 'held' or hold_expires_at is null or hold_expires_at > now());
+  select s.psychologist_id, s.session_date, s.session_time,
+         coalesce(sv.duration_min, 60) as duration_min
+  from sessions s
+  left join services sv on sv.id = s.service_id
+  where s.status not in ('cancelled', 'expired', 'no_show')
+    and (s.status <> 'held' or s.hold_expires_at is null or s.hold_expires_at > now());
 
 grant select on public_profiles        to anon, authenticated;
 grant select on public_settings        to anon, authenticated;
@@ -498,6 +511,12 @@ grant select on services               to anon, authenticated;
 -- security definer (пишет в clients/sessions минуя RLS),
 -- проверяет активность специалиста, свободный слот и анти-спам по телефону.
 -- ============================================================
+-- T-02/T-03: новая сигнатура (появился p_timezone_offset; длительности услуг
+-- учитываются в проверке перекрытия). Старую перегрузку убираем явно —
+-- иначе create or replace создал бы вторую функцию.
+drop function if exists public.create_booking(text, text, text, text, text, text, text, text, text, text, text, text, text, text, numeric, numeric, text);
+drop function if exists public.create_booking(text, text, text, text, text, text, text, text, text, text, text, text, text, text, numeric, numeric, text, text);
+
 create or replace function public.create_booking(
   p_psychologist_id text,
   p_service_id      text,
@@ -515,7 +534,10 @@ create or replace function public.create_booking(
   p_payment_status  text default 'unpaid',
   p_amount_due      numeric default 0,
   p_amount_paid     numeric default 0,
-  p_currency        text default 'BYN'
+  p_currency        text default 'BYN',
+  p_timezone_offset text default '',
+  p_consent         boolean default false,
+  p_consent_at      timestamptz default null
 ) returns jsonb
 language plpgsql
 security definer
@@ -527,19 +549,30 @@ declare
   v_client_id text;
   v_session_id text;
   v_today_count bigint;
+  v_new_start int := (substr(p_session_time, 1, 2)::int * 60 + substr(p_session_time, 4, 2)::int);
+  v_new_dur int := 60;
 begin
   select id into v_psy_id from psychologists where id = p_psychologist_id and is_active;
   if v_psy_id is null then
     return jsonb_build_object('ok', false, 'error', 'Специалист не найден или неактивен');
   end if;
 
+  -- T-02: длительность новой услуги (для проверки перекрытия занятых интервалов)
+  select coalesce(sv.duration_min, 60) into v_new_dur
+  from services sv where sv.id = p_service_id and sv.psychologist_id = p_psychologist_id;
+  if v_new_dur is null then v_new_dur := 60; end if;
+
+  -- Занятость с учётом длительности: новый интервал [start, start+dur) не должен
+  -- пересекаться ни с одной существующей сессией [s, s+dur_s)
   if exists (
     select 1 from sessions s
+    left join services sv on sv.id = s.service_id
     where s.psychologist_id = p_psychologist_id
       and s.session_date = p_session_date
-      and s.session_time = p_session_time
       and s.status not in ('cancelled', 'expired', 'no_show')
       and (s.status <> 'held' or s.hold_expires_at is null or s.hold_expires_at > now())
+      and (substr(s.session_time, 1, 2)::int * 60 + substr(s.session_time, 4, 2)::int) < v_new_start + v_new_dur
+      and (substr(s.session_time, 1, 2)::int * 60 + substr(s.session_time, 4, 2)::int) + coalesce(sv.duration_min, 60) > v_new_start
   ) then
     return jsonb_build_object('ok', false, 'error', 'Слот уже занят');
   end if;
@@ -576,28 +609,31 @@ begin
   end if;
 
   if v_client_id is null then
-    insert into clients (psychologist_id, name, nickname, phone, contact, note)
+    insert into clients (psychologist_id, name, nickname, phone, contact, note, consent, consent_at)
     values (p_psychologist_id,
             coalesce(nullif(p_client_name, ''), p_client_nickname),
             coalesce(nullif(p_client_nickname, ''), p_client_name),
-            p_client_phone, p_client_contact, p_client_note)
+            p_client_phone, p_client_contact, p_client_note,
+            coalesce(p_consent, false), p_consent_at)  -- T-25: факт согласия
     returning id into v_client_id;
   end if;
 
   insert into sessions (psychologist_id, client_id, service_id, session_date, session_time,
                         status, note, video_platform,
-                        payment_policy, payment_status, amount_due, amount_paid, currency)
+                        payment_policy, payment_status, amount_due, amount_paid, currency,
+                        timezone_offset)
   values (p_psychologist_id, v_client_id, p_service_id, p_session_date, p_session_time,
           coalesce(p_status, 'pending'), p_session_note, p_video_platform,
-          p_payment_policy, p_payment_status, p_amount_due, p_amount_paid, p_currency)
+          p_payment_policy, p_payment_status, p_amount_due, p_amount_paid, p_currency,
+          coalesce(nullif(p_timezone_offset, ''), ''))
   returning id into v_session_id;
 
   return jsonb_build_object('ok', true, 'client_id', v_client_id, 'session_id', v_session_id);
 end;
 $$;
 
-revoke execute on function public.create_booking(text, text, text, text, text, text, text, text, text, text, text, text, text, text, numeric, numeric, text) from public;
-grant execute on function public.create_booking(text, text, text, text, text, text, text, text, text, text, text, text, text, text, numeric, numeric, text) to anon, authenticated;
+revoke execute on function public.create_booking(text, text, text, text, text, text, text, text, text, text, text, text, text, text, text, numeric, numeric, text, boolean, timestamptz) from public;
+grant execute on function public.create_booking(text, text, text, text, text, text, text, text, text, text, text, text, text, text, text, numeric, numeric, text, boolean, timestamptz) to anon, authenticated;
 
 -- ============================================================
 -- claim_psychologist_profile — привязка профиля к подтверждённому email.

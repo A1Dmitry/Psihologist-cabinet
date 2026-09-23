@@ -946,6 +946,8 @@ export class BookingViewModel extends BaseViewModel {
       this.notify();
       return false;
     }
+    // T-25: фиксируем факт согласия на момент отправки (152-ФЗ-подобные требования)
+    const consentAt = new Date().toISOString();
     if (!client) {
       client = await clientVaultService.saveClientFromPublicBooking(this.psychologist.id, {
         name: this.nickname,
@@ -953,8 +955,13 @@ export class BookingViewModel extends BaseViewModel {
         phone,
         contact: this.contact.trim() || phone,
         note: this.note.trim(),
-        trustLevel: check.riskLevel === 'high' ? 'caution' : 'new'
+        trustLevel: check.riskLevel === 'high' ? 'caution' : 'new',
+        consent: true,
+        consentAt
       });
+    } else {
+      client.consent = true;
+      client.consentAt = client.consentAt || consentAt;
     }
 
     const isOnline = svc?.format === 'online';
@@ -999,7 +1006,9 @@ export class BookingViewModel extends BaseViewModel {
       psychologistId: this.psychologist.id,
       phone,
       success: true,
-      reason: 'created'
+      reason: 'created',
+      consent: true,
+      consentAt
     });
 
     // напоминания (24ч / 12ч по настройкам)

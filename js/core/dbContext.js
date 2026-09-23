@@ -233,7 +233,14 @@ export class DbContext {
       id: s.id || uid('svc'),
       psychologistId: this.psychologists[index].id
     })));
-    this.settings = this.psychologists.map(p => new SessionSettings({ psychologistId: p.id }));
+    // Демо-настройки: приём 10:00–19:00 (slot_end — время закрытия, как в seed.sql);
+    // для 90-минутной услуги последний старт — 17:30/18:00 в зависимости от сетки (T-02)
+    this.settings = this.psychologists.map(p => new SessionSettings({
+      psychologistId: p.id,
+      slotStart: '10:00',
+      slotEnd: '19:00',
+      slotStepMin: 60
+    }));
     this.clients = [];
     this.sessions = [];
     this.payments = [];
