@@ -129,3 +129,35 @@ Service (услуга)
   Колонки в схеме уже предусмотрены; маппинг можно расширить аналогично `mapPsy`.
 * Логин-`email` каталожных записей — технический маркер `example.invalid`
   (учётки не создаются). Реальный контактный email хранится в `publicEmail`.
+
+---
+
+## 6. Приватность, занятость, SEO (расширение по требованиям продукта)
+
+### 6.1 Разграничение доступа (см. supabase/schema.sql, секция RLS)
+
+| Кто | Что видит |
+|---|---|
+| **Аноним** | Только публичное: `public_profiles` (профиль без email-учётки и `key_verifier`), `services` (активные), `public_settings` (часы/слоты/оплата), `public_schedule_blocks` (free/busy без заметок), `public_booked_slots` (дата/время занятых слотов, без данных клиентов). Запись — только через `rpc/create_booking` (security definer: проверка слота, блокировок и анти-спама на сервере). |
+| **Владелец кабинета** (`authenticated`, `owner_id = auth.uid()`) | Только СВОИ данные: клиенты, сессии, платежи, ожидание, напоминания, блокировки (включая приватные заметки), настройки с iCal-адресом. |
+| **Сервисные ключи** | `service_role` — всё (миграции, бэкенд). |
+
+Клиенты видны **только психологу, на которого записаны** (`psychologist_id in (select id from psychologists where owner_id = auth.uid())`) — и никому больше.
+
+### 6.2 Занятость (schedule_blocks)
+
+* Сущность `ScheduleBlock`: `{dateFrom, dateTo, timeFrom, timeTo, kind: day_off|busy|vacation|holiday|other, title, note, source: manual|google}`.
+* `note` — приватная (в public-вью не попадает); `title` виден клиентам («Выходной»).
+* Вкладка «Занятость» в кабинете: диапазон дат, время или весь день; слоты записи закрываются автоматически (`BookingViewModel.slots` + `db.isSlotBlocked`).
+* **Google Calendar**: `calendarService` — (а) кнопки «Добавить в Google Calendar» (шаблонная ссылка `calendar/render?action=TEMPLATE` — как у Calendly/Booksy) на странице успеха и в расписании; (б) импорт занятости по секретному iCal-адресу (`parseIcs` → `schedule_blocks`, `source=google`, идемпотентно по `googleEventId`). Адрес хранится в `session_settings.google_calendar_ical_url` приватно; публично отдаются только итоговые free/busy. Для двусторонней синхронизации — Google Calendar API (OAuth), точка расширения `sessions.google_event_id`.
+
+### 6.3 Мультипрофильность и SEO
+
+* `Psychologist.profession` — дискриминатор (`Professions`: psychologist, psychotherapist, coach, lawyer, accountant); schema.org-тип подбирается автоматически (`ProfessionalService`/`MedicalBusiness`/`LegalService`/…).
+* Индексируемые URL: `/psy/{slug}` (страница специалиста=страница записи), `/cabinet`, `/auth`; Deep links работают на GitHub Pages через `404.html`-fallback и локально через `devserver.py` (SPA-fallback, `%BASE%`-подстановка).
+* `seoService`: canonical, Open Graph, Twitter Card, JSON-LD `@graph [Person + ProfessionalService]` с `OfferCatalog` (услуги/цены), `knowsAbout` (направления), `sameAs` (соцсети), `alumniOf` (образование). Каталог — `WebSite` + SearchAction.
+* Карта сайта для краулеров генерируется статически при сборке (см. README).
+
+### 6.4 Реквизиты (налоговое требование)
+
+Блок реквизитов плательщика (`payment_requisites`: получатель, юр. адрес, УНП, р/с, банк, БИК, назначение платежа) — часть публичного профиля каждого специалиста, редактируется в кабинете, публикуется на странице записи. Эталон — реквизиты ИП с сайта Н. Михайловской в `supabase/seed.sql`.

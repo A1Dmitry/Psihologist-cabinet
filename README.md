@@ -8,12 +8,14 @@
 ## Запуск
 
 ```bash
-python3 -m http.server 8765
+python3 devserver.py 8765        # SPA-fallback: работают /psy/{slug}, /cabinet, /auth
 # или
-chmod +x serve.sh && ./serve.sh
+chmod +x serve.sh && ./serve.sh  # простой статический сервер (только корень)
 ```
 
 Открыть: http://127.0.0.1:8765/
+
+Смоук маршрутов: `python3 verify_pages.py` (или `BASE_URL=https://… python3 verify_pages.py` для Pages).
 
 ## Структура
 
@@ -21,10 +23,23 @@ chmod +x serve.sh && ./serve.sh
 - `js/models` — Code First
 - `js/core/dbContext.js` — хранилище
 - `js/viewmodels` — MVVM
-- `js/services` — auth, crypto, vault, payment, reminders, fraud
-- `supabase/schema.sql` — DDL БД (Supabase/PostgreSQL, идемпотентный)
+- `js/services` — auth, crypto, vault, payment, reminders, fraud, calendar (Google), seo
+- `supabase/schema.sql` — DDL БД + RLS (аноним видит только публичное; клиенты — только владельцу; запись через RPC)
 - `supabase/seed.sql` — референс-данные профиля с сайта nataliamikhailouskaya.by
 - `docs/DATA-MODEL.md` — модель данных сайта, сверка и маппинг в БД
+- `devserver.py` — локальный сервер со SPA-fallback (глубокие ссылки `/psy/{slug}`)
+- `verify_pages.py` — смоук-проверка маршрутов (локально или GitHub Pages)
+
+## Маршруты (индексируемые URL)
+
+- `/` — каталог специалистов
+- `/psy/{slug}` — публичная страница специалиста (профиль + запись); canonical, Open Graph, JSON-LD schema.org
+- `/cabinet`, `/auth` — кабинет/вход (в sitemap/robots закрыты от индексации)
+- legacy-ссылки вида `?book={slug}` продолжают работать
+
+## Занятость
+
+Кабинет → «Занятость»: блокировки (выходной/занят/отпуск, весь день или интервал) закрывают слоты онлайн-записи. Google Calendar: секретный iCal-адрес импортируется в блокировки; сессии добавляются в календарь кнопкой «В календарь» (шаблонная ссылка Google, как у Calendly/Booksy).
 
 ## Демо
 

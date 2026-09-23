@@ -4,6 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ПсихоПортал — кабинеты психологов</title>
+  <meta name="description" content="Каталог психологов: публичный профиль, услуги и цены, онлайн-запись на консультацию." />
+  <link rel="canonical" href="/" />
+  <meta property="og:site_name" content="ПсихоПортал" />
+  <meta property="og:title" content="ПсихоПортал — кабинеты психологов" />
+  <meta property="og:type" content="website" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -125,6 +130,7 @@
         <nav class="flex-1 p-3 space-y-0.5 text-sm">
           <button data-tab="home" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg bg-slate-800 font-medium">Главная</button>
           <button data-tab="schedule" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Расписание</button>
+          <button data-tab="blocks" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Занятость</button>
           <button data-tab="clients" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Клиенты</button>
           <button data-tab="services" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Услуги</button>
           <button data-tab="waiting" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800 flex justify-between">Ожидание <span id="wait-badge" class="bg-rose-500 text-[10px] px-1.5 rounded-full hidden">0</span></button>
@@ -147,6 +153,7 @@
         <div class="md:hidden flex overflow-x-auto gap-1 px-3 py-2 bg-white border-b text-sm">
           <button data-tab="home" class="cab-nav-btn px-3 py-1.5 rounded-full bg-indigo-600 text-white whitespace-nowrap">Главная</button>
           <button data-tab="schedule" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Расписание</button>
+          <button data-tab="blocks" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Занятость</button>
           <button data-tab="clients" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Клиенты</button>
           <button data-tab="waiting" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Ожидание</button>
           <button data-tab="services" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Услуги</button>
@@ -188,6 +195,47 @@
             <div id="sch-range" class="flex flex-wrap gap-2 mb-3"></div>
             <div id="sch-days" class="flex gap-2 overflow-x-auto mb-4 pb-1"></div>
             <div id="sch-list" class="bg-white rounded-xl border"></div>
+          </div>
+          <div id="tab-blocks" class="cab-tab hidden">
+            <h1 class="text-2xl font-bold mb-2">Занятость: выходные и блокировки</h1>
+            <p class="text-sm text-slate-500 mb-6">Закройте период (выходной, занят, отпуск) — в это время онлайн-запись недоступна. Клиентам видно только «занято», ваши заметки не публикуются.</p>
+            <div class="grid lg:grid-cols-2 gap-6">
+              <div class="bg-white rounded-xl border p-6 space-y-3 text-sm">
+                <div class="grid grid-cols-2 gap-3">
+                  <div><label class="font-medium">Дата с *</label><input id="blk-date-from" type="date" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                  <div><label class="font-medium">Дата по</label><input id="blk-date-to" type="date" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                  <div><label class="font-medium">Время с (пусто = весь день)</label><input id="blk-time-from" type="time" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                  <div><label class="font-medium">Время по</label><input id="blk-time-to" type="time" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                </div>
+                <div><label class="font-medium">Причина</label>
+                  <select id="blk-kind" class="w-full mt-1 px-3 py-2 rounded-xl border">
+                    <option value="day_off">Выходной</option>
+                    <option value="busy">Занят</option>
+                    <option value="vacation">Отпуск</option>
+                    <option value="holiday">Праздник</option>
+                    <option value="other">Другое</option>
+                  </select>
+                </div>
+                <div><label class="font-medium">Заголовок (виден клиентам)</label><input id="blk-title" placeholder="Например: Отпуск" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                <div><label class="font-medium">Заметка (только для вас)</label><input id="blk-note" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                <button id="btn-add-block" class="px-6 py-2.5 rounded-full bg-indigo-600 text-white font-medium">Заблокировать</button>
+                <div class="pt-4 border-t space-y-2">
+                  <div class="font-medium">Google Calendar</div>
+                  <div><label class="text-xs">Секретный iCal-адрес (Google Calendar → Настройки → «Secret address in iCal format»)</label>
+                    <input id="set-gcal-url" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                  <label class="flex items-center gap-2"><input id="set-gcal-sync" type="checkbox" class="accent-indigo-600" checked> Учитывать занятость из Google Calendar</label>
+                  <button id="btn-sync-gcal" class="px-5 py-2 rounded-full border border-indigo-300 text-indigo-700 font-medium">Синхронизировать сейчас</button>
+                  <button id="btn-save-gcal" class="px-5 py-2 rounded-full bg-slate-900 text-white font-medium">Сохранить настройки</button>
+                  <p class="text-xs text-slate-400">События календаря импортируются в блокировки — сам календарь не публикуется. Кнопка «В календарь» в расписании добавляет сессию в ваш Google Calendar.</p>
+                </div>
+              </div>
+              <div>
+                <h2 class="font-semibold mb-2">Активные блокировки</h2>
+                <div id="blocks-list" class="bg-white rounded-xl border"></div>
+              </div>
+            </div>
           </div>
           <div id="tab-clients" class="cab-tab hidden">
             <div class="flex justify-between mb-4">
@@ -296,6 +344,49 @@
               <div><label class="text-sm font-medium">Сайт</label><input id="pf-website" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
               <div><label class="text-sm font-medium">Telegram (ссылка)</label><input id="pf-telegram" placeholder="https://t.me/…" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
               <div><label class="text-sm font-medium">Instagram (ссылка)</label><input id="pf-instagram" placeholder="https://www.instagram.com/…" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+
+              <div class="pt-3 border-t">
+                <div class="font-medium text-sm mb-1">Направления работы («С чем могу помочь»)</div>
+                <div id="pe-directions" class="pe-list space-y-2"></div>
+                <button type="button" data-pe-add="pe-directions" class="mt-2 text-sm text-indigo-600">+ добавить направление</button>
+              </div>
+              <div class="pt-3 border-t">
+                <div class="font-medium text-sm mb-1">Психологическое образование</div>
+                <div id="pe-edu-basic" class="pe-list space-y-2"></div>
+                <button type="button" data-pe-add="pe-edu-basic" class="mt-2 text-sm text-indigo-600">+ добавить</button>
+              </div>
+              <div class="pt-3 border-t">
+                <div class="font-medium text-sm mb-1">Дополнительное образование</div>
+                <div id="pe-edu-extra" class="pe-list space-y-2"></div>
+                <button type="button" data-pe-add="pe-edu-extra" class="mt-2 text-sm text-indigo-600">+ добавить</button>
+              </div>
+              <div class="pt-3 border-t">
+                <div class="font-medium text-sm mb-1">Опыт работы</div>
+                <div id="pe-experience" class="pe-list space-y-2"></div>
+                <button type="button" data-pe-add="pe-experience" class="mt-2 text-sm text-indigo-600">+ добавить место работы</button>
+              </div>
+              <div class="pt-3 border-t">
+                <div class="font-medium text-sm mb-1">Платёжные ссылки (кнопки «Оплатить»)</div>
+                <div id="pe-links" class="pe-list space-y-2"></div>
+                <button type="button" data-pe-add="pe-links" class="mt-2 text-sm text-indigo-600">+ добавить ссылку</button>
+              </div>
+
+              <div class="pt-3 border-t space-y-3">
+                <div class="font-medium text-sm">Реквизиты для оплаты <span class="text-rose-500 text-xs">· обязательны по налоговым требованиям, публикуются в профиле</span></div>
+                <div><label class="text-xs">Получатель (ФИО ИП / организация)</label><input id="pe-req-recipient" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                <div><label class="text-xs">Юридический адрес</label><input id="pe-req-legal-address" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                <div class="grid grid-cols-2 gap-3">
+                  <div><label class="text-xs">УНП</label><input id="pe-req-unp" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                  <div><label class="text-xs">Р/с (IBAN)</label><input id="pe-req-account" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                  <div><label class="text-xs">Банк</label><input id="pe-req-bank" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                  <div><label class="text-xs">БИК</label><input id="pe-req-bik" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                </div>
+                <div><label class="text-xs">Назначение платежа</label><input id="pe-req-purpose" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                <div><label class="text-xs">Страница свободного платежа (URL)</label><input id="pe-req-donation" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+              </div>
+
               <button id="btn-save-profile" class="px-6 py-2.5 rounded-full bg-indigo-600 text-white text-sm font-medium">Сохранить</button>
             </div>
           </div>
@@ -373,7 +464,10 @@
       <div class="text-center max-w-md">
         <div class="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 text-3xl flex items-center justify-center mx-auto mb-6">✓</div>
         <h2 class="text-2xl font-bold mb-3">Заявка принята</h2>
-        <p id="success-text" class="text-slate-600 mb-8">—</p>
+        <p id="success-text" class="text-slate-600 mb-6">—</p>
+        <a id="success-gcal" class="hidden mb-8 inline-flex items-center gap-2 px-6 py-2.5 rounded-full border border-slate-300 text-sm font-medium text-slate-700 hover:bg-slate-50" target="_blank" rel="noopener">
+          📅 Добавить в Google Calendar
+        </a>
         <button onclick="navigate('portal')" class="px-8 py-3 rounded-full bg-indigo-600 text-white font-medium">К каталогу</button>
       </div>
     </div>
@@ -467,6 +561,6 @@
     </div>
   </div>
 
-  <script type="module" src="./js/app.js"></script>
+  <script type="module" src="%BASE%js/app.js"></script>
 </body>
 </html>

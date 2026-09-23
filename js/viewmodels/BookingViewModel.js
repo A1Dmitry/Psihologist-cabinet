@@ -6,6 +6,16 @@ import { PaymentPolicy } from '../models/entities.js';
 import { reminderService } from '../services/reminderService.js';
 import { nicknameService, normalizeNickname } from '../services/nicknameService.js';
 import { clientVaultService } from '../services/clientVaultService.js';
+import { supabaseApi } from '../services/supabaseApi.js';
+
+/** Покрывает ли блокировка занятости слот (формат ScheduleBlock / public_schedule_blocks) */
+function blockCovers(b, date, time) {
+  const from = b.dateFrom || '';
+  const to = b.dateTo || b.dateFrom || '';
+  if (!from || date < from || date > to) return false;
+  if (!b.timeFrom && !b.timeTo) return true;
+  return time >= (b.timeFrom || '00:00') && time < (b.timeTo || '23:59');
+}
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
@@ -41,6 +51,10 @@ export class BookingViewModel extends BaseViewModel {
     this.awaitingPayment = false;
     /** today | tomorrow | week | biweek | month */
     this.dateRange = 'week';
+    /** публичная доступность (free/busy) с сервера */
+    this.remoteBusy = {};   // { 'YYYY-MM-DD': Set<'HH:MM'> }
+    this.remoteBlocks = []; // [{dateFrom, dateTo, timeFrom, timeTo, kind, title}]
+    this.onAvailability = null; // колбэк после async-обновления занятости
   }
 
   loadBySlug(slug) {
@@ -51,22 +65,44 @@ export class BookingViewModel extends BaseViewModel {
     if (this.psychologist) {
       this.serviceId = this.services[0]?.id || null;
       this._refreshPaymentInfo();
+      this.refreshAvailability();
     }
     this.notify();
     return !!this.psychologist;
   }
 
   loadById(id) {
-    paymentService.expireStaleHolds();
-    fraudProtectionService.markFormOpened();
-    this.psychologist = db.psychologists.find(p => p.id === id && p.isActive) || null;
-    this._resetFormState();
-    if (this.psychologist) {
-      this.serviceId = this.services[0]?.id || null;
-      this._refreshPaymentInfo();
+    const psy = db.psychologists.find(p => p.id === id && p.isActive) || null;
+    if (psy?.slug) return this.loadBySlug(psy.slug); // единый путь: /psy/{slug} (индексируемый URL)
+    return false;
+  }
+
+  /** Подтянуть публичный free/busy (занятые слоты + блокировки) с сервера */
+  async refreshAvailability() {
+    const psyId = this.psychologist?.id;
+    if (!psyId || !supabaseApi.configured()) return;
+    try {
+      const [fromDate, toDate] = [todayStr(), addDays(this.dateRange === 'month' ? 30 : 7)];
+      const [slots, blocks] = await Promise.all([
+        supabaseApi.listBookedSlots(psyId, fromDate, toDate).catch(() => []),
+        supabaseApi.listBusyBlocks(psyId, fromDate, toDate).catch(() => [])
+      ]);
+      this.remoteBusy = {};
+      (slots || []).forEach(s => {
+        (this.remoteBusy[s.session_date] ||= new Set()).add(s.session_time);
+      });
+      this.remoteBlocks = (blocks || []).map(b => ({
+        dateFrom: b.date_from,
+        dateTo: b.date_to || b.date_from,
+        timeFrom: b.time_from || '',
+        timeTo: b.time_to || '',
+        kind: b.kind || 'busy',
+        title: b.title || ''
+      }));
+      this.onAvailability && this.onAvailability();
+    } catch (e) {
+      console.warn('[Booking] free/busy недоступен', e);
     }
-    this.notify();
-    return !!this.psychologist;
   }
 
   _resetFormState() {
@@ -106,7 +142,9 @@ export class BookingViewModel extends BaseViewModel {
 
   get availableDays() {
     const opt = this.dateRangeOptions.find(o => o.id === this.dateRange) || this.dateRangeOptions[2];
-    return Array.from({ length: opt.days }, (_, i) => addDays(i));
+    const workDays = this.settings?.workDays || [1, 2, 3, 4, 5]; // ISO: 1=Пн … 7=Вс
+    return Array.from({ length: opt.days }, (_, i) => addDays(i))
+      .filter(iso => workDays.includes(((new Date(iso + 'T12:00:00').getDay() + 6) % 7) + 1));
   }
 
   setDateRange(rangeId) {
@@ -120,10 +158,18 @@ export class BookingViewModel extends BaseViewModel {
     this.notify();
   }
 
+  /** День полностью закрыт блокировкой (выходной/отпуск…) → подпись на чипе дня */
+  dayBlockTitle(date) {
+    const blocks = [...db.blocksOf(this.psychologist?.id), ...this.remoteBlocks];
+    const b = blocks.find(x => !x.timeFrom && !x.timeTo
+      && date >= (x.dateFrom || '') && date <= (x.dateTo || x.dateFrom || ''));
+    return b ? (b.title || 'Закрыто') : null;
+  }
+
   get slots() {
     paymentService.expireStaleHolds(this.psychologist?.id);
     const times = this.settings?.slotTimes || ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
-    const busy = new Set();
+    const busy = new Set(this.remoteBusy[this.date] || []);
     db.sessions.forEach(s => {
       if (s.psychologistId !== this.psychologist?.id) return;
       if (['cancelled', 'expired', 'no_show'].includes(s.status)) return;
@@ -135,7 +181,15 @@ export class BookingViewModel extends BaseViewModel {
         busy.add(s.pendingChange.time);
       }
     });
-    return times.map(t => ({ time: t, busy: busy.has(t) }));
+    // блокировки занятости: выходной, занят, отпуск… (локальные + с сервера)
+    const blocks = [
+      ...db.blocksOf(this.psychologist?.id),
+      ...this.remoteBlocks
+    ];
+    return times.map(t => ({
+      time: t,
+      busy: busy.has(t) || blocks.some(b => blockCovers(b, this.date, t))
+    }));
   }
 
   _refreshPaymentInfo() {

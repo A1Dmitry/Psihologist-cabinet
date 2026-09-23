@@ -24,6 +24,50 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Статический сайт: только UI-часть (index.html + js/).
+      # %BASE% → /<repo>/, index.html дублируется в 404.html — SPA-fallback
+      # для индексируемых URL специалистов вида /<repo>/psy/<slug>.
+      - name: Build site (inject base path + SPA fallback)
+        run: |
+          mkdir -p _site
+          cp -r js _site/js
+          sed "s|%BASE%|/${GITHUB_REPOSITORY#*/}/|g" index.html > _site/index.html
+          cp _site/index.html _site/404.html
+
+      # SEO: sitemap со страницами специалистов (слаги — из публичного каталога
+      # Supabase, если заданы секреты SUPABASE_URL/SUPABASE_ANON_KEY) + robots.txt
+      - name: Generate sitemap.xml + robots.txt
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          SITE="https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}"
+          export SITE
+          {
+            echo '<?xml version="1.0" encoding="UTF-8"?>'
+            echo '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            echo "  <url><loc>${SITE}/</loc></url>"
+            if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_ANON_KEY" ]; then
+              curl -sf "$SUPABASE_URL/rest/v1/public_profiles?is_active=eq.true&select=slug" \
+                -H "apikey: $SUPABASE_ANON_KEY" \
+                | SITE="$SITE" python3 -c 'import json,sys,os,urllib.parse
+site=os.environ["SITE"]
+try:
+    for r in json.load(sys.stdin):
+        print(f"  <url><loc>{site}/psy/{urllib.parse.quote(r[\"slug\"])}</loc></url>")
+except Exception as e:
+    print(f"<!-- sitemap: profiles unavailable ({e}) -->", file=sys.stderr)' || true
+            fi
+            echo '</urlset>'
+          } > _site/sitemap.xml
+          {
+            echo 'User-agent: *'
+            echo 'Allow: /'
+            echo 'Disallow: /cabinet'
+            echo 'Disallow: /auth'
+            echo "Sitemap: ${SITE}/sitemap.xml"
+          } > _site/robots.txt
+
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
         with:
@@ -32,7 +76,7 @@ jobs:
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: _site
 
       - name: Deploy to GitHub Pages
         id: deployment

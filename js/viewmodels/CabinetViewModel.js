@@ -6,6 +6,8 @@ import { reminderService } from '../services/reminderService.js';
 import { clientVaultService } from '../services/clientVaultService.js';
 import { cryptoService } from '../services/cryptoService.js';
 import { supabaseSync } from '../services/supabaseSync.js';
+import { fetchGoogleBusyBlocks } from '../services/calendarService.js';
+import { ScheduleBlockKind } from '../models/entities.js';
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
@@ -392,5 +394,82 @@ export class CabinetViewModel extends BaseViewModel {
     }).catch(() => { /* offline — остаёмся в localStorage */ });
     this.showToast('Профиль обновлён');
     this.notify();
+  }
+
+  // ——— Занятость: блокировки (выходной, занят, отпуск…) ———
+
+  get blocks() {
+    return this.psyId ? db.blocksOf(this.psyId) : [];
+  }
+
+  get blockKindLabels() {
+    return {
+      [ScheduleBlockKind.DAY_OFF]: 'Выходной',
+      [ScheduleBlockKind.BUSY]: 'Занят',
+      [ScheduleBlockKind.VACATION]: 'Отпуск',
+      [ScheduleBlockKind.HOLIDAY]: 'Праздник',
+      [ScheduleBlockKind.OTHER]: 'Другое'
+    };
+  }
+
+  addBlock(form) {
+    if (!this.psyId || !form.dateFrom) return false;
+    db.addScheduleBlock({
+      psychologistId: this.psyId,
+      dateFrom: form.dateFrom,
+      dateTo: form.dateTo || form.dateFrom,
+      timeFrom: form.timeFrom || '',
+      timeTo: form.timeTo || '',
+      kind: form.kind || ScheduleBlockKind.BUSY,
+      title: form.title || this.blockKindLabels[form.kind] || 'Занят',
+      note: form.note || '',
+      source: 'manual'
+    });
+    this.showToast('Занятость заблокирована');
+    this.notify();
+    return true;
+  }
+
+  removeBlock(id) {
+    db.removeScheduleBlock(id);
+    this.showToast('Блокировка снята');
+    this.notify();
+  }
+
+  saveCalendarSettings({ googleCalendarIcalUrl, googleSyncBusy }) {
+    const st = this.settings;
+    if (!st) return;
+    st.googleCalendarIcalUrl = (googleCalendarIcalUrl || '').trim();
+    st.googleSyncBusy = !!googleSyncBusy;
+    db.saveChanges();
+    this.showToast('Настройки календаря сохранены');
+    this.notify();
+  }
+
+  /** Импорт занятости из Google Calendar (iCal secret address) в блокировки */
+  async syncGoogleCalendar() {
+    const st = this.settings;
+    if (!this.psyId || !st?.googleCalendarIcalUrl) {
+      this.error = 'Укажите секретный iCal-адрес Google Calendar';
+      this.notify();
+      return false;
+    }
+    this.busy = true;
+    const res = await fetchGoogleBusyBlocks(st.googleCalendarIcalUrl, this.psyId);
+    this.busy = false;
+    if (!res.ok) {
+      this.error = res.reason === 'cors'
+        ? 'Браузер заблокировал доступ к календарю (CORS). Проверьте, что календарь опубликован, или используйте ручные блокировки.'
+        : `Не удалось скачать календарь: ${res.message || res.reason}`;
+      this.notify();
+      return false;
+    }
+    // блокировки из Google пересоздаём целиком (идемпотентно по googleEventId)
+    db.scheduleBlocks = db.scheduleBlocks.filter(b => !(b.psychologistId === this.psyId && b.source === 'google'));
+    res.blocks.forEach(b => db.addScheduleBlock(b));
+    db.saveChanges();
+    this.showToast(`Синхронизировано событий: ${res.count}`);
+    this.notify();
+    return true;
   }
 }

@@ -4,7 +4,7 @@
  */
 import {
   Psychologist, EmailCode, Service, Client, Session, WaitingItem, SessionSettings,
-  Payment, BookingAttempt, ClientRisk, PaymentPolicy, SessionReminder
+  Payment, BookingAttempt, ClientRisk, PaymentPolicy, SessionReminder, ScheduleBlock
 } from '../models/entities.js';
 
 const STORAGE_KEY = 'psy_portal_cf_v5';
@@ -73,6 +73,7 @@ export class DbContext {
     this.bookingAttempts = [];
     this.clientRisks = [];
     this.reminders = [];
+    this.scheduleBlocks = [];
     this.currentPsychologistId = null;
     this._load();
   }
@@ -91,6 +92,7 @@ export class DbContext {
       bookingAttempts: this.bookingAttempts,
       clientRisks: this.clientRisks,
       reminders: this.reminders,
+      scheduleBlocks: this.scheduleBlocks,
       currentPsychologistId: this.currentPsychologistId
     };
   }
@@ -118,6 +120,7 @@ export class DbContext {
       this.bookingAttempts = (data.bookingAttempts || []).map(x => new BookingAttempt(x));
       this.clientRisks = (data.clientRisks || []).map(x => new ClientRisk(x));
       this.reminders = (data.reminders || []).map(x => new SessionReminder(x));
+      this.scheduleBlocks = (data.scheduleBlocks || []).map(x => new ScheduleBlock(x));
       this.currentPsychologistId = data.currentPsychologistId || null;
       if (!this.psychologists.length) this._seed();
     } catch {
@@ -234,6 +237,7 @@ export class DbContext {
     this.bookingAttempts = [];
     this.clientRisks = [];
     this.reminders = [];
+    this.scheduleBlocks = [];
     this.emailCodes = [];
     this.currentPsychologistId = null;
     this.saveChanges();
@@ -252,6 +256,7 @@ export class DbContext {
     this.bookingAttempts = [];
     this.clientRisks = [];
     this.reminders = [];
+    this.scheduleBlocks = [];
     this.currentPsychologistId = null;
     this._seed();
   }
@@ -390,6 +395,30 @@ export class DbContext {
   removeWaiting(id) {
     this.waitingItems = this.waitingItems.filter(w => w.id !== id);
     this.saveChanges();
+  }
+
+  // ——— Блокировки занятости (выходные, занятость) ———
+  blocksOf(psychologistId) {
+    return this.scheduleBlocks
+      .filter(b => b.psychologistId === psychologistId)
+      .sort((a, b) => (a.dateFrom || '').localeCompare(b.dateFrom || ''));
+  }
+
+  addScheduleBlock(data) {
+    const b = new ScheduleBlock({ ...data, id: data.id || uid('blk') });
+    this.scheduleBlocks.push(b);
+    this.saveChanges();
+    return b;
+  }
+
+  removeScheduleBlock(id) {
+    this.scheduleBlocks = this.scheduleBlocks.filter(b => b.id !== id);
+    this.saveChanges();
+  }
+
+  /** Занят ли слот блокировкой (выходной/занят/отпуск…) */
+  isSlotBlocked(psychologistId, date, time) {
+    return this.scheduleBlocks.some(b => b.psychologistId === psychologistId && b.covers(date, time));
   }
 }
 

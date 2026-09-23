@@ -21,6 +21,7 @@ create table if not exists psychologists (
   address            text not null default '',
   experience         text not null default '',
   slug               text not null unique,
+  profession         text not null default 'psychologist',      -- discriminator: psychologist|psychotherapist|coach|… (портал не только для психологов)
   -- «Обо мне»
   greeting           text not null default '',
   approach           text not null default '',
@@ -40,6 +41,7 @@ create table if not exists psychologists (
 );
 
 -- Миграция существующей БД (no-op, если колонки уже есть)
+alter table psychologists add column if not exists profession          text not null default 'psychologist';
 alter table psychologists add column if not exists greeting           text not null default '';
 alter table psychologists add column if not exists approach           text not null default '';
 alter table psychologists add column if not exists photo_url          text not null default '';
@@ -127,11 +129,33 @@ create table if not exists sessions (
   pending_change       jsonb,                                     -- {date, time, reason, proposedAt}
   previous_slot        jsonb,                                     -- {date, time}
   change_consent_status text,                                     -- pending|confirmed|declined
+  google_event_id      text not null default '',                  -- Google Calendar event id (для синхронизации)
   created_at           timestamptz not null default now(),
   updated_at           timestamptz not null default now()
 );
 
+alter table sessions add column if not exists google_event_id text not null default '';
+
 create index if not exists sessions_psy_idx on sessions (psychologist_id, session_date);
+
+-- ——— Блокировки занятости (выходной, занят, отпуск…) ———
+-- Публично виден только free/busy (тип/заголовок/период); заметка — приватно.
+create table if not exists schedule_blocks (
+  id               text primary key default ('blk_' || extract(epoch from now())::bigint::text || '_' || substr(md5(random()::text), 1, 6)),
+  psychologist_id  text not null references psychologists(id) on delete cascade,
+  date_from        text not null,                                  -- YYYY-MM-DD (включительно)
+  date_to          text not null,                                  -- YYYY-MM-DD (включительно)
+  time_from        text not null default '',                       -- HH:MM, пусто = весь день
+  time_to          text not null default '',
+  kind             text not null default 'busy',                   -- day_off|busy|vacation|holiday|other
+  title            text not null default '',                       -- «Выходной», «Отпуск» — видно публично
+  note             text not null default '',                       -- приватная заметка (НЕ видна анонимам)
+  source           text not null default 'manual',                 -- manual | google
+  google_event_id  text not null default '',
+  created_at       timestamptz not null default now()
+);
+
+create index if not exists schedule_blocks_psy_idx on schedule_blocks (psychologist_id, date_from);
 
 -- ——— Настройки кабинета / слотов / оплаты / защиты записи ———
 create table if not exists session_settings (
@@ -158,8 +182,14 @@ create table if not exists session_settings (
   reminder_enabled                 boolean not null default true,
   reminder_hours_before            integer not null default 24,
   reminder_second_hours_before     integer not null default 12,
-  reminder_channel                 text not null default 'telegram_sms'
+  reminder_channel                 text not null default 'telegram_sms',
+  -- Google Calendar: секретный iCal-адрес (приватно! публично отдаются только free/busy блоки)
+  google_calendar_ical_url         text not null default '',
+  google_sync_busy                 boolean not null default true
 );
+
+alter table session_settings add column if not exists google_calendar_ical_url text not null default '';
+alter table session_settings add column if not exists google_sync_busy         boolean not null default true;
 
 -- ——— Платёж / чек ———
 create table if not exists payments (
@@ -243,28 +273,247 @@ create table if not exists session_reminders (
 );
 
 -- ============================================================
--- RLS: пилотный режим — приложение работает через anon key.
--- Ужесточить (по психологу / по owner) при подключении auth.
+-- Доступ данных (известные наработки multi-tenant SaaS):
+--
+--  1) Аноним видит ТОЛЬКО публичное (как на сайте специалиста):
+--     профиль, услуги/цены, часы/слоты/условия, free/busy.
+--     Публичный контракт — VIEW ниже (минимальные привилегии).
+--  2) Клиенты, сессии, платежи, PII — НИКОМУ кроме владельца кабинета.
+--     Запись клиента идёт только через RPC create_booking (security definer):
+--     сервер проверяет слот и анти-спам, PII не светится через REST.
+--  3) Владелец кабинета (после подключения Supabase Auth):
+--     политики authenticated с owner_id = auth.uid() — полный доступ к своим данным.
 -- ============================================================
-alter table psychologists      enable row level security;
-alter table services           enable row level security;
-alter table clients            enable row level security;
-alter table sessions           enable row level security;
-alter table session_settings   enable row level security;
-alter table payments           enable row level security;
-alter table email_codes        enable row level security;
-alter table waiting_items      enable row level security;
-alter table booking_attempts   enable row level security;
-alter table client_risks       enable row level security;
-alter table session_reminders  enable row level security;
+
+-- ——— Убираем широкие anon-политики пилота ———
+do $$
+declare t text;
+begin
+  foreach t in array array['psychologists','services','clients','sessions','session_settings',
+                           'payments','email_codes','waiting_items','booking_attempts','client_risks',
+                           'session_reminders','schedule_blocks']
+  loop
+    execute format('drop policy if exists anon_all on %I', t);
+    execute format('alter table %I enable row level security', t);
+    execute format('revoke all on %I from anon', t);
+    execute format('grant all on %I to service_role', t);
+  end loop;
+end $$;
+
+-- ——— Владелец кабинета: свои данные через Supabase Auth (owner_id = auth.uid()) ———
+alter table psychologists add column if not exists owner_id uuid references auth.users(id) on delete set null;
 
 do $$
 declare t text;
 begin
   foreach t in array array['psychologists','services','clients','sessions','session_settings',
-                           'payments','email_codes','waiting_items','booking_attempts','client_risks','session_reminders']
+                           'payments','waiting_items','booking_attempts','session_reminders','schedule_blocks']
   loop
-    execute format('drop policy if exists anon_all on %I', t);
-    execute format('create policy anon_all on %I for all to anon using (true) with check (true)', t);
+    execute format('drop policy if exists owner_all on %I', t);
   end loop;
 end $$;
+
+create policy owner_all on psychologists
+  for all to authenticated
+  using (owner_id = auth.uid()) with check (owner_id = auth.uid());
+
+-- остальные таблицы — по принадлежности психологу
+create policy owner_all on services
+  for all to authenticated
+  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
+  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+
+create policy owner_all on clients
+  for all to authenticated
+  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
+  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+
+create policy owner_all on sessions
+  for all to authenticated
+  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
+  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+
+create policy owner_all on session_settings
+  for all to authenticated
+  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
+  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+
+create policy owner_all on payments
+  for all to authenticated
+  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
+  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+
+create policy owner_all on waiting_items
+  for all to authenticated
+  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
+  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+
+create policy owner_all on booking_attempts
+  for all to authenticated
+  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
+  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+
+create policy owner_all on session_reminders
+  for all to authenticated
+  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
+  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+
+create policy owner_all on schedule_blocks
+  for all to authenticated
+  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
+  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+
+-- услуги/цены публичны (как на сайте специалиста) — anon читает активные
+drop policy if exists anon_read_services on services;
+create policy anon_read_services on services
+  for select to anon
+  using (is_active = true);
+
+-- client_risks — глобальный антифрод: чтение владельцам, запись через service_role
+drop policy if exists owner_read on client_risks;
+create policy owner_read on client_risks for select to authenticated using (true);
+
+-- ——— Публичный контракт для anon: view с минимальными полями ———
+drop view if exists public_profiles;
+drop view if exists public_settings;
+drop view if exists public_schedule_blocks;
+drop view if exists public_booked_slots;
+
+-- 1) Публичный профиль (без email-учётки и key_verifier — они приватны)
+create or replace view public_profiles as
+  select id, full_name, phone, specialization, city, about, website, source_url, address,
+         experience, slug, profession, greeting, approach, photo_url, public_email,
+         directions, education, experience_items, socials, payment_links, payment_requisites,
+         is_active, created_at
+  from psychologists;
+
+-- 2) Условия записи: часы/слоты/оплата (без антиспам-настроек и iCal-секрета)
+create or replace view public_settings as
+  select psychologist_id, work_hours, work_days, timezone, default_video_platform,
+         slot_times, slot_start, slot_end, slot_step_min,
+         payment_policy, deposit_percent, deposit_amount, hold_minutes
+  from session_settings;
+
+-- 3) Free/busy блокировки (без приватных заметок)
+create or replace view public_schedule_blocks as
+  select id, psychologist_id, date_from, date_to, time_from, time_to, kind, title, source
+  from schedule_blocks;
+
+-- 4) Занятые слоты (дата/время — без данных клиентов)
+create or replace view public_booked_slots as
+  select psychologist_id, session_date, session_time
+  from sessions
+  where status not in ('cancelled', 'expired', 'no_show')
+    and (status <> 'held' or hold_expires_at is null or hold_expires_at > now());
+
+grant select on public_profiles        to anon, authenticated;
+grant select on public_settings        to anon, authenticated;
+grant select on public_schedule_blocks to anon, authenticated;
+grant select on public_booked_slots    to anon, authenticated;
+grant select on services               to anon, authenticated;
+
+-- ============================================================
+-- RPC create_booking — единственный публичный путь записи:
+-- security definer (пишет в clients/sessions минуя RLS),
+-- проверяет активность специалиста, свободный слот и анти-спам по телефону.
+-- ============================================================
+create or replace function public.create_booking(
+  p_psychologist_id text,
+  p_service_id      text,
+  p_session_date    text,
+  p_session_time    text,
+  p_client_name     text default '',
+  p_client_nickname text default '',
+  p_client_phone    text default '',
+  p_client_contact  text default '',
+  p_client_note     text default '',
+  p_session_note    text default '',
+  p_status          text default 'pending',
+  p_video_platform  text default '',
+  p_payment_policy  text default 'none',
+  p_payment_status  text default 'unpaid',
+  p_amount_due      numeric default 0,
+  p_amount_paid     numeric default 0,
+  p_currency        text default 'BYN'
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_psy_id text;
+  v_phone_key text := regexp_replace(coalesce(p_client_phone, ''), '\D', '', 'g');
+  v_client_id text;
+  v_session_id text;
+  v_today_count bigint;
+begin
+  select id into v_psy_id from psychologists where id = p_psychologist_id and is_active;
+  if v_psy_id is null then
+    return jsonb_build_object('ok', false, 'error', 'Специалист не найден или неактивен');
+  end if;
+
+  if exists (
+    select 1 from sessions s
+    where s.psychologist_id = p_psychologist_id
+      and s.session_date = p_session_date
+      and s.session_time = p_session_time
+      and s.status not in ('cancelled', 'expired', 'no_show')
+      and (s.status <> 'held' or s.hold_expires_at is null or s.hold_expires_at > now())
+  ) then
+    return jsonb_build_object('ok', false, 'error', 'Слот уже занят');
+  end if;
+
+  if exists (
+    select 1 from schedule_blocks b
+    where b.psychologist_id = p_psychologist_id
+      and p_session_date between b.date_from and b.date_to
+      and (b.time_from = '' and b.time_to = ''
+           or p_session_time >= coalesce(nullif(b.time_from, ''), '00:00')
+          and p_session_time < coalesce(nullif(b.time_to, ''), '23:59'))
+  ) then
+    return jsonb_build_object('ok', false, 'error', 'В это время специалист не принимает');
+  end if;
+
+  -- анти-спам: не больше 3 записей в день на телефон
+  if v_phone_key <> '' then
+    select count(*) into v_today_count
+    from sessions s join clients c on c.id = s.client_id
+    where s.psychologist_id = p_psychologist_id
+      and s.session_date = current_date::text
+      and regexp_replace(coalesce(c.phone, ''), '\D', '', 'g') = v_phone_key;
+    if v_today_count >= 3 then
+      return jsonb_build_object('ok', false, 'error', 'Слишком много записей за день, попробуйте позже');
+    end if;
+  end if;
+
+  -- повторный клиент по телефону
+  if v_phone_key <> '' then
+    select id into v_client_id from clients
+    where psychologist_id = p_psychologist_id
+      and regexp_replace(coalesce(phone, ''), '\D', '', 'g') = v_phone_key
+    order by created_at limit 1;
+  end if;
+
+  if v_client_id is null then
+    insert into clients (psychologist_id, name, nickname, phone, contact, note)
+    values (p_psychologist_id,
+            coalesce(nullif(p_client_name, ''), p_client_nickname),
+            coalesce(nullif(p_client_nickname, ''), p_client_name),
+            p_client_phone, p_client_contact, p_client_note)
+    returning id into v_client_id;
+  end if;
+
+  insert into sessions (psychologist_id, client_id, service_id, session_date, session_time,
+                        status, note, video_platform,
+                        payment_policy, payment_status, amount_due, amount_paid, currency)
+  values (p_psychologist_id, v_client_id, p_service_id, p_session_date, p_session_time,
+          coalesce(p_status, 'pending'), p_session_note, p_video_platform,
+          p_payment_policy, p_payment_status, p_amount_due, p_amount_paid, p_currency)
+  returning id into v_session_id;
+
+  return jsonb_build_object('ok', true, 'client_id', v_client_id, 'session_id', v_session_id);
+end;
+$$;
+
+revoke execute on function public.create_booking(text, text, text, text, text, text, text, text, text, text, text, text, text, text, numeric, numeric, text) from public;
+grant execute on function public.create_booking(text, text, text, text, text, text, text, text, text, text, text, text, text, text, numeric, numeric, text) to anon, authenticated;

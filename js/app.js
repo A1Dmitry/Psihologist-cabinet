@@ -12,6 +12,8 @@ import { PaymentPolicy } from './models/entities.js';
 import { reminderService } from './services/reminderService.js';
 import { supabaseSync } from './services/supabaseSync.js';
 import { isSupabaseConfigured } from './services/supabaseConfig.js';
+import { applyProfileSeo, applyPortalSeo } from './services/seoService.js';
+import { googleAddLink } from './services/calendarService.js';
 
 const portalVm = new PortalViewModel();
 const authVm = new AuthViewModel();
@@ -83,15 +85,75 @@ function showToast(msg, isError) {
   setTimeout(() => el.classList.add('hidden'), 3000);
 }
 
-// ——— Router ———
-function navigate(name, params = {}) {
+// ——— Router (indexable URLs: /psy/{slug}, /cabinet, /auth) ———
+function computeBasePath() {
+  let p = location.pathname;
+  if (p.endsWith('/index.html')) p = p.slice(0, -'index.html'.length);
+  p = p.replace(/\/(psy\/[^/]+|cabinet|auth|booking-done|reply)\/?$/i, '');
+  return p.endsWith('/') ? p : p + '/';
+}
+const BASE = computeBasePath();
+const urlFor = {
+  home: () => BASE,
+  psy: slug => `${BASE}psy/${encodeURIComponent(slug)}`,
+  cabinet: () => `${BASE}cabinet`,
+  auth: () => `${BASE}auth`,
+  success: () => `${BASE}booking-done`,
+  reply: token => `${BASE}reply?reply=${encodeURIComponent(token)}`,
+  /** Публичная (индексируемая) ссылка записи для клиентов */
+  bookingLink: slug => `${location.origin}${urlFor.psy(slug)}`
+};
+
+function routeUrl(r) {
+  if (r.name === 'booking' && r.params.slug) return urlFor.psy(r.params.slug);
+  if (r.name === 'portal') return urlFor.home();
+  if (r.name === 'cabinet') return urlFor.cabinet();
+  if (r.name === 'auth') return urlFor.auth();
+  if (r.name === 'success') return urlFor.success();
+  if (r.name === 'clientReply' && r.params.token) return urlFor.reply(r.params.token);
+  return null;
+}
+
+/** Маршрут из URL (path /psy/slug, /cabinet + легаси ?book=, ?reply=) */
+function routeFromUrl() {
+  const qs = new URLSearchParams(location.search);
+  const book = qs.get('book');          // легаси-ссылка
+  if (book) return { name: 'booking', params: { slug: book } };
+  const reply = qs.get('reply') || qs.get('token');
+  if (reply && /\/reply\/?$/.test(location.pathname)) return { name: 'clientReply', params: { token: reply } };
+  const m = location.pathname.match(/\/psy\/([^/]+)\/?$/);
+  if (m) {
+    try { return { name: 'booking', params: { slug: decodeURIComponent(m[1]) } }; }
+    catch { return { name: 'booking', params: { slug: m[1] } }; }
+  }
+  if (/\/cabinet\/?$/.test(location.pathname)) return { name: 'cabinet', params: {} };
+  if (/\/auth\/?$/.test(location.pathname)) return { name: 'auth', params: { mode: qs.get('mode') || 'login' } };
+  if (/\/booking-done\/?$/.test(location.pathname)) return { name: 'success', params: {} };
+  return { name: 'portal', params: {} };
+}
+
+function navigate(name, params = {}, { push = true } = {}) {
   route = { name, params };
   if (name === 'cabinet' && !authService.isAuthenticated()) {
     route = { name: 'auth', params: { mode: 'login' } };
   }
+  if (push) {
+    const url = routeUrl(route);
+    if (url && url !== location.pathname + location.search) {
+      history.pushState({ name: route.name, params: route.params }, '', url);
+    }
+  }
   render();
   window.scrollTo(0, 0);
 }
+
+window.addEventListener('popstate', () => {
+  route = routeFromUrl();
+  if (route.name === 'cabinet' && !authService.isAuthenticated()) {
+    route = { name: 'auth', params: { mode: 'login' } };
+  }
+  render();
+});
 
 window.navigate = navigate;
 window.resetPortalData = () => {
@@ -140,7 +202,7 @@ function render() {
   const page = document.getElementById(id);
   if (page) page.classList.remove('hidden');
 
-  if (route.name === 'portal') renderPortal();
+  if (route.name === 'portal') { renderPortal(); applyPortalSeo(urlFor.home()); }
   if (route.name === 'auth') renderAuth();
   if (route.name === 'cabinet') renderCabinet();
   if (route.name === 'booking') renderBooking();
@@ -206,9 +268,9 @@ function renderPortal() {
         <div class="flex flex-wrap gap-2 mb-4">
           ${svcs.slice(0, 3).map(s => `<span class="text-xs px-2 py-1 rounded-full bg-slate-50 text-slate-600">${s.name}</span>`).join('')}
         </div>
-        <button onclick="navigate('booking',{slug:'${p.slug}'})" class="w-full py-2.5 rounded-full bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">
+        <a href="${urlFor.psy(p.slug)}" data-spa data-slug="${esc(p.slug)}" class="block w-full text-center py-2.5 rounded-full bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">
           Записаться
-        </button>
+        </a>
       </article>`;
   }).join('');
 }
@@ -301,6 +363,7 @@ function renderCabinet() {
   }
   if (cabinetVm.tab === 'services') renderCabServices();
   if (cabinetVm.tab === 'waiting') renderCabWaiting();
+  if (cabinetVm.tab === 'blocks') renderCabBlocks();
   if (cabinetVm.tab === 'stats') renderCabStats();
   if (cabinetVm.tab === 'profile') renderCabProfile();
   if (cabinetVm.tab === 'link') renderCabLink();
@@ -384,15 +447,53 @@ function renderCabSchedule() {
   box.innerHTML = list.map(s => {
     const cl = cabinetVm.clientById(s.clientId);
     const sv = cabinetVm.serviceById(s.serviceId);
+    const gcal = googleAddLink({
+      title: `Консультация${cl?.name ? ' · ' + cl.name : ''}${sv?.name ? ' · ' + sv.name : ''}`,
+      date: s.date,
+      time: s.time,
+      durationMin: sv?.duration || 60,
+      location: s.meetLink || '',
+      details: '',
+      timezone: cabinetVm.settings?.timezone || 'Europe/Minsk'
+    });
     return `<div class="flex items-center gap-4 p-4 border-b last:border-0">
       <div class="font-mono text-sm text-slate-500 w-14">${s.time}</div>
       <div class="flex-1"><div class="font-medium">${cl?.name || '—'}</div>
       <div class="text-sm text-slate-500">${sv?.name || ''} ${s.meetLink ? '· <a class="text-blue-600" href="'+s.meetLink+'" target="_blank">Meet</a>' : ''}</div></div>
       <span class="text-xs px-2 py-1 rounded-full ${statusClass(s.status)}">${statusLabel(s.status)}</span>
+      <a href="${esc(gcal)}" target="_blank" rel="noopener" class="text-sm text-emerald-600">В календарь</a>
       <button data-edit-session="${s.id}" class="text-sm text-indigo-600">Изменить</button>
       <button data-del-session="${s.id}" class="text-sm text-rose-500">Удалить</button>
     </div>`;
   }).join('');
+}
+
+function renderCabBlocks() {
+  const st = cabinetVm.settings;
+  if (st) {
+    $('#set-gcal-url') && ($('#set-gcal-url').value = st.googleCalendarIcalUrl || '');
+    $('#set-gcal-sync') && ($('#set-gcal-sync').checked = st.googleSyncBusy !== false);
+  }
+  const box = $('#blocks-list');
+  if (!box) return;
+  const list = cabinetVm.blocks;
+  if (!list.length) {
+    box.innerHTML = '<div class="p-6 text-center text-slate-400 text-sm">Нет блокировок. Выходные и занятость закрываются формой слева.</div>';
+    return;
+  }
+  box.innerHTML = list.map(b => `
+    <div class="p-3 border-b last:border-0 flex items-center gap-3 text-sm">
+      <span class="text-xs px-2 py-1 rounded-full bg-slate-100 shrink-0">${esc(cabinetVm.blockKindLabels[b.kind] || b.kind)}</span>
+      <div class="flex-1 min-w-0">
+        <div class="font-medium">${esc(b.title || 'Занят')}</div>
+        <div class="text-slate-500 text-xs">${esc(b.dateFrom)}${b.dateTo && b.dateTo !== b.dateFrom ? ' → ' + esc(b.dateTo) : ''}${b.timeFrom ? ' · ' + esc(b.timeFrom) + '–' + esc(b.timeTo || '') : ' · весь день'}${b.source === 'google' ? ' · Google Calendar' : ''}</div>
+        ${b.note ? `<div class="text-slate-400 text-xs">${esc(b.note)} <span class="text-slate-300">(только для вас)</span></div>` : ''}
+      </div>
+      <button data-del-block="${esc(b.id)}" class="text-rose-500 shrink-0">Снять</button>
+    </div>`).join('');
+  box.querySelectorAll('[data-del-block]').forEach(btn => {
+    btn.onclick = () => { cabinetVm.removeBlock(btn.dataset.delBlock); renderCabinet(); };
+  });
 }
 
 function renderCabClients() {
@@ -506,6 +607,45 @@ function renderCabPayments() {
   }
 }
 
+// ——— Редактор списков публичного профиля (направления, образование, опыт, ссылки) ———
+const PE_FIELDS = {
+  'pe-directions': [['title', 'Название'], ['details', 'Детали (в скобках)']],
+  'pe-edu-basic': [['title', 'Название / программа'], ['institution', 'Учреждение'], ['details', 'Детали']],
+  'pe-edu-extra': [['title', 'Название'], ['institution', 'Учреждение'], ['details', 'Детали']],
+  'pe-experience': [['organisation', 'Организация'], ['details', 'Описание'], ['years', 'Лет']],
+  'pe-links': [['label', 'Подпись кнопки'], ['url', 'URL'], ['kind', 'Тип: service|donation|other']]
+};
+
+function addPeRow(id, values = {}) {
+  const box = document.getElementById(id);
+  const fields = PE_FIELDS[id];
+  if (!box || !fields) return;
+  const row = document.createElement('div');
+  row.className = 'pe-row flex gap-2 items-center';
+  row.innerHTML = fields.map(([key, label]) =>
+    `<input data-pe-key="${key}" placeholder="${esc(label)}" class="flex-1 min-w-0 px-3 py-1.5 rounded-lg border text-sm" value="${esc(values[key] ?? '')}">`
+  ).join('') + '<button type="button" data-pe-del class="text-rose-500 px-1 shrink-0" title="Удалить">✕</button>';
+  row.querySelector('[data-pe-del]').onclick = () => row.remove();
+  box.appendChild(row);
+}
+
+function renderPeList(id, items) {
+  const box = document.getElementById(id);
+  if (!box) return;
+  box.innerHTML = '';
+  (items || []).forEach(it => addPeRow(id, it));
+}
+
+function collectPeList(id) {
+  const box = document.getElementById(id);
+  if (!box) return [];
+  return [...box.querySelectorAll('.pe-row')].map(row => {
+    const obj = {};
+    row.querySelectorAll('[data-pe-key]').forEach(inp => { obj[inp.dataset.peKey] = inp.value.trim(); });
+    return obj;
+  }).filter(o => Object.values(o).some(Boolean));
+}
+
 function renderCabProfile() {
   const p = cabinetVm.psychologist;
   if (!p) return;
@@ -525,11 +665,29 @@ function renderCabProfile() {
   $('#pf-telegram') && ($('#pf-telegram').value = tg?.url || '');
   $('#pf-instagram') && ($('#pf-instagram').value = ig?.url || '');
   $('#pf-email') && ($('#pf-email').textContent = p.email);
+
+  renderPeList('pe-directions', p.directions);
+  renderPeList('pe-edu-basic', p.education?.basic);
+  renderPeList('pe-edu-extra', p.education?.additional);
+  renderPeList('pe-experience', (p.experienceItems || []).map(x => ({
+    organisation: x.organisation, details: x.details, years: x.years ?? ''
+  })));
+  renderPeList('pe-links', p.paymentLinks);
+
+  const req = p.paymentRequisites || {};
+  $('#pe-req-recipient') && ($('#pe-req-recipient').value = req.recipient || '');
+  $('#pe-req-legal-address') && ($('#pe-req-legal-address').value = req.legalAddress || '');
+  $('#pe-req-unp') && ($('#pe-req-unp').value = req.unp || '');
+  $('#pe-req-account') && ($('#pe-req-account').value = req.account || '');
+  $('#pe-req-bank') && ($('#pe-req-bank').value = req.bankName || '');
+  $('#pe-req-bik') && ($('#pe-req-bik').value = req.bik || '');
+  $('#pe-req-purpose') && ($('#pe-req-purpose').value = req.purpose || '');
+  $('#pe-req-donation') && ($('#pe-req-donation').value = req.donationUrl || '');
 }
 
 function renderCabLink() {
   const p = cabinetVm.psychologist;
-  const url = `${location.origin}${location.pathname}?book=${p.slug}`;
+  const url = urlFor.bookingLink(p.slug);
   $('#pub-link') && ($('#pub-link').value = url);
   $('#pub-slug') && ($('#pub-slug').textContent = p.slug);
 }
@@ -636,6 +794,8 @@ function renderBooking() {
   $('#book-psy-spec') && ($('#book-psy-spec').textContent = p.specialization);
   $('#book-psy-city') && ($('#book-psy-city').textContent = (p.city || 'Онлайн') + ' · при необходимости Google Meet');
   renderBookAbout(p);
+  // SEO: title/description/OG/JSON-LD для индексации страницы специалиста
+  try { applyProfileSeo(p, bookingVm.services, urlFor.psy(p.slug)); } catch (e) { console.warn('seo', e); }
 
   const svcBox = $('#book-services');
   if (svcBox) {
@@ -665,9 +825,11 @@ function renderBooking() {
 
   const daysBox = $('#book-days');
   if (daysBox) {
-    daysBox.innerHTML = bookingVm.availableDays.map(d => `
-      <button type="button" data-day="${d}" class="px-4 py-2 rounded-full text-sm whitespace-nowrap ${bookingVm.date === d ? 'bg-indigo-600 text-white' : 'bg-white border border-slate-200'}">${formatDate(d)}</button>
-    `).join('');
+    daysBox.innerHTML = bookingVm.availableDays.map(d => {
+      const off = bookingVm.dayBlockTitle(d);
+      const label = off ? ` · ${esc(off)}` : '';
+      return `<button type="button" data-day="${d}" class="px-4 py-2 rounded-full text-sm whitespace-nowrap ${bookingVm.date === d ? 'bg-indigo-600 text-white' : 'bg-white border border-slate-200'}">${formatDate(d)}${label}</button>`;
+    }).join('');
     daysBox.querySelectorAll('button').forEach(btn => {
       btn.onclick = () => { bookingVm.selectDate(btn.dataset.day); renderBooking(); };
     });
@@ -762,10 +924,38 @@ function renderClientReply() {
 
 function renderSuccess() {
   $('#success-text') && ($('#success-text').textContent = bookingVm.successText || 'Заявка принята');
+  // «Добавить в Google Calendar» (аналог Calendly/Booksy) — для созданной записи
+  const box = $('#success-gcal');
+  if (!box) return;
+  const s = bookingVm.createdSessionId ? db.sessions.find(x => x.id === bookingVm.createdSessionId) : null;
+  const p = bookingVm.psychologist;
+  const sv = bookingVm.selectedService;
+  if (s && p) {
+    box.href = googleAddLink({
+      title: `${sv?.name || 'Консультация'} · ${p.fullName}`,
+      date: s.date,
+      time: s.time,
+      durationMin: sv?.duration || 60,
+      location: s.meetLink || '',
+      details: p.greeting || '',
+      timezone: bookingVm.settings?.timezone || 'Europe/Minsk'
+    });
+    box.classList.remove('hidden');
+  } else {
+    box.classList.add('hidden');
+  }
 }
 
 // ——— Event bindings ———
 function bindEvents() {
+  // Реальные <a href> (индексируются) + SPA-навигация без перезагрузки
+  document.addEventListener('click', e => {
+    const a = e.target.closest('a[data-spa]');
+    if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    navigate('booking', { slug: a.dataset.slug });
+  });
+
   // Portal search
   $('#portal-search')?.addEventListener('input', e => {
     portalVm.setQuery(e.target.value);
@@ -867,6 +1057,21 @@ function bindEvents() {
     const ig = $('#pf-instagram')?.value?.trim();
     if (tg) socials.push({ kind: 'telegram', url: tg, title: 'telegram' });
     if (ig) socials.push({ kind: 'instagram', url: ig, title: 'instagram' });
+
+    const eduItem = x => ({ title: x.title || '', institution: x.institution || '', details: x.details || '' });
+    const directions = collectPeList('pe-directions').map(x => ({ title: x.title || '', details: x.details || '' }));
+    const eduBasic = collectPeList('pe-edu-basic').map(eduItem);
+    const eduExtra = collectPeList('pe-edu-extra').map(eduItem);
+    const experienceItems = collectPeList('pe-experience').map(x => ({
+      organisation: x.organisation || '',
+      details: x.details || '',
+      years: x.years !== '' && x.years != null ? Number(x.years) : null,
+      isCurrent: (p?.experienceItems || []).find(e => e.organisation === x.organisation)?.isCurrent ?? false
+    }));
+    const paymentLinks = collectPeList('pe-links').map(x => ({
+      label: x.label || '', url: x.url || '', kind: x.kind || 'other'
+    }));
+
     cabinetVm.updateProfile({
       fullName: $('#pf-name')?.value,
       phone: $('#pf-phone')?.value,
@@ -879,8 +1084,64 @@ function bindEvents() {
       publicEmail: $('#pf-public-email')?.value,
       address: $('#pf-address')?.value,
       website: $('#pf-website')?.value,
-      socials
+      socials,
+      directions,
+      education: { basic: eduBasic, additional: eduExtra },
+      experienceItems,
+      paymentLinks,
+      paymentRequisites: {
+        ...(p?.paymentRequisites || {}),
+        recipient: $('#pe-req-recipient')?.value?.trim() || '',
+        legalAddress: $('#pe-req-legal-address')?.value?.trim() || '',
+        unp: $('#pe-req-unp')?.value?.trim() || '',
+        account: $('#pe-req-account')?.value?.trim() || '',
+        bankName: $('#pe-req-bank')?.value?.trim() || '',
+        bik: $('#pe-req-bik')?.value?.trim() || '',
+        purpose: $('#pe-req-purpose')?.value?.trim() || '',
+        donationUrl: $('#pe-req-donation')?.value?.trim() || ''
+      }
     });
+    renderCabinet();
+  });
+
+  // добавление строк в списки профиля
+  document.addEventListener('click', e => {
+    const add = e.target.closest('[data-pe-add]');
+    if (add) addPeRow(add.dataset.peAdd);
+  });
+
+  // ——— Занятость: блокировки + Google Calendar ———
+  $('#btn-add-block')?.addEventListener('click', () => {
+    const ok = cabinetVm.addBlock({
+      dateFrom: $('#blk-date-from')?.value,
+      dateTo: $('#blk-date-to')?.value,
+      timeFrom: $('#blk-time-from')?.value,
+      timeTo: $('#blk-time-to')?.value,
+      kind: $('#blk-kind')?.value,
+      title: $('#blk-title')?.value,
+      note: $('#blk-note')?.value
+    });
+    if (ok) {
+      ['#blk-date-from', '#blk-date-to', '#blk-time-from', '#blk-time-to', '#blk-title', '#blk-note']
+        .forEach(sel => { const el = $(sel); if (el) el.value = ''; });
+    }
+    renderCabinet();
+  });
+
+  $('#btn-save-gcal')?.addEventListener('click', () => {
+    cabinetVm.saveCalendarSettings({
+      googleCalendarIcalUrl: $('#set-gcal-url')?.value,
+      googleSyncBusy: $('#set-gcal-sync')?.checked
+    });
+    renderCabinet();
+  });
+
+  $('#btn-sync-gcal')?.addEventListener('click', async () => {
+    cabinetVm.saveCalendarSettings({
+      googleCalendarIcalUrl: $('#set-gcal-url')?.value,
+      googleSyncBusy: $('#set-gcal-sync')?.checked
+    });
+    await cabinetVm.syncGoogleCalendar();
     renderCabinet();
   });
   $('#btn-copy-link')?.addEventListener('click', () => {
@@ -1187,15 +1448,13 @@ function boot() {
       }
     }
 
-    const params = new URLSearchParams(location.search);
-    const book = params.get('book');
-    if (book) {
-      navigate('booking', { slug: book });
-    } else if (authService.isAuthenticated() && params.get('cabinet') === '1') {
-      navigate('cabinet');
-    } else {
-      navigate('portal');
+    // стартовый маршрут — из URL (индексируемые ссылки /psy/{slug} + легаси ?book=)
+    bookingVm.onAvailability = () => { if (route.name === 'booking') renderBooking(); };
+    route = routeFromUrl();
+    if (route.name === 'cabinet' && !authService.isAuthenticated()) {
+      route = { name: 'auth', params: { mode: 'login' } };
     }
+    navigate(route.name, route.params, { push: false });
   })();
 }
 

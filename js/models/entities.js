@@ -15,7 +15,29 @@ export const EntityNames = {
   SessionSettings: 'SessionSettings',
   BookingAttempt: 'BookingAttempts',
   ClientRisk: 'ClientRisks',
-  SessionReminder: 'SessionReminders'
+  SessionReminder: 'SessionReminders',
+  ScheduleBlock: 'ScheduleBlocks'
+};
+
+/**
+ * Профессии специалистов (портал — не только психологи).
+ * discriminator для мультипрофильности: UI-каталог, SEO (schema.org), таксономия запросов.
+ */
+export const Professions = {
+  psychologist: { label: 'Психолог', schemaType: 'ProfessionalService' },
+  psychotherapist: { label: 'Психотерапевт', schemaType: 'MedicalBusiness' },
+  coach: { label: 'Коуч', schemaType: 'ProfessionalService' },
+  lawyer: { label: 'Юрист', schemaType: 'LegalService' },
+  accountant: { label: 'Бухгалтер', schemaType: 'AccountingService' }
+};
+
+/** Типы блокировок занятости (выходной, занят и т.д.) */
+export const ScheduleBlockKind = {
+  DAY_OFF: 'day_off',       // выходной
+  BUSY: 'busy',             // занят
+  VACATION: 'vacation',     // отпуск
+  HOLIDAY: 'holiday',       // праздник
+  OTHER: 'other'
 };
 
 /** Политика оплаты услуги/кабинета */
@@ -71,6 +93,8 @@ export class Psychologist {
     paymentLinks = [],
     // —— Банковские реквизиты для платежа по реквизитам ——
     paymentRequisites = null,
+    /** discriminator профессии (см. Professions) — портал расширяется не только на психологов */
+    profession = 'psychologist',
     isActive = true,
     /** { salt, iv, data } — verifier ключа из пароля; пароль не хранится */
     keyVerifier = null,
@@ -127,6 +151,7 @@ export class Psychologist {
       purpose: str(paymentRequisites?.purpose),
       donationUrl: str(paymentRequisites?.donationUrl)
     };
+    this.profession = Professions[profession] ? profession : 'psychologist';
 
     this.isActive = isActive;
     this.keyVerifier = keyVerifier;
@@ -288,6 +313,8 @@ export class Session {
     requiresPayment = false,
     clientResponse = null, // null | confirmed | declined | change_confirmed | change_declined
     clientRespondedAt = null,
+    /** Google Calendar: идентификатор события для синхронизации */
+    googleEventId = '',
     /** предложенный перенос владельцем кабинета */
     pendingChange = null, // { date, time, reason, proposedAt } | null
     previousSlot = null, // { date, time } до переноса
@@ -313,6 +340,7 @@ export class Session {
     this.requiresPayment = !!requiresPayment;
     this.clientResponse = clientResponse;
     this.clientRespondedAt = clientRespondedAt;
+    this.googleEventId = googleEventId || '';
     this.pendingChange = pendingChange;
     this.previousSlot = previousSlot;
     this.changeConsentStatus = changeConsentStatus;
@@ -389,9 +417,13 @@ export class SessionSettings {
   constructor({
     psychologistId = null,
     workHours = 'Пн–Пт 10:00–19:00',
+    workDays = null, // [1..7] — рабочие дни недели
     timezone = 'Europe/Minsk',
     defaultVideoPlatform = 'google_meet',
     slotTimes = null,
+    slotStart = '10:00',
+    slotEnd = '18:00',
+    slotStepMin = 60,
     // —— оплата ——
     paymentPolicy = PaymentPolicy.DEPOSIT,
     depositPercent = 30,
@@ -409,13 +441,21 @@ export class SessionSettings {
     reminderEnabled = true,
     reminderHoursBefore = 24, // оптимум: 24; альтернатива 12 / 48
     reminderSecondHoursBefore = 12, // повтор, если нет ответа (0 = выкл)
-    reminderChannel = 'telegram_sms' // demo channel label
+    reminderChannel = 'telegram_sms', // demo channel label
+    // —— Google Calendar (занятость) ——
+    /** secret iCal-адрес календаря (basic.ics) — хранится приватно, импорт в блокировки */
+    googleCalendarIcalUrl = '',
+    googleSyncBusy = true
   } = {}) {
     this.psychologistId = psychologistId;
     this.workHours = workHours;
+    this.workDays = Array.isArray(workDays) ? workDays.map(Number) : [1, 2, 3, 4, 5];
     this.timezone = timezone;
     this.defaultVideoPlatform = defaultVideoPlatform;
     this.slotTimes = slotTimes || ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
+    this.slotStart = slotStart || '10:00';
+    this.slotEnd = slotEnd || '18:00';
+    this.slotStepMin = Number(slotStepMin) || 60;
     this.paymentPolicy = paymentPolicy;
     this.depositPercent = Number(depositPercent) || 30;
     this.depositAmount = depositAmount != null ? Number(depositAmount) : null;
@@ -431,6 +471,52 @@ export class SessionSettings {
     this.reminderHoursBefore = Number(reminderHoursBefore) || 24;
     this.reminderSecondHoursBefore = reminderSecondHoursBefore == null ? 12 : Number(reminderSecondHoursBefore);
     this.reminderChannel = reminderChannel || 'telegram_sms';
+    this.googleCalendarIcalUrl = googleCalendarIcalUrl || '';
+    this.googleSyncBusy = googleSyncBusy !== false;
+  }
+}
+
+/**
+ * Блокировка занятости специалиста (выходной, занят, отпуск…).
+ * Публично отдаётся только free/busy (см. public_schedule_blocks) — без заметок.
+ */
+export class ScheduleBlock {
+  constructor({
+    id = null,
+    psychologistId = null,
+    dateFrom = '',            // YYYY-MM-DD (включительно)
+    dateTo = '',              // YYYY-MM-DD (включительно); пусто = один день
+    timeFrom = '',            // HH:MM, пусто = весь день
+    timeTo = '',              // HH:MM
+    kind = ScheduleBlockKind.BUSY,
+    title = '',               // «Выходной», «Отпуск» — видно на публичной странице
+    note = '',                // приватная заметка — НЕ видна анонимам
+    source = 'manual',        // manual | google
+    googleEventId = '',
+    createdAt = null
+  } = {}) {
+    this.id = id;
+    this.psychologistId = psychologistId;
+    this.dateFrom = dateFrom;
+    this.dateTo = dateTo || dateFrom;
+    this.timeFrom = timeFrom || '';
+    this.timeTo = timeTo || '';
+    this.kind = Object.values(ScheduleBlockKind).includes(kind) ? kind : ScheduleBlockKind.OTHER;
+    this.title = title || '';
+    this.note = note || '';
+    this.source = source || 'manual';
+    this.googleEventId = googleEventId || '';
+    this.createdAt = createdAt || new Date().toISOString();
+  }
+
+  /** Покрывает ли блокировка дату (и время, если указано) */
+  covers(date, time = '') {
+    if (!this.dateFrom || date < this.dateFrom || date > (this.dateTo || this.dateFrom)) return false;
+    if (!this.timeFrom && !this.timeTo) return true; // весь день
+    if (!time) return true;
+    const from = this.timeFrom || '00:00';
+    const to = this.timeTo || '23:59';
+    return time >= from && time < to;
   }
 }
 

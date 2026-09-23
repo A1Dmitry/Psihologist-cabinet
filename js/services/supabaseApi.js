@@ -1,8 +1,20 @@
 /**
  * Минимальный REST-клиент Supabase (без npm)
- * PostgREST: /rest/v1/<table>
+ * PostgREST: /rest/v1/<table | view | rpc>
+ *
+ * Публичный контракт (RLS, anon) — только то, что публично в сети:
+ *   public_profiles       — публичный профиль специалиста (без email-учётки и key_verifier)
+ *   services              — услуги/цены
+ *   public_settings       — часы работы/слоты/условия оплаты (без антиспам-настроек)
+ *   public_schedule_blocks— free/busy блокировки (без приватных заметок)
+ *   public_booked_slots   — занятые слоты (дата/время без данных клиента)
+ *   rpc/create_booking    — запись клиента (security definer; единственный путь записи)
+ *
+ * Клиенты, сессии, платежи и PII анонимам НЕ доступны (см. supabase/schema.sql).
  */
 import { SUPABASE_URL, SUPABASE_ANON_KEY, isSupabaseConfigured } from './supabaseConfig.js';
+
+const PUBLIC_PROFILE_COLUMNS = 'id,full_name,phone,specialization,city,about,website,source_url,address,experience,slug,greeting,approach,photo_url,public_email,directions,education,experience_items,socials,payment_links,payment_requisites,profession,is_active,created_at';
 
 function headers(extra = {}) {
   return {
@@ -36,15 +48,17 @@ async function request(path, options = {}) {
 export const supabaseApi = {
   configured: isSupabaseConfigured,
 
+  // ——— Публичный каталог / профиль ———
   async listPsychologists() {
-    return request('psychologists?is_active=eq.true&select=*');
+    return request(`public_profiles?is_active=eq.true&select=${PUBLIC_PROFILE_COLUMNS}`);
   },
 
   async getPsychologistBySlug(slug) {
-    const rows = await request(`psychologists?slug=eq.${encodeURIComponent(slug)}&select=*&limit=1`);
+    const rows = await request(`public_profiles?slug=eq.${encodeURIComponent(slug)}&select=${PUBLIC_PROFILE_COLUMNS}&limit=1`);
     return rows?.[0] || null;
   },
 
+  /** Обновление профиля (для auth-режима; anon RLS запрещает запись) */
   async updatePsychologist(id, patch) {
     const rows = await request(`psychologists?id=eq.${id}`, {
       method: 'PATCH',
@@ -59,37 +73,29 @@ export const supabaseApi = {
     );
   },
 
-  async listSessions(psychologistId, fromDate, toDate) {
-    let q = `sessions?psychologist_id=eq.${psychologistId}&select=*&order=session_date.asc,session_time.asc`;
+  // ——— Публичная доступность (free/busy) ———
+  async listBookedSlots(psychologistId, fromDate, toDate) {
+    let q = `public_booked_slots?psychologist_id=eq.${psychologistId}&select=session_date,session_time&order=session_date.asc,session_time.asc`;
     if (fromDate) q += `&session_date=gte.${fromDate}`;
     if (toDate) q += `&session_date=lte.${toDate}`;
     return request(q);
   },
 
-  async listClients(psychologistId) {
-    return request(`clients?psychologist_id=eq.${psychologistId}&select=*&order=created_at.desc`);
+  async listBusyBlocks(psychologistId, fromDate, toDate) {
+    let q = `public_schedule_blocks?psychologist_id=eq.${psychologistId}&select=*&order=date_from.asc`;
+    if (fromDate) q += `&date_to=gte.${fromDate}`;
+    if (toDate) q += `&date_from=lte.${toDate}`;
+    return request(q);
   },
 
-  async createClient(row) {
-    const rows = await request('clients', { method: 'POST', body: JSON.stringify(row) });
-    return Array.isArray(rows) ? rows[0] : rows;
-  },
-
-  async createSession(row) {
-    const rows = await request('sessions', { method: 'POST', body: JSON.stringify(row) });
-    return Array.isArray(rows) ? rows[0] : rows;
-  },
-
-  async updateSession(id, patch) {
-    const rows = await request(`sessions?id=eq.${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() })
-    });
+  /** Запись клиента — только через RPC (анти-спам + проверка слота на сервере) */
+  async createBooking(payload) {
+    const rows = await request('rpc/create_booking', { method: 'POST', body: JSON.stringify(payload) });
     return Array.isArray(rows) ? rows[0] : rows;
   },
 
   async getSettings(psychologistId) {
-    const rows = await request(`session_settings?psychologist_id=eq.${psychologistId}&select=*&limit=1`);
+    const rows = await request(`public_settings?psychologist_id=eq.${psychologistId}&select=*&limit=1`);
     return rows?.[0] || null;
   }
 };

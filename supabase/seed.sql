@@ -129,3 +129,12 @@ on conflict (id) do update set
 insert into session_settings (psychologist_id, timezone, slot_start, slot_end, slot_step_min) values
   ('psy_catalog_19', 'Europe/Minsk', '10:00', '19:00', 60)
 on conflict (psychologist_id) do nothing;
+
+-- ——— Блокировки занятости: пример (воскресенье — выходной) ———
+-- Клиентам видны только тип/заголовок/период (public_schedule_blocks); заметка приватна.
+insert into schedule_blocks (id, psychologist_id, date_from, date_to, kind, title, note, source)
+values ('blk_natalia_sunday', 'psy_catalog_19',
+        to_char(current_date + (7 - extract(isodow from current_date))::int, 'YYYY-MM-DD'),
+        to_char(current_date + (7 - extract(isodow from current_date))::int, 'YYYY-MM-DD'),
+        'day_off', 'Выходной', '', 'manual')
+on conflict (id) do nothing;
