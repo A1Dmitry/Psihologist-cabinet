@@ -28,8 +28,15 @@ function toMinutes(hhmm) {
   return (Number(h) || 0) * 60 + (Number(m) || 0);
 }
 
-function minutesToTime(mins) {
-  const v = ((Math.round(mins) % DAY_MINUTES) + DAY_MINUTES) % DAY_MINUTES;
+/**
+ * Минуты от полуночи → «HH:MM». Значение заворачивается в сутки, поэтому
+ * конец сессии 23:30 + 60 мин отображается как «00:30», а не «24:30».
+ * Единственная реализация в модуле — дубль со слайдингом ломал загрузку
+ * страницы записи (SyntaxError: Identifier 'minutesToTime' has already been declared).
+ */
+function minutesToTime(value) {
+  const minutes = Math.round(Number(value) || 0);
+  const v = ((minutes % DAY_MINUTES) + DAY_MINUTES) % DAY_MINUTES;
   return `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`;
 }
 
@@ -69,11 +76,6 @@ function timeToMinutes(value) {
   const minutes = Number(match[2]);
   if (hours > 24 || minutes > 59) return null;
   return hours * 60 + minutes;
-}
-
-function minutesToTime(value) {
-  const minutes = Math.max(0, Number(value) || 0);
-  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 }
 
 function datePartsInTimeZone(date, timezone) {
@@ -202,7 +204,6 @@ export class BookingViewModel extends BaseViewModel {
     this.dateRange = 'week';
     /** Шаги публичной записи: 1 — услуга, 2 — время, 3 — контакт. */
     this.wizardStep = 1;
-    this.clientTimezone = detectClientTimezone();
     this.slotPsychDate = null;
     this.slotPsychTime = null;
     /** публичная доступность (free/busy) с сервера */
@@ -214,8 +215,12 @@ export class BookingViewModel extends BaseViewModel {
     this.maxStepReached = BookingSteps.SERVICE;
     /** пояс клиента определяется один раз за сессию (T-03) */
     this._clientTimeZone = null;
-    /** пояс клиента на момент отправки заявки — для SR-001 (sessions.client_timezone) */
-    this.clientTimezone = null;
+    /**
+     * Зеркало пояса клиента для SR-001 (sessions.client_timezone): на момент
+     * отправки заявки синхронизируется с clientTimeZone. Одно объявление —
+     * второй `this.clientTimezone = null` из неудачного merge обнулял значение.
+     */
+    this.clientTimezone = detectClientTimezone();
     this.clientUtcOffsetMinutes = null;
   }
 
@@ -365,20 +370,38 @@ export class BookingViewModel extends BaseViewModel {
   }
 
   /**
-   * Интервалы занятости на дату (минуты в поясе специалиста):
-   * чужие записи + блокировки (выходной/отпуск/Google Calendar).
+   * Занятые интервалы на дату (минуты в поясе специалиста): локальные сессии,
+   * холды, ожидающие переноса, серверный free/busy (public_booked_slots) и
+   * блокировки (выходной/отпуск/Google Calendar).
+   * Формат — объекты { from, to, kind, title }: `_slotsFor` берёт из них и
+   * пересечение, и подпись причины («Время занято», название блокировки).
    */
   _busyIntervalsFor(date) {
     const intervals = [];
-    for (const t of this._busySetFor(date)) {
-      const from = toMinutes(t);
-      intervals.push({
-        from,
-        to: from + this._bookingDurationAt(date, t),
-        kind: 'booked',
-        title: 'Время занято'
-      });
-    }
+    const fallback = this.slotStepMinutes;
+    const add = (time, duration, kind = 'booked', title = 'Время занято') => {
+      const from = timeToMinutes(time);
+      if (from == null) return;
+      const span = Math.max(1, Number(duration) || fallback);
+      intervals.push({ from, to: from + span, kind, title });
+    };
+
+    // серверный free/busy: длительность не отдаётся — считаем по шагу сетки (SR-003)
+    (this.remoteBusy[date] || []).forEach(time => add(time, fallback));
+
+    // локальные записи: подтверждённые/ожидающие + холды без истечения срока
+    db.sessions.forEach(s => {
+      if (s.psychologistId !== this.psychologist?.id) return;
+      if (['cancelled', 'expired', 'no_show'].includes(s.status)) return;
+      if (s.status === 'held' && s.holdExpiresAt && new Date(s.holdExpiresAt) < new Date()) return;
+      const duration = this._bookingDurationAt(s.date, s.time);
+      if (s.date === date) add(s.time, duration);
+      if (s.pendingChange && s.changeConsentStatus === 'pending' && s.pendingChange.date === date) {
+        add(s.pendingChange.time, duration);
+      }
+    });
+
+    // блокировки занятости: выходной/отпуск/импорт календаря
     const blocks = [...db.blocksOf(this.psychologist?.id), ...this.remoteBlocks];
     for (const b of blocks) {
       const from = b.dateFrom || '';
@@ -638,7 +661,7 @@ export class BookingViewModel extends BaseViewModel {
   }
 
   get timezoneLabel() {
-    return `Время в вашем поясе (${this.clientTimezone}). Часовой пояс специалиста: ${this.psychologistTimezone}.`;
+    return `Время в вашем поясе (${this.clientTimeZone}). Часовой пояс специалиста: ${this.psychologistTimezone}.`;
   }
 
   get selectedClientDate() {
@@ -762,29 +785,6 @@ export class BookingViewModel extends BaseViewModel {
     return b ? (b.title || 'Закрыто') : null;
   }
 
-  /** Занятые интервалы на дату: сессии/холды/переносы + удалённый free/busy. */
-  _busyIntervalsFor(date) {
-    const intervals = [];
-    const fallbackDuration = Number(this.settings?.slotStepMin) || 60;
-    const add = (time, duration = fallbackDuration) => {
-      const start = timeToMinutes(time);
-      if (start != null) intervals.push([start, start + Math.max(1, Number(duration) || fallbackDuration)]);
-    };
-
-    (this.remoteBusy[date] || []).forEach(time => add(time));
-    db.sessions.forEach(s => {
-      if (s.psychologistId !== this.psychologist?.id) return;
-      if (['cancelled', 'expired', 'no_show'].includes(s.status)) return;
-      if (s.status === 'held' && s.holdExpiresAt && new Date(s.holdExpiresAt) < new Date()) return;
-      const duration = db.services.find(service => service.id === s.serviceId)?.duration || fallbackDuration;
-      if (s.date === date) add(s.time, duration);
-      if (s.pendingChange && s.changeConsentStatus === 'pending' && s.pendingChange.date === date) {
-        add(s.pendingChange.time, duration);
-      }
-    });
-    return intervals;
-  }
-
   _refreshPaymentInfo() {
     if (!this.psychologist || !this.selectedService) {
       this.paymentInfo = null;
@@ -904,9 +904,10 @@ export class BookingViewModel extends BaseViewModel {
     if (!this.time) { this.error = 'Выберите время'; this.notify(); return false; }
     const selectedPsychDate = this.slotPsychDate || this.date;
     const selectedPsychTime = this.slotPsychTime || this.time;
-    const selectedSlot = this._slotRowsForDate(selectedPsychDate)
-      .find(slot => slot.psychTime === selectedPsychTime);
-    if (!selectedSlot || selectedSlot.busy) {
+    // сетка слотов в поясе специалиста: слот должен быть свободен на момент отправки
+    const selectedSlot = this._slotsFor(selectedPsychDate)
+      .find(slot => slot.time === selectedPsychTime);
+    if (!selectedSlot || !selectedSlot.available) {
       this.error = 'Это время уже недоступно или не помещается в рабочее окно. Выберите другое.';
       this.notify();
       return false;
