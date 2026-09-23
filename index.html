@@ -41,11 +41,12 @@
         <p class="text-slate-600 max-w-xl mx-auto">Запишитесь к специалисту или откройте свой кабинет: расписание, клиенты, Google Meet и услуги.</p>
       </div>
       <div class="flex flex-col sm:flex-row gap-3 mb-8 max-w-2xl mx-auto">
-        <input id="portal-search" type="search" placeholder="Поиск по имени, специализации…" class="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300">
+        <input id="portal-search" type="search" placeholder="Имя, проблема или специализация…" aria-label="Поиск психолога по имени, проблеме или специализации" class="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300">
         <select id="portal-city" class="px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300">
           <option value="">Все города</option>
         </select>
       </div>
+      <p class="text-center text-xs text-slate-400 -mt-5 mb-8">Например: тревога, депрессия, отношения, самооценка, выгорание</p>
       <div id="portal-list" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5"></div>
       <p class="text-center text-xs text-slate-400 mt-12">
         Демо: natalia@example.com или ivan@example.com + пароль (задайте при первом входе) ·
