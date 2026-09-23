@@ -15,18 +15,10 @@ import { sessionSeriesService } from '../services/sessionSeriesService.js';
 import { clientCabinetService, MATERIAL_KINDS } from '../services/clientCabinetService.js';
 import { cabinetStatsService, moneyLabel } from '../services/cabinetStatsService.js';
 import {
-  timezoneService, todayStr as zoneToday, weekdayOf, addDaysStr,
+  timezoneService, todayStr, weekdayOf, addDaysStr, daysFromToday,
   weekdayTimeLabel, zoneCity, sessionZoneLabel, sessionZoneHint, WEEKDAY_NAMES_SHORT
 } from '../services/timezoneService.js';
-
-function todayStr() {
-  return new Date().toISOString().slice(0, 10);
-}
-function addDays(n) {
-  const d = new Date();
-  d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
-}
+import { DEFAULT_DURATION_MIN } from '../domain/duration.js';
 
 /**
  * ViewModel кабинета психолога (только данные текущего пользователя)
@@ -62,7 +54,7 @@ export class CabinetViewModel extends BaseViewModel {
 
   get scheduleDays() {
     const opt = this.scheduleRangeOptions.find(o => o.id === this.scheduleRange) || this.scheduleRangeOptions[2];
-    return Array.from({ length: opt.days }, (_, i) => addDays(i));
+    return Array.from({ length: opt.days }, (_, i) => daysFromToday(i));
   }
 
   setScheduleRange(rangeId) {
@@ -176,7 +168,7 @@ export class CabinetViewModel extends BaseViewModel {
   }
 
   get weekStats() {
-    const from = addDays(-6);
+    const from = daysFromToday(-6);
     const list = this.sessions.filter(s => s.date >= from && s.status !== 'cancelled');
     let byn = 0, rub = 0;
     list.forEach(s => {
@@ -386,7 +378,7 @@ export class CabinetViewModel extends BaseViewModel {
       name: form.name.trim(),
       price: form.price,
       currency: form.currency || 'BYN',
-      duration: form.duration || 60,
+      duration: form.duration || DEFAULT_DURATION_MIN,
       format: form.format || 'offline'
     });
     cabinetApi.pushService(this.psyId, created);
@@ -783,10 +775,10 @@ export class CabinetViewModel extends BaseViewModel {
     const res = sessionSeriesService.create(this.psyId, {
       clientId: form.clientId,
       serviceId: form.serviceId || null,
-      weekday: Number(form.weekday) || weekdayOf(form.dateFrom || zoneToday()),
+      weekday: Number(form.weekday) || weekdayOf(form.dateFrom || todayStr()),
       time: form.time || '10:00',
       intervalWeeks: Number(form.intervalWeeks) || 1,
-      dateFrom: form.dateFrom || zoneToday(),
+      dateFrom: form.dateFrom || todayStr(),
       dateTo: form.dateTo || '',
       horizonWeeks: Number(form.horizonWeeks) || 8,
       note: form.note || '',
@@ -1181,7 +1173,7 @@ export class CabinetViewModel extends BaseViewModel {
     if (!r) return false;
     const session = r.sessionId
       ? this.sessions.find(s => s.id === r.sessionId)
-      : this.sessions.find(s => s.clientId === r.clientId && s.date >= zoneToday());
+      : this.sessions.find(s => s.clientId === r.clientId && s.date >= todayStr());
     if (r.kind === 'propose_time' && session && r.desiredDate && r.desiredTime) {
       const busy = this.sessions.some(s =>
         s.id !== session.id && s.date === r.desiredDate && s.time === r.desiredTime &&
@@ -1215,7 +1207,7 @@ export class CabinetViewModel extends BaseViewModel {
         weekday: r.weekday || (r.desiredDate ? weekdayOf(r.desiredDate) : 1),
         time: r.desiredTime || '10:00',
         intervalWeeks: r.intervalWeeks || 1,
-        dateFrom: zoneToday(),
+        dateFrom: todayStr(),
         horizonWeeks: 8
       });
       if (res.ok) {
@@ -1259,7 +1251,7 @@ export class CabinetViewModel extends BaseViewModel {
     const wantsRecurring = !!(pref.recurring || w.recurring);
     const wanted = form.weekday || pref.weekday || (desiredDate ? weekdayOf(desiredDate) : null);
     const time = form.time || desiredTime || '10:00';
-    const dateFrom = form.dateFrom || (desiredDate && desiredDate >= zoneToday() ? desiredDate : zoneToday());
+    const dateFrom = form.dateFrom || (desiredDate && desiredDate >= todayStr() ? desiredDate : todayStr());
     // постоянное время не просили — ограничиваемся пожеланием
     if (!(form.recurring || wantsRecurring || (wanted && desiredDate))) {
       this.setWaitingPreference(waitingId, { desiredTime: time });
@@ -1305,7 +1297,7 @@ export class CabinetViewModel extends BaseViewModel {
       weekday: form.weekday || r.weekday || 1,
       time: form.time || r.desiredTime || '10:00',
       intervalWeeks: form.intervalWeeks || r.intervalWeeks || 1,
-      dateFrom: form.dateFrom || zoneToday(),
+      dateFrom: form.dateFrom || todayStr(),
       horizonWeeks: form.horizonWeeks || 8
     });
     if (res.ok) clientCabinetService.resolveRequest(requestId, 'accepted');
@@ -1329,7 +1321,7 @@ export class CabinetViewModel extends BaseViewModel {
       settings: this.settings,
       blocks: this.blocks,
       clients: this.clients,
-      today: zoneToday()
+      today: todayStr()
     });
   }
 

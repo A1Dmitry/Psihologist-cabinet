@@ -148,16 +148,21 @@
               <input id="auth-fullname" type="text" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="Как в кабинете">
             </div>
             <div>
-              <label class="text-sm font-medium">Телефон</label>
-              <input id="auth-phone" type="tel" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300">
+              <label class="text-sm font-medium">Телефон *</label>
+              <input id="auth-phone" type="tel" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="+375 (29) 000-00-00">
             </div>
             <div>
-              <label class="text-sm font-medium">Специализация</label>
+              <label class="text-sm font-medium">Специализация *</label>
               <input id="auth-spec" type="text" value="Психолог" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300">
             </div>
             <div>
-              <label class="text-sm font-medium">Город</label>
+              <label class="text-sm font-medium">Город *</label>
               <input id="auth-city" type="text" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="Гродно">
+            </div>
+            <div>
+              <label class="text-sm font-medium">О себе *</label>
+              <textarea id="auth-about" rows="3" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="С чем работаете, форматы приёма, подход — это текст вашей публичной страницы"></textarea>
+              <p class="text-xs text-slate-400 mt-1">Показывается на вашей публичной странице специалиста.</p>
             </div>
           </div>
           <button id="auth-confirm" class="w-full py-3 rounded-full bg-indigo-600 text-white font-medium hover:bg-indigo-700">Подтвердить и войти</button>

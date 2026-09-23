@@ -8,10 +8,14 @@ import { nicknameService, normalizeNickname } from '../services/nicknameService.
 import { clientVaultService } from '../services/clientVaultService.js';
 import { supabaseApi } from '../services/supabaseApi.js';
 import { telegramService } from '../services/telegramService.js';
+import { supabaseSync } from '../services/supabaseSync.js';
 import {
-  detectTimeZone, zoneOffsetMinutes, convertWallClock, formatUtcOffset,
-  zonedTimeToUtc, isPastMoment
-} from '../services/calendarService.js';
+  browserZone, offsetMinutes, convertWallClock, formatUtcOffset,
+  zonedToInstant, isPastMoment, instantToZoned,
+  timeToMinutes, minutesToTime, addMinutesToTime, formatTimeRange,
+  todayStr, daysFromToday, weekdayOf, DEFAULT_TIMEZONE
+} from '../services/timezoneService.js';
+import { resolveDurationMinutes, formatDuration as fmtDuration } from '../domain/duration.js';
 
 /** Шаги wizard'а записи (T-01): Услуга → Время → Контакт. */
 export const BookingSteps = {
@@ -23,34 +27,13 @@ export const BookingSteps = {
 const DEFAULT_SLOT_TIMES = ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
 const DAY_MINUTES = 24 * 60;
 
-function toMinutes(hhmm) {
-  const [h, m] = String(hhmm || '00:00').split(':');
-  return (Number(h) || 0) * 60 + (Number(m) || 0);
-}
-
 /**
- * Минуты от полуночи → «HH:MM». Значение заворачивается в сутки, поэтому
- * конец сессии 23:30 + 60 мин отображается как «00:30», а не «24:30».
- * Единственная реализация в модуле — дубль со слайдингом ломал загрузку
- * страницы записи (SyntaxError: Identifier 'minutesToTime' has already been declared).
+ * Человеческая подпись дня: «сегодня», «завтра», «ср, 24 сент.».
+ * Календарная арифметика — из канонического js/services/timezoneService.js.
  */
-function minutesToTime(value) {
-  const minutes = Math.round(Number(value) || 0);
-  const v = ((minutes % DAY_MINUTES) + DAY_MINUTES) % DAY_MINUTES;
-  return `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`;
-}
-
-/** «90» → «1,5 ч», «60» → «1 ч», «45» → «45 мин» */
-function fmtDuration(min) {
-  const m = Number(min) || 60;
-  if (m < 60) return `${m} мин`;
-  if (m % 60 === 0) return `${m / 60} ч`;
-  return `${Math.floor(m / 60)},${Math.round((m % 60) / 6)} ч`;
-}
-
 function formatDay(iso) {
   if (iso === todayStr()) return 'сегодня';
-  if (iso === addDays(1)) return 'завтра';
+  if (iso === daysFromToday(1)) return 'завтра';
   const d = new Date(iso + 'T12:00:00');
   if (Number.isNaN(d.getTime())) return iso;
   try {
@@ -60,91 +43,11 @@ function formatDay(iso) {
   }
 }
 
-function formatTimeRange(start, end) {
-  return `${start}–${end}`;
-}
-
 /**
- * Public schedule values are wall-clock values in the psychologist's timezone.
- * Keep all availability calculations in that timezone; only presentation and the
- * value sent to the booking API are converted to the client's timezone.
+ * Расписание специалиста хранится «настенным» временем в ЕГО поясе; вся
+ * арифметика доступности считается в этом поясе, а в пояс клиента переводятся
+ * только подпись и то, что уходит в API записи.
  */
-function timeToMinutes(value) {
-  const match = /^(\d{1,2}):(\d{2})$/.exec(String(value || ''));
-  if (!match) return null;
-  const hours = Number(match[1]);
-  const minutes = Number(match[2]);
-  if (hours > 24 || minutes > 59) return null;
-  return hours * 60 + minutes;
-}
-
-function datePartsInTimeZone(date, timezone) {
-  try {
-    const parts = new Intl.DateTimeFormat('en-CA', {
-      timeZone: timezone,
-      calendar: 'iso8601',
-      numberingSystem: 'latn',
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
-    }).formatToParts(date);
-    const values = Object.fromEntries(parts.filter(x => x.type !== 'literal').map(x => [x.type, x.value]));
-    return {
-      date: `${values.year}-${values.month}-${values.day}`,
-      time: `${values.hour}:${values.minute}`,
-      hour: Number(values.hour),
-      minute: Number(values.minute),
-      second: Number(values.second)
-    };
-  } catch (_) {
-    return null;
-  }
-}
-
-/** Convert a local wall-clock date/time in an IANA timezone to an instant. */
-function zonedTimeToDate(date, time, timezone) {
-  const [year, month, day] = String(date).split('-').map(Number);
-  const [hour, minute] = String(time || '00:00').split(':').map(Number);
-  if (![year, month, day, hour, minute].every(Number.isFinite)) return null;
-  const wallAsUtc = Date.UTC(year, month - 1, day, hour, minute, 0);
-  // Iterating once handles DST transitions without depending on the browser's
-  // own timezone (which is often UTC in a server/preview environment).
-  let instant = new Date(wallAsUtc);
-  for (let i = 0; i < 2; i++) {
-    const local = datePartsInTimeZone(instant, timezone);
-    if (!local) return null;
-    const localAsUtc = Date.UTC(
-      Number(local.date.slice(0, 4)), Number(local.date.slice(5, 7)) - 1,
-      Number(local.date.slice(8, 10)), local.hour, local.minute, 0
-    );
-    instant = new Date(wallAsUtc - (localAsUtc - instant.getTime()));
-  }
-  return instant;
-}
-
-function detectClientTimezone() {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  } catch (_) {
-    return 'UTC';
-  }
-}
-
-function timezoneOffsetMinutes(date, timezone) {
-  const local = datePartsInTimeZone(date, timezone);
-  if (!local) return 0;
-  const [year, month, day] = local.date.split('-').map(Number);
-  const localAsUtc = Date.UTC(year, month - 1, day, local.hour, local.minute, local.second);
-  return Math.round((localAsUtc - date.getTime()) / 60000);
-}
-
-function todayStr() {
-  return new Date().toISOString().slice(0, 10);
-}
-function addDays(n) {
-  const d = new Date();
-  d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
-}
 
 /** Покрывает ли блокировку весь день/точку времени (legacy helper). */
 function blockCovers(b, date, time) {
@@ -207,21 +110,19 @@ export class BookingViewModel extends BaseViewModel {
     this.slotPsychDate = null;
     this.slotPsychTime = null;
     /** публичная доступность (free/busy) с сервера */
-    this.remoteBusy = {};   // { 'YYYY-MM-DD': Set<'HH:MM'> }
+    this.remoteBusy = {};   // { 'YYYY-MM-DD': { 'HH:MM': durationMin } }
     this.remoteBlocks = []; // [{dateFrom, dateTo, timeFrom, timeTo, kind, title}]
     this.onAvailability = null; // колбэк после async-обновления занятости
     /** wizard: текущий шаг и максимальный достигнутый (для индикатора прогресса) */
     this.step = BookingSteps.SERVICE;
     this.maxStepReached = BookingSteps.SERVICE;
-    /** пояс клиента определяется один раз за сессию (T-03) */
-    this._clientTimeZone = null;
     /**
-     * Зеркало пояса клиента для SR-001 (sessions.client_timezone): на момент
-     * отправки заявки синхронизируется с clientTimeZone. Одно объявление —
-     * второй `this.clientTimezone = null` из неудачного merge обнулял значение.
+     * Пояс клиента определяется один раз за сессию (T-03) и доступен только
+     * через геттер clientTimeZone. Отдельного «зеркального» поля нет: до аудита
+     * здесь жили два имени одного бизнес-поля (clientTimeZone / clientTimezone),
+     * и одно из них обнулялось при неудачном merge.
      */
-    this.clientTimezone = detectClientTimezone();
-    this.clientUtcOffsetMinutes = null;
+    this._clientTimeZone = null;
   }
 
   loadBySlug(slug, options = {}) {
@@ -258,14 +159,16 @@ export class BookingViewModel extends BaseViewModel {
     const psyId = this.psychologist?.id;
     if (!psyId || !supabaseApi.configured()) return;
     try {
-      const [fromDate, toDate] = [todayStr(), addDays(this.dateRange === 'month' ? 30 : 7)];
+      const [fromDate, toDate] = [todayStr(), daysFromToday(this.dateRange === 'month' ? 30 : 7)];
       const [slots, blocks] = await Promise.all([
         supabaseApi.listBookedSlots(psyId, fromDate, toDate).catch(() => []),
         supabaseApi.listBusyBlocks(psyId, fromDate, toDate).catch(() => [])
       ]);
       this.remoteBusy = {};
+      // SR-003: сервер отдаёт длительность чужой записи — без неё при шаге сетки
+      // 30 мин 90-минутная запись закрывала бы только один слот
       (slots || []).forEach(s => {
-        (this.remoteBusy[s.session_date] ||= new Set()).add(s.session_time);
+        (this.remoteBusy[s.session_date] ||= {})[s.session_time] = Number(s.duration_min) || null;
       });
       this.remoteBlocks = (blocks || []).map(b => ({
         dateFrom: b.date_from,
@@ -345,7 +248,7 @@ export class BookingViewModel extends BaseViewModel {
     if (step > 0) return step;
     const t = this.slotTimes;
     if (t.length > 1) {
-      const diff = toMinutes(t[1]) - toMinutes(t[0]);
+      const diff = timeToMinutes(t[1]) - timeToMinutes(t[0]);
       if (diff > 0) return diff;
     }
     return 60;
@@ -354,14 +257,14 @@ export class BookingViewModel extends BaseViewModel {
   /** Конец рабочего окна (минуты от полуночи) — дальше слот не начинается. */
   get dayWindowEndMinutes() {
     const t = this.slotTimes;
-    const last = toMinutes(t[t.length - 1]);
+    const last = timeToMinutes(t[t.length - 1]);
     const stepEnd = last + this.slotStepMinutes;
-    const cfgEnd = this.settings?.slotEnd ? toMinutes(this.settings.slotEnd) : NaN;
+    const cfgEnd = this.settings?.slotEnd ? timeToMinutes(this.settings.slotEnd) : NaN;
     return Number.isFinite(cfgEnd) ? Math.max(stepEnd, cfgEnd) : stepEnd;
   }
 
   get dayWindowLabel() {
-    return `${minutesToTime(toMinutes(this.slotTimes[0]))}–${minutesToTime(this.dayWindowEndMinutes)}`;
+    return `${minutesToTime(timeToMinutes(this.slotTimes[0]))}–${minutesToTime(this.dayWindowEndMinutes)}`;
   }
 
   /** Часы приёма в человеческом виде («Пн–Пт 10:00–19:00»). */
@@ -386,8 +289,10 @@ export class BookingViewModel extends BaseViewModel {
       intervals.push({ from, to: from + span, kind, title });
     };
 
-    // серверный free/busy: длительность не отдаётся — считаем по шагу сетки (SR-003)
-    (this.remoteBusy[date] || []).forEach(time => add(time, fallback));
+    // серверный free/busy: длительность приходит из public_booked_slots (SR-003)
+    Object.entries(this.remoteBusy[date] || {}).forEach(([time, durationMin]) => {
+      add(time, resolveDurationMinutes({ durationMin, slotStepMin: fallback }));
+    });
 
     // локальные записи: подтверждённые/ожидающие + холды без истечения срока
     db.sessions.forEach(s => {
@@ -410,8 +315,8 @@ export class BookingViewModel extends BaseViewModel {
       if (!b.timeFrom && !b.timeTo) {
         intervals.push({ from: 0, to: DAY_MINUTES, kind: 'block', title: b.title || 'Закрыто' });
       } else {
-        const f = toMinutes(b.timeFrom || '00:00');
-        const t = toMinutes(b.timeTo || '23:59');
+        const f = timeToMinutes(b.timeFrom || '00:00');
+        const t = timeToMinutes(b.timeTo || '23:59');
         if (t > f) intervals.push({ from: f, to: t, kind: 'block', title: b.title || 'Закрыто' });
       }
     }
@@ -419,17 +324,19 @@ export class BookingViewModel extends BaseViewModel {
   }
 
   /**
-   * Длительность чужой записи: для локальных сессий берём длительность услуги,
-   * для серверного free/busy (public_booked_slots) она не отдаётся — считаем
-   * по шагу сетки (ограничение устранено заявкой SR-003).
+   * Длительность чужой записи — через канонический резолвер
+   * (js/domain/duration.js): снимок в записи → услуга → шаг сетки → дефолт.
    */
   _bookingDurationAt(date, time) {
     const psyId = this.psychologist?.id;
     const s = db.sessions.find(x =>
       x.psychologistId === psyId && x.date === date && x.time === time && x.isSlotBlocking);
     const svc = s ? db.services.find(sv => sv.id === s.serviceId) : null;
-    if (Number(svc?.duration) > 0) return Number(svc.duration);
-    return this.slotStepMinutes;
+    return resolveDurationMinutes({
+      durationMin: s?.durationMin,
+      service: svc,
+      slotStepMin: this.slotStepMinutes
+    });
   }
 
   /**
@@ -450,7 +357,7 @@ export class BookingViewModel extends BaseViewModel {
     const now = new Date();
 
     return this.slotTimes.map(t => {
-      const start = toMinutes(t);
+      const start = timeToMinutes(t);
       const end = start + dur;
       const overlap = intervals.find(iv => start < iv.to && iv.from < end);
       const tooLong = end > windowEnd;
@@ -469,7 +376,7 @@ export class BookingViewModel extends BaseViewModel {
         reason,
         // T-03: то же мгновение в поясе клиента
         clientTime: client ? client.time : t,
-        clientEndTime: client ? minutesToTime(toMinutes(client.time) + dur) : minutesToTime(end),
+        clientEndTime: client ? minutesToTime(timeToMinutes(client.time) + dur) : minutesToTime(end),
         clientDate: client ? client.date : date,
         clientDayShift: client ? client.dayShift : 0
       };
@@ -498,8 +405,8 @@ export class BookingViewModel extends BaseViewModel {
     const workDays = this.settings?.workDays || [1, 2, 3, 4, 5];
     let count = 0;
     for (let i = 0; i < days; i++) {
-      const date = addDays(i);
-      if (!workDays.includes(((new Date(date + 'T12:00:00').getDay() + 6) % 7) + 1)) continue;
+      const date = daysFromToday(i);
+      if (!workDays.includes(weekdayOf(date))) continue;
       count += this.freeCountOnDate(date);
     }
     return count;
@@ -510,29 +417,29 @@ export class BookingViewModel extends BaseViewModel {
   // ==========================================================================
 
   get clientTimeZone() {
-    if (!this._clientTimeZone) this._clientTimeZone = detectTimeZone('UTC');
+    if (!this._clientTimeZone) this._clientTimeZone = browserZone();
     return this._clientTimeZone;
   }
 
   get psychologistTimeZone() {
-    return this.settings?.timezone || 'Europe/Minsk';
+    return this.settings?.timezone || DEFAULT_TIMEZONE;
   }
 
   /** Момент выбранного слота (или «сейчас», если слот ещё не выбран). */
   get referenceInstant() {
     if (this.date && this.time) {
-      const inst = zonedTimeToUtc(this.date, this.time, this.psychologistTimeZone);
+      const inst = zonedToInstant(this.date, this.time, this.psychologistTimeZone);
       if (!Number.isNaN(inst.getTime())) return inst;
     }
     return new Date();
   }
 
   get psychologistUtcOffsetMinutes() {
-    return zoneOffsetMinutes(this.psychologistTimeZone, this.referenceInstant);
+    return offsetMinutes(this.referenceInstant, this.psychologistTimeZone);
   }
 
   get clientUtcOffsetAtSlot() {
-    return zoneOffsetMinutes(this.clientTimeZone, this.referenceInstant);
+    return offsetMinutes(this.referenceInstant, this.clientTimeZone);
   }
 
   get timeZoneDiffMinutes() {
@@ -656,27 +563,23 @@ export class BookingViewModel extends BaseViewModel {
     ];
   }
 
-  get psychologistTimezone() {
-    return this.settings?.timezone || 'Europe/Minsk';
-  }
-
   get timezoneLabel() {
-    return `Время в вашем поясе (${this.clientTimeZone}). Часовой пояс специалиста: ${this.psychologistTimezone}.`;
+    return `Время в вашем поясе (${this.clientTimeZone}). Часовой пояс специалиста: ${this.psychologistTimeZone}.`;
   }
 
   get selectedClientDate() {
     const date = this.slotPsychDate || this.date;
     const time = this.slotPsychTime || this.time;
-    const instant = date && time ? zonedTimeToDate(date, time, this.psychologistTimezone) : null;
-    return instant ? (datePartsInTimeZone(instant, this.clientTimezone)?.date || date) : date;
+    const instant = date && time ? zonedToInstant(date, time, this.psychologistTimeZone) : null;
+    return instant ? (instantToZoned(instant, this.clientTimeZone)?.date || date) : date;
   }
 
   get selectedClientSlotText() {
     const date = this.slotPsychDate || this.date;
     const time = this.slotPsychTime || this.time;
     if (!time) return '';
-    const instant = date ? zonedTimeToDate(date, time, this.psychologistTimezone) : null;
-    const local = instant ? datePartsInTimeZone(instant, this.clientTimezone) : null;
+    const instant = date ? zonedToInstant(date, time, this.psychologistTimeZone) : null;
+    const local = instant ? instantToZoned(instant, this.clientTimeZone) : null;
     return `${local?.date || this.selectedClientDate} в ${local?.time || this.time}`;
   }
 
@@ -684,8 +587,8 @@ export class BookingViewModel extends BaseViewModel {
   get clientTimezoneOffsetMin() {
     const date = this.slotPsychDate || this.date;
     const time = this.slotPsychTime || this.time;
-    const instant = date && time ? zonedTimeToDate(date, time, this.psychologistTimezone) : new Date();
-    return instant ? timezoneOffsetMinutes(instant, this.clientTimezone) : 0;
+    const instant = date && time ? zonedToInstant(date, time, this.psychologistTimeZone) : new Date();
+    return instant ? offsetMinutes(instant, this.clientTimeZone) : 0;
   }
 
   _setWizardError(message) {
@@ -760,8 +663,8 @@ export class BookingViewModel extends BaseViewModel {
   get availableDays() {
     const opt = this.dateRangeOptions.find(o => o.id === this.dateRange) || this.dateRangeOptions[2];
     const workDays = this.settings?.workDays || [1, 2, 3, 4, 5]; // ISO: 1=Пн … 7=Вс
-    return Array.from({ length: opt.days }, (_, i) => addDays(i))
-      .filter(iso => workDays.includes(((new Date(iso + 'T12:00:00').getDay() + 6) % 7) + 1));
+    return Array.from({ length: opt.days }, (_, i) => daysFromToday(i))
+      .filter(iso => workDays.includes(weekdayOf(iso)));
   }
 
   setDateRange(rangeId) {
@@ -855,7 +758,7 @@ export class BookingViewModel extends BaseViewModel {
       date: this.date,
       dateLabel: formatDay(this.date),
       time: this.time,
-      endTime: this.time ? minutesToTime(toMinutes(this.time) + this.durationMinutes) : null,
+      endTime: this.time ? minutesToTime(timeToMinutes(this.time) + this.durationMinutes) : null,
       clientDate: slot?.clientDate || this.date,
       clientTime: slot?.clientTime || this.time,
       clientEndTime: slot?.clientEndTime || null,
@@ -967,30 +870,23 @@ export class BookingViewModel extends BaseViewModel {
     const isOnline = svc?.format === 'online';
     const payFields = paymentService.buildSessionPaymentFields(this.psychologist.id, svc);
 
-    // T-03: пояс клиента фиксируем в заметке сессии — до появления колонок
-    // sessions.client_timezone / client_utc_offset (заявка SR-001) это единственный
-    // способ донести до специалиста, в каком поясе клиент видел своё время.
-    this.clientTimezone = this.clientTimeZone;
-    this.clientUtcOffsetMinutes = this.clientUtcOffsetAtSlot;
-    const tzLine = this.isForeignTimeZone
-      ? `Часовой пояс клиента: ${this.clientTimeZone} (${formatUtcOffset(this.clientUtcOffsetMinutes)}) — время записи в поясе специалиста: ${this.psychologistTimeZone}.`
-      : '';
-    const noteLines = [
-      this.note.trim() ? `Запрос клиента: ${this.note.trim()}` : '',
-      tzLine
-    ].filter(Boolean);
+    // T-03 / SR-001: канонический контракт пояса клиента. Пояс (IANA) и снимок
+    // его смещения пишутся ОТДЕЛЬНЫМИ полями записи — раньше пояс дописывался
+    // строкой в sessions.note, а поле timezoneOffset вообще не заполнялось.
+    const clientTimezone = this.isForeignTimeZone ? this.clientTimeZone : '';
+    const clientUtcOffsetMin = this.isForeignTimeZone ? this.clientUtcOffsetAtSlot : null;
+    // снимок длительности услуги: если услугу позже изменят, запись не «поедет»
+    const durationMin = resolveDurationMinutes({ service: svc, slotStepMin: this.slotStepMinutes });
 
     const session = db.addSession({
       psychologistId: this.psychologist.id,
       clientId: client.id,
       serviceId: this.serviceId,
-      // The database currently keeps the psychologist's wall-clock slot. The
-      // requested client timezone fields are tracked in SR-001; until the
-      // migration is applied, submit the converted psychologist-local value.
+      // в БД — «настенное» время специалиста; пояс клиента — отдельными полями
       date: selectedPsychDate,
       time: selectedPsychTime,
       status: payFields.status,
-      note: noteLines.join('\n'),
+      note: this.note.trim() ? `Запрос клиента: ${this.note.trim()}` : '',
       videoPlatform: isOnline ? (this.settings?.defaultVideoPlatform || 'google_meet') : '',
       meetLink: '',
       paymentPolicy: payFields.paymentPolicy,
@@ -999,8 +895,35 @@ export class BookingViewModel extends BaseViewModel {
       amountPaid: 0,
       currency: payFields.currency,
       holdExpiresAt: payFields.holdExpiresAt,
-      requiresPayment: payFields.requiresPayment
+      requiresPayment: payFields.requiresPayment,
+      clientTimezone,
+      clientUtcOffsetMin,
+      durationMin
     });
+
+    // ============================================================
+    // Серверная транзакция — ОБЯЗАТЕЛЬНЫЙ шаг до показа успеха.
+    //
+    // До аудита AUDIT-REG-DRY-001 порядок был обратным: сначала navigate('success')
+    // и successText, потом fire-and-forget pushBooking, а отказ сервера уходил
+    // только в console.warn. Клиент видел «заявка отправлена» даже когда запись
+    // в БД не появилась. Теперь: validate → server transaction → persist →
+    // и только потом success.
+    // ============================================================
+    const persisted = await this._persistBooking(session, client);
+    if (!persisted.ok) {
+      // откатываем локальную запись: иначе слот останется «занятым» в зеркале,
+      // а на сервере записи нет
+      db.removeSession(session.id);
+      this.error = persisted.message;
+      this._setWizardError(persisted.message);
+      this.notify();
+      return false;
+    }
+    if (persisted.sessionId) session.id = persisted.sessionId;
+    if (persisted.clientId) session.clientId = persisted.clientId;
+    if (persisted.durationMin) session.durationMin = persisted.durationMin;
+    this.createdSessionId = session.id;
 
     fraudProtectionService.logAttempt({
       psychologistId: this.psychologist.id,
@@ -1023,7 +946,6 @@ export class BookingViewModel extends BaseViewModel {
       session.createdAt
     ).catch(() => {});
 
-    this.createdSessionId = session.id;
     this.paymentInfo = payFields.resolve;
 
     if (payFields.requiresPayment) {
@@ -1039,6 +961,43 @@ export class BookingViewModel extends BaseViewModel {
     }
     this.notify();
     return session;
+  }
+
+  /**
+   * Отправить запись на сервер и дождаться подтверждения транзакции.
+   * Единственный путь записи — RPC create_booking (security definer): сервер
+   * повторно проверяет занятость и анти-спам, поэтому клиентская проверка
+   * доступности выше — это UX, а не гарантия.
+   *
+   * @returns {Promise<{ok: boolean, message?: string, sessionId?: string, clientId?: string, durationMin?: number|null, localOnly?: boolean}>}
+   */
+  async _persistBooking(session, client) {
+    if (!supabaseSync.enabled()) {
+      // Supabase не настроен — это не production-запись, и говорим об этом прямо
+      return {
+        ok: true,
+        localOnly: true,
+        message: 'Запись сохранена только в этом браузере: сервер БД не настроен'
+      };
+    }
+    try {
+      const res = await supabaseSync.pushBooking({
+        psychologistId: session.psychologistId,
+        client,
+        session
+      });
+      if (!res.ok) {
+        return { ok: false, message: res.message || 'Сервер не принял запись. Попробуйте другое время.' };
+      }
+      return {
+        ok: true,
+        sessionId: res.sessionId || null,
+        clientId: res.clientId || null,
+        durationMin: res.durationMin ?? null
+      };
+    } catch (ex) {
+      return { ok: false, message: `Сервер недоступен, запись не создана: ${ex?.message || ex}` };
+    }
   }
 
   /** Демо-оплата / «чек» */

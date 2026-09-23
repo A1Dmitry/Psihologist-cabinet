@@ -15,6 +15,7 @@
  * Все функции чистые: принимают данные, возвращают цифры (легко проверять тестами).
  */
 import { addDaysStr, todayStr, weekdayOf, DEFAULT_TIMEZONE } from './timezoneService.js';
+import { DEFAULT_DURATION_MIN } from '../domain/duration.js';
 
 const CLOSED = ['cancelled', 'expired'];
 const PAST_DONE = ['done', 'no_show'];
@@ -31,7 +32,7 @@ export function slotTimesOf(settings) {
   };
   const start = toMin(settings?.slotStart || '10:00');
   const end = toMin(settings?.slotEnd || '18:00');
-  const step = Math.max(15, Number(settings?.slotStepMin) || 60);
+  const step = Math.max(15, Number(settings?.slotStepMin) || DEFAULT_DURATION_MIN);
   const out = [];
   for (let m = start; m < end; m += step) {
     out.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);

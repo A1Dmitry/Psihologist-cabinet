@@ -13,15 +13,64 @@
  * Клиенты, сессии, платежи и PII анонимам НЕ доступны (см. supabase/schema.sql).
  */
 import { SUPABASE_URL, SUPABASE_ANON_KEY, isSupabaseConfigured } from './supabaseConfig.js';
+import { safeStorage } from '../core/safeStorage.js';
 
 const PUBLIC_PROFILE_COLUMNS = 'id,full_name,phone,specialization,city,about,website,source_url,address,experience,slug,greeting,approach,photo_url,public_email,directions,education,experience_items,socials,payment_links,payment_requisites,profession,is_active,created_at';
 // пилотная схема (без расширенных колонок) — на случай, если миграция ещё не применена
 const PUBLIC_PROFILE_COLUMNS_LEGACY = 'id,full_name,phone,specialization,city,about,website,source_url,address,experience,slug,is_active,created_at';
 
-/** Bearer-токен пользователя Supabase Auth (после OTP-входа) */
+/**
+ * Bearer-токен пользователя Supabase Auth (после входа по коду).
+ *
+ * Сессия ОБЯЗАНА переживать перезагрузку страницы: до аудита AUDIT-REG-DRY-001
+ * токен жил только в модульной переменной, поэтому после reload кабинет
+ * открывался (роут-гард смотрел в localStorage), но `hasSession()` был false —
+ * все write-through записи молча не уходили на сервер.
+ */
+const SESSION_KEY = 'psy_auth_session_v1';
 let userToken = null;
+
 export function setAuthToken(token) {
   userToken = token || null;
+}
+
+/** Сохранить сессию GoTrue (access/refresh/expires) и выставить токен. */
+export function persistSession(session) {
+  if (!session?.access_token) return null;
+  const stored = {
+    access_token: session.access_token,
+    refresh_token: session.refresh_token || '',
+    expires_at: session.expires_at ?? null,
+    token_type: session.token_type || 'bearer'
+  };
+  safeStorage.setJSON(SESSION_KEY, stored);
+  setAuthToken(stored.access_token);
+  return stored;
+}
+
+export function readPersistedSession() {
+  const s = safeStorage.getJSON(SESSION_KEY, null);
+  return s?.access_token ? s : null;
+}
+
+export function clearPersistedSession() {
+  safeStorage.remove(SESSION_KEY);
+  setAuthToken(null);
+}
+
+/**
+ * `sub` из JWT — это auth.uid() на сервере. Декодируем payload без проверки
+ * подписи: подпись проверяет сам Supabase при запросе, нам нужен только
+ * идентификатор владельца для поиска своего профиля.
+ */
+export function userIdFromToken(token) {
+  try {
+    const payload = String(token || '').split('.')[1] || '';
+    const json = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+    return json?.sub || null;
+  } catch {
+    return null;
+  }
 }
 
 function headers(extra = {}) {
@@ -111,7 +160,8 @@ export const supabaseApi = {
 
   // ——— Публичная доступность (free/busy) ———
   async listBookedSlots(psychologistId, fromDate, toDate) {
-    let q = `public_booked_slots?psychologist_id=eq.${psychologistId}&select=session_date,session_time&order=session_date.asc,session_time.asc`;
+    // duration_min чужой записи — SR-003: без него клиент недооценивает занятость
+    let q = `public_booked_slots?psychologist_id=eq.${psychologistId}&select=session_date,session_time,duration_min&order=session_date.asc,session_time.asc`;
     if (fromDate) q += `&session_date=gte.${fromDate}`;
     if (toDate) q += `&session_date=lte.${toDate}`;
     return request(q);
@@ -221,18 +271,54 @@ export const supabaseApi = {
     return res.json();
   },
 
-  /** Привязать/создать профиль психолога по подтверждённому email (security definer). */
-  async claimPsychologist({ email, fullName = '', specialization = '', city = '' }) {
+  /**
+   * Обновить access_token по refresh_token (GoTrue).
+   * Используется при восстановлении сессии после перезагрузки страницы.
+   */
+  async refreshSession(refreshToken) {
+    if (!refreshToken) throw new Error('Нет refresh_token');
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken })
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(body || `HTTP ${res.status}`);
+    }
+    return res.json();
+  },
+
+  /**
+   * Привязать/создать профиль психолога (security definer, только authenticated).
+   * Владение определяется на сервере по auth.uid(); email — лишь способ найти
+   * существующий профиль. Возвращает { ok, id, owner_id, created }.
+   */
+  async claimPsychologist({ email, fullName = '', phone = '', specialization = '', city = '', about = '' }) {
     const rows = await request('rpc/claim_psychologist_profile', {
       method: 'POST',
       body: JSON.stringify({
         p_email: String(email).toLowerCase().trim(),
         p_full_name: fullName || '',
+        p_phone: phone || '',
         p_specialization: specialization || '',
-        p_city: city || ''
+        p_city: city || '',
+        p_about: about || ''
       })
     });
     return Array.isArray(rows) ? rows[0] : rows;
+  },
+
+  /**
+   * Свой профиль по ВЛАДЕЛЬЦУ (owner_id = auth.uid()), а не по email.
+   * Это единственный допустимый способ определить «мой кабинет».
+   */
+  async fetchOwnedPsychologist(ownerId) {
+    if (!ownerId) return null;
+    const rows = await request(
+      `psychologists?owner_id=eq.${encodeURIComponent(ownerId)}&select=*&order=created_at.asc&limit=1`
+    );
+    return rows?.[0] || null;
   },
 
   /** Есть ли пользовательская сессия (после OTP-входа) — для записи в кабинет. */

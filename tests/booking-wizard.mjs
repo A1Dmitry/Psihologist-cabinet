@@ -135,7 +135,8 @@ await new Promise(r => setTimeout(r, 80)); // дождаться загрузк�
 const app = await import(new URL('../js/app.js', import.meta.url));
 const { bookingVm } = app;
 const { fraudProtectionService } = await import('../js/services/fraudProtectionService.js');
-const { calendarService } = await import('../js/services/calendarService.js');
+const { timezoneService } = await import('../js/services/timezoneService.js');
+const { supabaseApi } = await import('../js/services/supabaseApi.js');
 
 const render = () => window.navigate('booking', { slug: SLUG });
 const el = sel => getEl(sel);
@@ -186,13 +187,25 @@ bookingVm.selectService('svc60');
 render();
 check('T-02: для 60-мин услуги 18:00 доступен', slotBtn('18:00') && !/disabled/.test(slotBtn('18:00')));
 
-// пересечение с чужой записью (free/busy с сервера): занят 17:00 на 60 мин
+// Пересечение с чужой записью. Занятость берём не из внутренностей ViewModel,
+// а через реальный путь: supabaseApi.listBookedSlots → refreshAvailability().
+// Серверная строка — в том же виде, что отдаёт view public_booked_slots (SR-003:
+// с duration_min чужой записи).
 bookingVm.selectService('svc90');
-bookingVm.remoteBusy = { [DATE]: new Set(['17:00']) };
+const realListBookedSlots = supabaseApi.listBookedSlots;
+supabaseApi.listBookedSlots = async () => ([
+  { psychologist_id: bookingVm.psychologist.id, session_date: DATE, session_time: '17:00', duration_min: 60 }
+]);
+await bookingVm.refreshAvailability();
 render();
+check('SR-003: free/busy с сервера прочитан (17:00 занят на 60 мин)',
+  Object.keys(bookingVm.remoteBusy[DATE] || {}).includes('17:00'),
+  JSON.stringify(bookingVm.remoteBusy[DATE]));
 check('T-02: 16:00 закрыт — 90 мин пересекают запись 17:00–18:00', /disabled/.test(slotBtn('16:00')));
 check('T-02: 15:00 свободен (15:00–16:30 не пересекается)', slotBtn('15:00') && !/disabled/.test(slotBtn('15:00')));
+supabaseApi.listBookedSlots = realListBookedSlots;
 bookingVm.remoteBusy = {};
+render();
 
 // ——— T-03: часовой пояс клиента ———
 check('T-03: пояс клиента определён', typeof bookingVm.clientTimeZone === 'string' && bookingVm.clientTimeZone.length > 0, bookingVm.clientTimeZone);
@@ -206,7 +219,7 @@ check('T-03: разница поясов посчитана (+2 ч)', /разн�
 check('T-03: пример конверсии 12:00 → 14:00', /12:00 у специалиста — это 14:00/.test(tzNote), tzNote);
 check('T-03: в слоте показано время клиента', /19:00 у вас/.test(el('#book-slots')._html));
 check('T-03: конверсия слотов совпадает с календарём',
-  calendarService.convertWallClock(DATE, '17:00', 'Europe/Minsk', 'Asia/Tashkent').time === '19:00');
+  timezoneService.convertWallClock(DATE, '17:00', 'Europe/Minsk', 'Asia/Tashkent').time === '19:00');
 
 // ——— T-01: выбор времени → шаг 3, возврат назад без потери данных ———
 bookingVm.selectTimeAndContinue('17:00');
@@ -241,7 +254,7 @@ const jumped = bookingVm.goToStep(3);
 check('без времени на шаг 3 не пускает', jumped === false && !!bookingVm.error, bookingVm.error);
 bookingVm.selectTime('17:00');
 
-// ——— заявка: пояс клиента фиксируется в заметке (до SR-001) ———
+// ——— заявка: успех только после подтверждения серверной транзакции ———
 bookingVm.goToStep(3);
 bookingVm.nickname = 'Anna_Test';
 bookingVm.name = 'Anna_Test';
@@ -250,10 +263,40 @@ bookingVm.contact = '@anna_test';
 bookingVm.consent = true;
 bookingVm.honeypot = '';
 fraudProtectionService.formOpenedAt = Date.now() - 30000; // антиспам: форма «открыта» давно
+
+// 1) сервер ОТКАЗАЛ — успех показывать нельзя, локальной записи остаться не должно
+const realCreateBooking = supabaseApi.createBooking;
+let lastBookingPayload = null;
+supabaseApi.createBooking = async (payload) => {
+  lastBookingPayload = payload;
+  return { ok: false, error: 'Это время только что заняли — выберите другое' };
+};
+const rejected = await bookingVm.submit();
+check('отказ сервера → заявка не создана', rejected === false, String(rejected));
+check('отказ сервера → ошибка показана пользователю',
+  /только что заняли/.test(bookingVm.error || ''), bookingVm.error);
+check('отказ сервера → успех не показан', bookingVm.done !== true && !bookingVm.successText);
+
+// 2) сервер принял — проверяем фактический контракт RPC create_booking
+supabaseApi.createBooking = async (payload) => {
+  lastBookingPayload = payload;
+  return { ok: true, client_id: 'cli_srv_1', session_id: 'ses_srv_1', duration_min: 90 };
+};
 const session = await bookingVm.submit();
 check('заявка создана', !!session && !!session.id, session?.id || bookingVm.error);
 check('время записано в поясе специалиста', session?.time === '17:00' && session?.date === DATE, `${session?.date} ${session?.time}`);
-check('T-03: пояс клиента зафиксирован в заявке', /Часовой пояс клиента: Asia\/Tashkent/.test(session?.note || ''), session?.note);
+check('id заменён на серверный (запись подтверждена транзакцией)',
+  session?.id === 'ses_srv_1' && session?.clientId === 'cli_srv_1', `${session?.id}/${session?.clientId}`);
+check('T-03/SR-001: пояс клиента — отдельное поле записи (IANA)',
+  lastBookingPayload?.p_client_timezone === 'Asia/Tashkent', lastBookingPayload?.p_client_timezone);
+check('T-03/SR-001: снимок смещения пояса клиента передан',
+  lastBookingPayload?.p_client_utc_offset_min === 300, String(lastBookingPayload?.p_client_utc_offset_min));
+check('SR-001: снимок длительности услуги передан и сохранён',
+  lastBookingPayload?.p_duration_min === 90 && session?.durationMin === 90,
+  `${lastBookingPayload?.p_duration_min}/${session?.durationMin}`);
+check('пояс клиента больше НЕ дублируется текстом в заметке',
+  !/Часовой пояс клиента:/.test(session?.note || ''), session?.note);
+supabaseApi.createBooking = realCreateBooking;
 
 // ——— T-04: ссылка с профиля «услуга → окна» ———
 loc.pathname = `/psy/${SLUG}`;

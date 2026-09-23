@@ -1,0 +1,19 @@
+{
+  "name": "psihologist-cabinet",
+  "private": true,
+  "type": "module",
+  "description": "Портал кабинетов психологов (статический SPA + Supabase). devDependencies нужны только для локальных проверок — сам сайт собирается без npm.",
+  "scripts": {
+    "verify": "node tools/verify_all.mjs",
+    "verify:db": "node tests/db-contract.mjs",
+    "verify:registration": "node tests/registration-flow.mjs",
+    "verify:authcode": "node tests/auth-code-edge.mjs",
+    "verify:timezone": "node tests/timezone-domain.mjs",
+    "verify:mapper": "node tests/session-mapper.mjs",
+    "dev": "python3 devserver.py 8765"
+  },
+  "devDependencies": {
+    "embedded-postgres": "^18.4.0-beta.17",
+    "pg": "^8.23.0"
+  }
+}

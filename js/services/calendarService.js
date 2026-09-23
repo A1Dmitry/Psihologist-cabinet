@@ -1,5 +1,6 @@
 /**
- * CalendarService — интеграция с Google Calendar (известные наработки):
+ * CalendarService — интеграция с внешними календарями (Google Calendar / iCal).
+ *
  * 1) «Добавить в календарь» — ссылка-шаблон calendar/render?action=TEMPLATE
  *    (та же механика, что у Calendly/Booksy для карточки события).
  * 2) Импорт занятости из iCal-фидов (Google Calendar → Настройки → «Secret address
@@ -7,126 +8,26 @@
  *    Импорт идёт браузером психолога (адрес — секретный, публично не отдаётся);
  *    публично видны только итоговые free/busy блоки.
  * Для двусторонней синхронизации в проде — Google Calendar API (OAuth), см. docs.
+ *
+ * ВАЖНО (аудит AUDIT-REG-DRY-001): этот модуль — СЕРВИС интеграции, а не домен
+ * часовых поясов. Собственные реализации detectTimeZone / zoneOffsetMinutes /
+ * zonedTimeToUtc / convertWallClock / isPastMoment отсюда удалены: каноническая
+ * реализация одна — js/services/timezoneService.js. Всё, что связано с поясами,
+ * импортируется оттуда (см. re-export ниже — он оставлен только чтобы не ломать
+ * старые импорты, новой точкой входа считать timezoneService).
  */
+import { addMinutesToTime, timeToMinutes, addDaysStr } from './timezoneService.js';
 
 const GCAL_TEMPLATE = 'https://calendar.google.com/calendar/render';
 
-/* ============================================================================
- * Часовые пояса (T-03 «Часовой пояс клиента»)
- * --------------------------------------------------------------------------
- * Расписание специалиста хранится в ЕГО поясе (session_settings.timezone):
- * сетка слотов — это «стенное» время специалиста на конкретную дату.
- * Клиент может быть в другом поясе, поэтому:
- *   1) слот переводится в абсолютный момент (UTC) по поясу специалиста;
- *   2) тот же момент форматируется в поясе клиента — так получается честное
- *      «время в вашем поясе» без ручного сложения/вычитания часов
- *      (правильно работает с DST и с полуторачасовыми оффсетами);
- *   3) в БД пишется время специалиста + (после SR-001) пояс клиента.
- * ========================================================================== */
-
-const ZONE_FMT = new Map();
-function zoneFormatter(timeZone) {
-  let f = ZONE_FMT.get(timeZone);
-  if (!f) {
-    f = new Intl.DateTimeFormat('en-US', {
-      timeZone, hour12: false,
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', second: '2-digit'
-    });
-    ZONE_FMT.set(timeZone, f);
-  }
-  return f;
-}
-
-/** IANA-пояс браузера («Europe/Minsk»). На старых/заблокированных — fallback. */
-export function detectTimeZone(fallback = 'UTC') {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || fallback;
-  } catch (_) {
-    return fallback;
-  }
-}
-
-/** Смещение пояса в минутах на момент `at` (положительное — восточнее UTC). */
-export function zoneOffsetMinutes(timeZone, at = new Date()) {
-  const instant = at instanceof Date ? at : new Date(at);
-  if (Number.isNaN(instant.getTime())) return 0;
-  const parts = {};
-  for (const p of zoneFormatter(timeZone).formatToParts(instant)) parts[p.type] = p.value;
-  // hour12:false в ряде движков отдаёт «24» вместо «00» для полуночи
-  const asUtc = Date.UTC(
-    Number(parts.year), Number(parts.month) - 1, Number(parts.day),
-    Number(parts.hour) % 24, Number(parts.minute), Number(parts.second)
-  );
-  return Math.round((asUtc - Math.floor(instant.getTime() / 1000) * 1000) / 60000);
-}
-
-/** «UTC+3», «UTC−3:30», «UTC+0» — подпись оффсета для человека. */
-export function formatUtcOffset(minutes) {
-  const total = Math.round(Number(minutes) || 0);
-  const sign = total < 0 ? '−' : '+';
-  const abs = Math.abs(total);
-  const h = Math.floor(abs / 60);
-  const m = abs % 60;
-  return `UTC${sign}${h}${m ? `:${String(m).padStart(2, '0')}` : ''}`;
-}
-
-/** «Стенное» время `time` в поясе `timeZone` на дату `date` → абсолютный момент. */
-export function zonedTimeToUtc(date, time, timeZone) {
-  const [y, m, d] = String(date || '').split('-').map(Number);
-  const [hh, mm] = String(time || '00:00').split(':').map(Number);
-  const naive = Date.UTC(y || 1970, (m || 1) - 1, d || 1, hh || 0, mm || 0, 0);
-  // два прохода: оффсет уточняется по найденному моменту (корректно на границах DST)
-  let ts = naive - zoneOffsetMinutes(timeZone, new Date(naive)) * 60000;
-  ts = naive - zoneOffsetMinutes(timeZone, new Date(ts)) * 60000;
-  return new Date(ts);
-}
-
-/** Часы (HH:MM) момента `instant` в поясе `timeZone`. */
-export function formatInZone(instant, timeZone) {
-  const parts = {};
-  for (const p of zoneFormatter(timeZone).formatToParts(instant)) parts[p.type] = p.value;
-  return `${String(Number(parts.hour) % 24).padStart(2, '0')}:${parts.minute}`;
-}
-
-/** Дата (YYYY-MM-DD) момента `instant` в поясе `timeZone`. */
-export function dateInZone(instant, timeZone) {
-  const parts = {};
-  for (const p of zoneFormatter(timeZone).formatToParts(instant)) parts[p.type] = p.value;
-  return `${parts.year}-${parts.month}-${parts.day}`;
-}
-
-/**
- * Перенос «стенного» времени из одного пояса в другой.
- * dayShift — на сколько суток сдвинулась календарная дата (слот «уехал»
- * на следующий/предыдущий день по lokal'ному календарю клиента).
- */
-export function convertWallClock(date, time, fromZone, toZone) {
-  const instant = zonedTimeToUtc(date, time, fromZone);
-  const outDate = dateInZone(instant, toZone);
-  const outTime = formatInZone(instant, toZone);
-  const day = 24 * 60 * 60 * 1000;
-  const dayShift = Math.round(
-    (Date.parse(`${outDate}T00:00:00Z`) - Date.parse(`${String(date).slice(0, 10)}T00:00:00Z`)) / day
-  );
-  return { date: outDate, time: outTime, dayShift };
-}
-
-/** Слот уже начался (прошедшее время не предлагаем). */
-export function isPastMoment(date, time, timeZone, now = new Date()) {
-  return zonedTimeToUtc(date, time, timeZone).getTime() <= now.getTime();
-}
-
-
-/** Ссылка «Добавить событие в Google Calendar» */
+/** Ссылка «Добавить событие в Google Calendar */
 export function googleAddLink({ title, date, time, durationMin = 60, details = '', location = '', timezone = 'Europe/Minsk' }) {
+  const end = endOfSlot(date, time, durationMin);
   const start = gcalDateTime(date, time);
-  const endDate = addMinutes(date, time, durationMin);
-  const end = gcalDateTime(endDate.date, endDate.time);
   const params = new URLSearchParams({
     action: 'TEMPLATE',
     text: title || 'Консультация',
-    dates: `${start}/${end}`,
+    dates: `${start}/${gcalDateTime(end.date, end.time)}`,
     details: details || '',
     location: location || '',
     ctz: timezone
@@ -138,20 +39,18 @@ function gcalDateTime(date, time) {
   return `${String(date).replaceAll('-', '')}T${String(time || '00:00').replace(':', '')}00`;
 }
 
-function addMinutes(date, time, minutes) {
-  // Calendar template dates are wall-clock values in `ctz`; using Date here
-  // would silently apply the preview/browser timezone and break around UTC/DST.
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(date || ''));
-  const timeMatch = /^(\d{1,2}):(\d{2})$/.exec(String(time || '00:00'));
-  if (!match || !timeMatch) return { date, time: time || '00:00' };
-  const total = Number(timeMatch[1]) * 60 + Number(timeMatch[2]) + (Number(minutes) || 60);
-  const dayOffset = Math.floor(total / 1440);
-  const dayMinutes = ((total % 1440) + 1440) % 1440;
-  const d = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
-  d.setUTCDate(d.getUTCDate() + dayOffset);
+/**
+ * Конец слота: «23:30» + 60 мин → следующий день 00:30.
+ * Арифметика — строго над «настенными» значениями (даты в шаблоне Google
+ * трактуются в `ctz`), поэтому Date/локальный пояс браузера не используются.
+ */
+export function endOfSlot(date, time, minutes) {
+  const start = timeToMinutes(time);
+  if (start == null) return { date, time: time || '00:00' };
+  const total = start + (Number(minutes) || 0);
   return {
-    date: d.toISOString().slice(0, 10),
-    time: `${String(Math.floor(dayMinutes / 60)).padStart(2, '0')}:${String(dayMinutes % 60).padStart(2, '0')}`
+    date: addDaysStr(String(date).slice(0, 10), Math.floor(total / 1440)),
+    time: addMinutesToTime(time, minutes)
   };
 }
 
@@ -242,8 +141,5 @@ export async function fetchGoogleBusyBlocks(icalUrl, psychologistId) {
 }
 
 export const calendarService = {
-  googleAddLink, parseIcs, icsEventsToBlocks, fetchGoogleBusyBlocks,
-  // часовые пояса (T-03)
-  detectTimeZone, zoneOffsetMinutes, formatUtcOffset, zonedTimeToUtc,
-  formatInZone, dateInZone, convertWallClock, isPastMoment
+  googleAddLink, endOfSlot, parseIcs, icsEventsToBlocks, fetchGoogleBusyBlocks
 };

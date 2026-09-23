@@ -12,6 +12,8 @@
  *    в UI, а не молча теряет данные.
  */
 import { db } from '../core/dbContext.js';
+import { safeStorage } from '../core/safeStorage.js';
+import { resolveDurationMinutes, DEFAULT_DURATION_MIN } from '../domain/duration.js';
 import { supabaseApi } from './supabaseApi.js';
 import { cabinetApi } from './cabinetApi.js';
 import {
@@ -28,19 +30,12 @@ const KEYS = {
   waitPrefs: 'psy_waiting_prefs_v1'
 };
 
-/* ——— sandbox-safe хранилище ——— */
-const memory = Object.create(null);
+/* ——— sandbox-safe хранилище (единственная реализация — js/core/safeStorage.js) ——— */
 function storeGet(key) {
-  try {
-    const v = window.localStorage.getItem(key);
-    return v ?? memory[key] ?? null;
-  } catch {
-    return memory[key] ?? null;
-  }
+  return safeStorage.get(key);
 }
 function storeSet(key, value) {
-  memory[key] = value;
-  try { window.localStorage.setItem(key, value); } catch { /* приватный режим */ }
+  safeStorage.set(key, value);
 }
 function readList(key) {
   try {
@@ -238,7 +233,8 @@ export class ClientCabinetService {
         status: s.status,
         upcoming: s.date >= today,
         serviceName: svc?.name || '',
-        durationMin: svc?.duration || 60,
+        // длительность — канонический резолвер (снимок записи → услуга → шаг → дефолт)
+        durationMin: resolveDurationMinutes({ durationMin: s.durationMin, service: svc }),
         price: s.amountDue || svc?.price || 0,
         currency: s.currency || svc?.currency || 'BYN',
         joinUrl,
@@ -689,7 +685,7 @@ function buildTimes(settings) {
   };
   const start = toMin(settings.slotStart || '10:00');
   const end = toMin(settings.slotEnd || '18:00');
-  const step = Number(settings.slotStepMin) || 60;
+  const step = Number(settings.slotStepMin) || DEFAULT_DURATION_MIN;
   const out = [];
   for (let m = start; m <= end; m += step) {
     out.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);

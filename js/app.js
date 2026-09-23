@@ -19,7 +19,9 @@ import { reportClientError } from './services/errorLogService.js';
 import { isSupabaseConfigured } from './services/supabaseConfig.js';
 import { applyProfileSeo, applyPortalSeo, applyBookingSeo, applyNoIndex } from './services/seoService.js';
 import { googleAddLink } from './services/calendarService.js';
-import { todayStr } from './services/timezoneService.js';
+import { todayStr, zoneCity } from './services/timezoneService.js';
+import { resolveDurationMinutes, DEFAULT_DURATION_MIN } from './domain/duration.js';
+import { registration } from './domain/registration.js';
 // [Агент 3 · кабинет и клиенты] новые блоки кабинета и страница клиента по ссылке
 import { cabinetUi } from './views/cabinetUi.js';
 
@@ -468,12 +470,19 @@ function renderPortal() {
   }).join('');
 }
 
+/**
+ * Собрать обязательные поля регистрации с формы.
+ * Полный список (email, fullName, phone, specialization, city, about) должен
+ * доехать до сервера: профиль создаётся один раз, и потерянное поле потом
+ * неотличимо от незаполненного.
+ */
 function collectAuthRegFields() {
   if (authVm.mode !== 'register') return;
   authVm.fullName = $('#auth-fullname')?.value || '';
   authVm.phone = $('#auth-phone')?.value || '';
   authVm.specialization = $('#auth-spec')?.value || 'Психолог';
   authVm.city = $('#auth-city')?.value || '';
+  authVm.about = $('#auth-about')?.value || '';
 }
 
 function renderAuth() {
@@ -502,6 +511,17 @@ function renderAuth() {
 
   $('#auth-email') && ($('#auth-email').value = authVm.email);
   $('#auth-code') && ($('#auth-code').value = authVm.code);
+  const regVals = {
+    '#auth-fullname': authVm.fullName,
+    '#auth-phone': authVm.phone,
+    '#auth-spec': authVm.specialization,
+    '#auth-city': authVm.city,
+    '#auth-about': authVm.about
+  };
+  for (const [sel, val] of Object.entries(regVals)) {
+    const el = $(sel);
+    if (el && el.value !== val) el.value = val || '';
+  }
   if (err) {
     err.textContent = authVm.error || '';
     err.classList.toggle('hidden', !authVm.error);
@@ -662,7 +682,7 @@ function renderCabSchedule() {
       title: `Консультация${cl?.name ? ' · ' + cl.name : ''}${sv?.name ? ' · ' + sv.name : ''}`,
       date: s.date,
       time: s.time,
-      durationMin: sv?.duration || 60,
+      durationMin: resolveDurationMinutes({ durationMin: s.durationMin, service: sv }),
       location: s.meetLink || '',
       details: '',
       timezone: cabinetVm.settings?.timezone || 'Europe/Minsk'
@@ -708,14 +728,14 @@ function renderCabJournal() {
     const sv = cabinetVm.serviceById(s.serviceId);
     const gcal = googleAddLink({
       title: `Консультация${cl?.name ? ' · ' + cl.name : ''}`,
-      date: s.date, time: s.time, durationMin: sv?.duration || 60,
+      date: s.date, time: s.time, durationMin: resolveDurationMinutes({ durationMin: s.durationMin, service: sv }),
       location: s.meetLink || '', timezone: cabinetVm.settings?.timezone || 'Europe/Minsk'
     });
     const canConfirm = ['pending', 'held'].includes(s.status);
     return `<div class="p-4 border-b last:border-0">
       <div class="flex items-center gap-3 flex-wrap">
         <div class="font-mono text-sm text-slate-500 w-32 shrink-0">${formatDate(s.date)} · ${s.time}
-          ${s.timezoneOffset ? `<div class="text-[10px] text-indigo-400 font-sans" title="Запись в вашем времени; разница с поясом клиента (T-03)">клиент ${esc(s.timezoneOffset)}</div>` : ''}</div>
+          ${s.clientTimezone ? `<div class="text-[10px] text-indigo-400 font-sans" title="Часовой пояс клиента (T-03); время выше — в поясе кабинета">пояс клиента: ${esc(zoneCity(s.clientTimezone))}</div>` : ''}</div>
         <div class="flex-1 min-w-[140px]">
           <div class="font-medium">${cl?.name || cl?.nickname || '—'}</div>
           <div class="text-sm text-slate-500">${sv?.name || ''} ${sv ? '· ' + sv.priceLabel() : ''}
@@ -1909,6 +1929,14 @@ function bindEvents() {
     authVm.code = $('#auth-code')?.value || '';
     authVm.password = $('#auth-password')?.value || '';
     collectAuthRegFields();
+    // обязательные поля регистрации проверяем до обращения к серверу:
+    // код одноразовый, и тратить его на заведомо неполный профиль нельзя
+    const missing = authVm.profileError;
+    if (missing) {
+      authVm.error = missing;
+      renderAuth();
+      return;
+    }
     const psy = await authVm.confirmCode();
     renderAuth();
     if (psy) {
@@ -2169,7 +2197,7 @@ function bindEvents() {
       name: $('#sv-name')?.value,
       price: parseFloat($('#sv-price')?.value) || 0,
       currency: $('#sv-currency')?.value,
-      duration: parseInt($('#sv-duration')?.value, 10) || 60,
+      duration: parseInt($('#sv-duration')?.value, 10) || DEFAULT_DURATION_MIN,
       format: $('#sv-format')?.value
     });
     closeModal('modal-service');
@@ -2216,18 +2244,9 @@ function bindEvents() {
       } else {
         navigate('success');
       }
-      // отправить запись в Supabase (общая БД)
-      if (session && supabaseSync.enabled()) {
-        const client = db.clients.find(c => c.id === session.clientId);
-        supabaseSync.pushBooking({
-          psychologistId: session.psychologistId,
-          client: client || { id: session.clientId, name: '', nickname: '', phone: '' },
-          session
-        }).then(r => {
-          if (r.ok) console.info('[Supabase] booking saved', r.sessionId);
-          else console.warn('[Supabase] booking', r);
-        }).catch(e => console.error('[Supabase] push', e));
-      }
+      // Запись на сервер выполняется ВНУТРИ bookingVm.submit() и завершается до
+      // показа успеха: здесь повторно отправлять её нельзя (была бы вторая копия
+      // того же вызова и вторая точка, где решается, успешна ли запись).
     })();
   });
 
@@ -2457,6 +2476,18 @@ function boot() {
     // legacy-ссылки без # нормализуются в hash без перезагрузки
     bookingVm.onAvailability = () => { if (route.name === 'booking') renderBooking(); };
     normalizeLegacyUrl();
+
+    // Восстановление аутентификации — ПЕРЕД роут-гардом и до загрузки каталога.
+    // Без этого после перезагрузки страницы токен терялся: кабинет открывался
+    // (роут-гард смотрел в localStorage), но hasSession() был false, и все
+    // записи кабинета молча не уходили на сервер.
+    const restored = await registration.restoreAuthenticatedState();
+    if (restored.authenticated && restored.psychologist) {
+      try { await cabinetApi.refresh(restored.psychologist.id); }
+      catch (e) { console.warn('[boot] pull cabinet', e?.message || e); }
+      startTelegramLoops(restored.psychologist.id);
+    }
+
     route = routeFromUrl();
     if (route.name === 'cabinet' && !authService.isAuthenticated()) {
       route = { name: 'auth', params: { mode: 'login' } };

@@ -120,7 +120,9 @@ console.log('\n1. Часовые пояса (T-23)');
 eq(timezoneService.weekdayOf('2026-09-23'), 3, 'weekdayOf(2026-09-23) = среда (3)');
 eq(timezoneService.convertWallClock('2026-10-05', '10:00', 'Europe/Minsk', 'Europe/Berlin').time, '09:00', '10:00 Минск → 09:00 Берлин (октябрь)');
 eq(timezoneService.convertWallClock('2026-07-05', '10:00', 'Europe/Minsk', 'Europe/Berlin').time, '09:00', '10:00 Минск → 09:00 Берлин (лето)');
-eq(timezoneService.convertWallClock('2026-10-05', '23:30', 'Europe/Minsk', 'Asia/Tokyo'), { date: '2026-10-06', time: '05:30', weekday: 2 }, '23:30 Минск → 05:30 Токио (+1 день)');
+// convertWallClock — единая реализация (аудит AUDIT-REG-DRY-001): возвращает
+// { date, time, weekday, dayShift }. dayShift — сдвиг календарной даты у клиента.
+eq(timezoneService.convertWallClock('2026-10-05', '23:30', 'Europe/Minsk', 'Asia/Tokyo'), { date: '2026-10-06', time: '05:30', weekday: 2, dayShift: 1 }, '23:30 Минск → 05:30 Токио (+1 день)');
 eq(timezoneService.formatOffset(timezoneService.offsetMinutes(new Date('2026-10-05T10:00:00Z'), 'Europe/Minsk')), '+03:00', 'смещение Минска +03:00');
 ok(timezoneService.isValidZone('Europe/Minsk') && !timezoneService.isValidZone('Минск'), 'валидация пояса');
 const zoneInfo = timezoneService.sessionZoneLabel({ date: '2026-10-05', time: '10:00', clientTimezone: 'Europe/Berlin' }, 'Europe/Minsk');

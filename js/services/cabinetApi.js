@@ -12,7 +12,9 @@
  */
 import { supabaseApi } from './supabaseApi.js';
 import { db } from '../core/dbContext.js';
-import { Client, Session, SessionSettings, WaitingItem, ScheduleBlock, Task, PsyNote, ClientEntry } from '../models/entities.js';
+import { Client, SessionSettings, WaitingItem, ScheduleBlock, Task, PsyNote, ClientEntry } from '../models/entities.js';
+import { sessionFromRow, sessionToRow } from './sessionMapper.js';
+import { DEFAULT_DURATION_MIN } from '../domain/duration.js';
 
 const on = () => supabaseApi.hasSession();
 
@@ -24,54 +26,13 @@ function push(label, fn) {
     .catch(e => console.warn(`[CabinetApi] ${label} не записано на сервер:`, e?.message || e));
 }
 
-const mapSession = r => new Session({
-  id: r.id,
-  psychologistId: r.psychologist_id,
-  clientId: r.client_id,
-  serviceId: r.service_id,
-  date: r.session_date,
-  time: r.session_time,
-  status: r.status || 'pending',
-  note: r.note || '',
-  videoPlatform: r.video_platform || '',
-  meetLink: r.meet_link || '',
-  paymentPolicy: r.payment_policy || 'none',
-  paymentStatus: r.payment_status || 'unpaid',
-  amountDue: Number(r.amount_due) || 0,
-  amountPaid: Number(r.amount_paid) || 0,
-  currency: r.currency || 'BYN',
-  holdExpiresAt: r.hold_expires_at,
-  requiresPayment: !!r.requires_payment,
-  clientResponse: r.client_response,
-  clientRespondedAt: r.client_responded_at,
-  googleEventId: r.google_event_id || '',
-  pendingChange: r.pending_change || null,
-  previousSlot: r.previous_slot || null,
-  changeConsentStatus: r.change_consent_status || null,
-  createdAt: r.created_at
-});
+/**
+ * Маппинг строки БД ↔ доменная Session — каноническая реализация в
+ * js/services/sessionMapper.js (единственная в проекте).
+ */
+const mapSession = (row, ctx) => sessionFromRow(row, ctx);
 
-const sessRow = x => ({
-  session_date: x.date,
-  session_time: x.time,
-  status: x.status,
-  note: x.note || '',
-  video_platform: x.videoPlatform || '',
-  meet_link: x.meetLink || '',
-  payment_policy: x.paymentPolicy || 'none',
-  payment_status: x.paymentStatus || 'unpaid',
-  amount_due: x.amountDue || 0,
-  amount_paid: x.amountPaid || 0,
-  currency: x.currency || 'BYN',
-  hold_expires_at: x.holdExpiresAt,
-  requires_payment: !!x.requiresPayment,
-  client_response: x.clientResponse,
-  client_responded_at: x.clientRespondedAt,
-  pending_change: x.pendingChange,
-  previous_slot: x.previousSlot,
-  change_consent_status: x.changeConsentStatus,
-  google_event_id: x.googleEventId || ''
-});
+const sessRow = x => sessionToRow(x);
 
 const blockRow = b => ({
   date_from: b.dateFrom,
@@ -126,8 +87,14 @@ export const cabinetApi = {
       client._conditionsServer = cond;
       db.clients.push(client);
     });
+    // длительность записи резолвится канонически: снимок → услуга → шаг сетки → дефолт
+    const serviceById = new Map(db.services.map(sv => [sv.id, sv]));
+    const slotStepMin = r.settings?.slot_step_min ?? null;
     db.sessions = db.sessions.filter(x => x.psychologistId !== psyId)
-      .concat((r.sessions || []).map(mapSession));
+      .concat((r.sessions || []).map(row => mapSession(row, {
+        service: serviceById.get(row.service_id) || null,
+        slotStepMin
+      })));
     db.scheduleBlocks = db.scheduleBlocks.filter(x => x.psychologistId !== psyId)
       .concat((r.blocks || []).map(row => new ScheduleBlock({
         id: row.id, psychologistId: row.psychologist_id,
@@ -168,7 +135,7 @@ export const cabinetApi = {
         slotTimes: r.settings.slot_times || null,
         slotStart: r.settings.slot_start || '10:00',
         slotEnd: r.settings.slot_end || '18:00',
-        slotStepMin: r.settings.slot_step_min || 60,
+        slotStepMin: r.settings.slot_step_min || DEFAULT_DURATION_MIN,
         defaultVideoPlatform: r.settings.default_video_platform || 'google_meet',
         paymentPolicy: r.settings.payment_policy || 'none',
         depositPercent: Number(r.settings.deposit_percent) || 30,
@@ -284,7 +251,7 @@ export const cabinetApi = {
       slot_times: st.slotTimes || null,
       slot_start: st.slotStart || '10:00',
       slot_end: st.slotEnd || '18:00',
-      slot_step_min: st.slotStepMin || 60,
+      slot_step_min: st.slotStepMin || DEFAULT_DURATION_MIN,
       default_video_platform: st.defaultVideoPlatform || 'google_meet',
       payment_policy: st.paymentPolicy || 'none',
       deposit_percent: st.depositPercent ?? 30,
@@ -312,7 +279,7 @@ export const cabinetApi = {
     push('service', () => supabaseApi.request('services', {
       method: 'POST',
       body: JSON.stringify({
-        psychologist_id: psyId, title: x.name, duration_min: x.duration || 60,
+        psychologist_id: psyId, title: x.name, duration_min: x.duration || DEFAULT_DURATION_MIN,
         price: x.price || 0, currency: x.currency || 'BYN', format: x.format || 'offline',
         sort_order: x.sortOrder || 0
       })
