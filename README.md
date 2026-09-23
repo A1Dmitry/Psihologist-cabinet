@@ -2,8 +2,11 @@
 
 Портал кабинетов психологов (SPA): каталог, запись, оплата/аванс, напоминания, перенос с согласием, шифрование PII.
 
-**Рабочий репозиторий:** https://github.com/A1Dmitry/Psihologist-cabinet  
-**Целевой (позже):** https://github.com/mikhailouskayanataliya-collab/Psihologist-cabinet
+**Репозиторий (основной):** https://github.com/A1Dmitry/Psihologist-cabinet  
+Перенос в `mikhailouskayanataliya-collab/Psihologist-cabinet` отложен: целевой
+репозиторий недоступен (приглашение коллаборатору не принято/нет доступа).
+Инструкции сохранены в `docs/archive/repo-transfer/` — статус: открытый вопрос
+к владельцу продукта. До решения текущий репозиторий — единственный источник истины.
 
 ## Запуск
 
