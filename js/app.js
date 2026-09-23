@@ -19,6 +19,8 @@ import { reportClientError } from './services/errorLogService.js';
 import { isSupabaseConfigured } from './services/supabaseConfig.js';
 import { applyProfileSeo, applyPortalSeo, applyBookingSeo } from './services/seoService.js';
 import { googleAddLink } from './services/calendarService.js';
+// [Агент 3 · кабинет и клиенты] новые блоки кабинета и страница клиента по ссылке
+import { cabinetUi } from './views/cabinetUi.js';
 
 const portalVm = new PortalViewModel();
 const authVm = new AuthViewModel();
@@ -227,6 +229,14 @@ function render() {
   if (route.name === 'booking') renderBooking();
   if (route.name === 'success') renderSuccess();
   if (route.name === 'clientReply') renderClientReply();
+
+  // [Агент 3 · кабинет и клиенты] дорисовать блоки кабинета и страницу клиента.
+  // Всё остальное живёт в js/views/cabinetUi.js — этот вызов единственная точка связи.
+  try {
+    cabinetUi.afterRender({ route, vm: cabinetVm });
+  } catch (e) {
+    console.warn('[cabinetUi]', e);
+  }
 
   // global toast from VMs
   [portalVm, authVm, cabinetVm, bookingVm].forEach(vm => {
