@@ -16,7 +16,10 @@ export const EntityNames = {
   BookingAttempt: 'BookingAttempts',
   ClientRisk: 'ClientRisks',
   SessionReminder: 'SessionReminders',
-  ScheduleBlock: 'ScheduleBlocks'
+  ScheduleBlock: 'ScheduleBlocks',
+  Task: 'Tasks',
+  PsyNote: 'PsyNotes',
+  ClientEntry: 'ClientEntries'
 };
 
 /**
@@ -595,5 +598,71 @@ export class ClientRisk {
     this.blocked = !!blocked;
     this.blockReason = blockReason;
     this.updatedAt = updatedAt || new Date().toISOString();
+  }
+}
+
+
+/** Задача психолога (список дел кабинета; опционально связана с клиентом) */
+export class Task {
+  constructor({
+    id = null,
+    psychologistId = null,
+    title = '',
+    details = '',
+    dueDate = '',            // YYYY-MM-DD (необязательно)
+    clientId = null,
+    done = false,
+    createdAt = null
+  } = {}) {
+    this.id = id;
+    this.psychologistId = psychologistId;
+    this.title = String(title || '');
+    this.details = String(details || '');
+    this.dueDate = dueDate || '';
+    this.clientId = clientId || null;
+    this.done = !!done;
+    this.createdAt = createdAt || new Date().toISOString();
+  }
+}
+
+/** Заметка «блокнота» (планировщик: свободные записи, планы) */
+export class PsyNote {
+  constructor({
+    id = null,
+    psychologistId = null,
+    title = '',
+    body = '',
+    date = '',               // YYYY-MM-DD (планирование на дату, необязательно)
+    pinned = false,
+    createdAt = null
+  } = {}) {
+    this.id = id;
+    this.psychologistId = psychologistId;
+    this.title = String(title || '');
+    this.body = String(body || '');
+    this.date = date || '';
+    this.pinned = !!pinned;
+    this.createdAt = createdAt || new Date().toISOString();
+  }
+}
+
+/** Запись о клиенте (журнал работы: наблюдения, договорённости; PII — только в кабинете) */
+export class ClientEntry {
+  constructor({
+    id = null,
+    psychologistId = null,
+    clientId = null,
+    sessionId = null,
+    date = '',               // YYYY-MM-DD
+    text = '',
+    createdAt = null
+  } = {}) {
+    this.id = id;
+    this.psychologistId = psychologistId;
+    this.clientId = clientId;
+    this.sessionId = sessionId || null;
+    this.date = date || new Date().toISOString().slice(0, 10);
+    this.text = String(text || '');
+    this.createdAt = createdAt || new Date().toISOString();
   }
 }

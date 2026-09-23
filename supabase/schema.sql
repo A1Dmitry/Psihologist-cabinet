@@ -157,6 +157,43 @@ create table if not exists schedule_blocks (
 
 create index if not exists schedule_blocks_psy_idx on schedule_blocks (psychologist_id, date_from);
 
+-- ——— Задачи кабинета (список дел; опционально связаны с клиентом) ———
+create table if not exists tasks (
+  id              text primary key default ('task_' || extract(epoch from now())::bigint::text || '_' || substr(md5(random()::text), 1, 6)),
+  psychologist_id text not null references psychologists(id) on delete cascade,
+  title           text not null,
+  details         text not null default '',
+  due_date        text not null default '',          -- YYYY-MM-DD
+  client_id       text references clients(id) on delete set null,
+  done            boolean not null default false,
+  created_at      timestamptz not null default now()
+);
+create index if not exists tasks_psy_idx on tasks (psychologist_id, done, due_date);
+
+-- ——— Блокнот / планировщик (свободные заметки и планы) ———
+create table if not exists psy_notes (
+  id              text primary key default ('note_' || extract(epoch from now())::bigint::text || '_' || substr(md5(random()::text), 1, 6)),
+  psychologist_id text not null references psychologists(id) on delete cascade,
+  title           text not null default '',
+  body            text not null default '',
+  date            text not null default '',          -- план на дату (YYYY-MM-DD)
+  pinned          boolean not null default false,
+  created_at      timestamptz not null default now()
+);
+create index if not exists psy_notes_psy_idx on psy_notes (psychologist_id, pinned, date);
+
+-- ——— Записи о клиентах (журнал работы; PII — только владельцу) ———
+create table if not exists client_entries (
+  id              text primary key default ('entry_' || extract(epoch from now())::bigint::text || '_' || substr(md5(random()::text), 1, 6)),
+  psychologist_id text not null references psychologists(id) on delete cascade,
+  client_id       text not null references clients(id) on delete cascade,
+  session_id      text references sessions(id) on delete set null,
+  date            text not null,                     -- YYYY-MM-DD
+  text            text not null default '',
+  created_at      timestamptz not null default now()
+);
+create index if not exists client_entries_client_idx on client_entries (psychologist_id, client_id, date);
+
 -- ——— Настройки кабинета / слотов / оплаты / защиты записи ———
 create table if not exists session_settings (
   psychologist_id                  text primary key references psychologists(id) on delete cascade,
@@ -291,7 +328,7 @@ declare t text;
 begin
   foreach t in array array['psychologists','services','clients','sessions','session_settings',
                            'payments','email_codes','waiting_items','booking_attempts','client_risks',
-                           'session_reminders','schedule_blocks']
+                           'session_reminders','schedule_blocks','tasks','psy_notes','client_entries']
   loop
     execute format('drop policy if exists anon_all on %I', t);
     execute format('alter table %I enable row level security', t);
@@ -307,7 +344,8 @@ do $$
 declare t text;
 begin
   foreach t in array array['psychologists','services','clients','sessions','session_settings',
-                           'payments','waiting_items','booking_attempts','session_reminders','schedule_blocks']
+                           'payments','waiting_items','booking_attempts','session_reminders','schedule_blocks',
+                           'tasks','psy_notes','client_entries']
   loop
     execute format('drop policy if exists owner_all on %I', t);
   end loop;
@@ -359,6 +397,21 @@ create policy owner_all on session_reminders
   with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
 
 create policy owner_all on schedule_blocks
+  for all to authenticated
+  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
+  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+
+create policy owner_all on tasks
+  for all to authenticated
+  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
+  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+
+create policy owner_all on psy_notes
+  for all to authenticated
+  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
+  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+
+create policy owner_all on client_entries
   for all to authenticated
   using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
   with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));

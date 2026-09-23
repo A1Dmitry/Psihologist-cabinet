@@ -123,8 +123,8 @@ function routeFromUrl() {
   if (reply && /\/reply\/?$/.test(location.pathname)) return { name: 'clientReply', params: { token: reply } };
   const m = location.pathname.match(/\/psy\/([^/]+)\/?$/);
   if (m) {
-    try { return { name: 'booking', params: { slug: decodeURIComponent(m[1]) } }; }
-    catch { return { name: 'booking', params: { slug: m[1] } }; }
+    try { return { name: 'booking', params: { slug: decodeURIComponent(m[1]), anchor: location.hash === '#book' ? 'book' : '' } }; }
+    catch { return { name: 'booking', params: { slug: m[1], anchor: location.hash === '#book' ? 'book' : '' } }; }
   }
   if (/\/cabinet\/?$/.test(location.pathname)) return { name: 'cabinet', params: {} };
   if (/\/auth\/?$/.test(location.pathname)) return { name: 'auth', params: { mode: qs.get('mode') || 'login' } };
@@ -268,7 +268,7 @@ function renderPortal() {
         <div class="flex flex-wrap gap-2 mb-4">
           ${svcs.slice(0, 3).map(s => `<span class="text-xs px-2 py-1 rounded-full bg-slate-50 text-slate-600">${s.name}</span>`).join('')}
         </div>
-        <a href="${urlFor.psy(p.slug)}" data-spa data-slug="${esc(p.slug)}" class="block w-full text-center py-2.5 rounded-full bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">
+        <a href="${urlFor.psy(p.slug)}#book" data-spa data-slug="${esc(p.slug)}" data-anchor="book" class="block w-full text-center py-2.5 rounded-full bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">
           Записаться
         </a>
       </article>`;
@@ -364,6 +364,9 @@ function renderCabinet() {
   if (cabinetVm.tab === 'services') renderCabServices();
   if (cabinetVm.tab === 'waiting') renderCabWaiting();
   if (cabinetVm.tab === 'blocks') renderCabBlocks();
+  if (cabinetVm.tab === 'journal') renderCabJournal();
+  if (cabinetVm.tab === 'tasks') renderCabTasks();
+  if (cabinetVm.tab === 'notepad') renderCabNotepad();
   if (cabinetVm.tab === 'stats') renderCabStats();
   if (cabinetVm.tab === 'profile') renderCabProfile();
   if (cabinetVm.tab === 'link') renderCabLink();
@@ -468,6 +471,156 @@ function renderCabSchedule() {
   }).join('');
 }
 
+// ——— Книга записей ———
+function renderCabJournal() {
+  const filtersBox = $('#journal-filters');
+  if (filtersBox) {
+    const opts = [
+      ['upcoming', 'Предстоящие'],
+      ['pending', 'Ждут действия'],
+      ['past', 'Прошедшие'],
+      ['all', 'Все']
+    ];
+    filtersBox.innerHTML = opts.map(([id, label]) =>
+      `<button type="button" data-jf="${id}" class="px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap ${cabinetVm.journalFilter === id ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600'}">${label}</button>`
+    ).join('');
+    filtersBox.querySelectorAll('[data-jf]').forEach(btn => {
+      btn.onclick = () => { cabinetVm.setJournalFilter(btn.dataset.jf); renderCabJournal(); };
+    });
+  }
+  const box = $('#journal-list');
+  if (!box) return;
+  const list = cabinetVm.journalSessions;
+  if (!list.length) {
+    box.innerHTML = '<div class="p-8 text-center text-slate-400 text-sm">Записей нет</div>';
+    return;
+  }
+  box.innerHTML = list.map(s => {
+    const cl = cabinetVm.clientById(s.clientId);
+    const sv = cabinetVm.serviceById(s.serviceId);
+    const gcal = googleAddLink({
+      title: `Консультация${cl?.name ? ' · ' + cl.name : ''}`,
+      date: s.date, time: s.time, durationMin: sv?.duration || 60,
+      location: s.meetLink || '', timezone: cabinetVm.settings?.timezone || 'Europe/Minsk'
+    });
+    const canConfirm = ['pending', 'held'].includes(s.status);
+    return `<div class="p-4 border-b last:border-0">
+      <div class="flex items-center gap-3 flex-wrap">
+        <div class="font-mono text-sm text-slate-500 w-32 shrink-0">${formatDate(s.date)} · ${s.time}</div>
+        <div class="flex-1 min-w-[140px]">
+          <div class="font-medium">${cl?.name || cl?.nickname || '—'}</div>
+          <div class="text-sm text-slate-500">${sv?.name || ''} ${sv ? '· ' + sv.priceLabel() : ''}
+            ${s.paymentStatus === 'deposit_paid' ? ' · аванс ✓' : ''}${s.paymentStatus === 'fully_paid' ? ' · оплачено ✓' : ''}
+            ${s.changeConsentStatus === 'pending' ? ' · ⏳ ждём согласие на перенос' : ''}</div>
+        </div>
+        <span class="text-xs px-2 py-1 rounded-full ${statusClass(s.status)}">${statusLabel(s.status)}</span>
+      </div>
+      ${s.note ? `<div class="text-xs text-slate-400 mt-1">Заметка клиента: ${esc(s.note)}</div>` : ''}
+      <div class="flex flex-wrap gap-3 mt-2 text-sm">
+        ${canConfirm ? `<button data-j-confirm="${s.id}" class="text-emerald-600">Подтвердить</button>` : ''}
+        <button data-edit-session="${s.id}" class="text-indigo-600">Перенести/изменить</button>
+        <button data-j-note="${s.id}" class="text-indigo-600">+ запись о сессии</button>
+        ${s.date >= todayStr() && !['cancelled', 'done', 'no_show'].includes(s.status) ? `<button data-j-noshow="${s.id}" class="text-slate-400">Неявка</button>` : ''}
+        <a href="${esc(gcal)}" target="_blank" rel="noopener" class="text-emerald-600">В календарь</a>
+      </div>
+    </div>`;
+  }).join('');
+
+  box.querySelectorAll('[data-j-confirm]').forEach(btn => {
+    btn.onclick = () => { cabinetVm.confirmSession(btn.dataset.jConfirm); renderCabJournal(); };
+  });
+  box.querySelectorAll('[data-j-note]').forEach(btn => {
+    btn.onclick = () => {
+      const s = cabinetVm.sessions.find(x => x.id === btn.dataset.jNote);
+      const text = prompt('Запись о сессии (видна только вам):');
+      if (text?.trim() && s) {
+        cabinetVm.addClientEntry({ clientId: s.clientId, sessionId: s.id, date: s.date, text: text.trim() });
+        showToast('Запись сохранена в карточке клиента');
+      }
+    };
+  });
+  box.querySelectorAll('[data-j-noshow]').forEach(btn => {
+    btn.onclick = () => {
+      const s = cabinetVm.sessions.find(x => x.id === btn.dataset.jNoshow);
+      if (s && confirm('Отметить неявку клиента?')) {
+        s.status = 'no_show';
+        db.saveChanges();
+        renderCabJournal();
+      }
+    };
+  });
+}
+
+// ——— Задачи ———
+function renderCabTasks() {
+  const sel = $('#task-client');
+  if (sel) {
+    const current = sel.value;
+    sel.innerHTML = '<option value="">— не привязывать —</option>' +
+      cabinetVm.clients.map(c => `<option value="${c.id}">${esc(c.nickname || c.name)}</option>`).join('');
+    sel.value = current;
+  }
+  const box = $('#tasks-list');
+  if (!box) return;
+  const list = cabinetVm.tasks;
+  if (!list.length) {
+    box.innerHTML = '<div class="p-8 text-center text-slate-400 text-sm">Задач нет</div>';
+    return;
+  }
+  box.innerHTML = list.map(t => {
+    const cl = t.clientId ? cabinetVm.clientById(t.clientId) : null;
+    const overdue = t.dueDate && !t.done && t.dueDate < todayStr();
+    return `<div class="p-4 flex items-start gap-3 border-b last:border-0">
+      <input type="checkbox" data-task-toggle="${t.id}" ${t.done ? 'checked' : ''} class="mt-1 accent-indigo-600">
+      <div class="flex-1 min-w-0 ${t.done ? 'line-through text-slate-400' : ''}">
+        <div class="font-medium">${esc(t.title)}</div>
+        ${t.details ? `<div class="text-sm text-slate-500">${esc(t.details)}</div>` : ''}
+        <div class="text-xs mt-1 ${overdue ? 'text-rose-500 font-medium' : 'text-slate-400'}">
+          ${t.dueDate ? 'Срок: ' + formatDate(t.dueDate) : ''}${cl ? ` · клиент: ${esc(cl.nickname || cl.name)}` : ''}
+        </div>
+      </div>
+      <button data-task-del="${t.id}" class="text-rose-500 text-sm shrink-0">Удалить</button>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('[data-task-toggle]').forEach(el => {
+    el.onchange = () => { cabinetVm.toggleTask(el.dataset.taskToggle); renderCabTasks(); };
+  });
+  box.querySelectorAll('[data-task-del]').forEach(el => {
+    el.onclick = () => { cabinetVm.removeTask(el.dataset.taskDel); renderCabTasks(); };
+  });
+}
+
+// ——— Блокнот (планировщик) ———
+function renderCabNotepad() {
+  const box = $('#notes-list');
+  if (!box) return;
+  const list = cabinetVm.notes;
+  if (!list.length) {
+    box.innerHTML = '<div class="bg-white rounded-xl border p-8 text-center text-slate-400 text-sm">Заметок нет. Планы на день, идеи, списки — всё сюда.</div>';
+    return;
+  }
+  box.innerHTML = list.map(n => `
+    <div class="bg-white rounded-xl border p-4 ${n.pinned ? 'border-amber-300 bg-amber-50/40' : ''}">
+      <div class="flex items-start gap-3">
+        <div class="flex-1 min-w-0">
+          ${n.title ? `<div class="font-medium">${esc(n.title)}</div>` : ''}
+          <div class="text-sm text-slate-700 whitespace-pre-wrap">${esc(n.body)}</div>
+          <div class="text-xs text-slate-400 mt-2">${n.date ? formatDate(n.date) + ' · ' : ''}${n.pinned ? '📌 закреплено' : ''}</div>
+        </div>
+        <div class="flex flex-col gap-1 shrink-0">
+          <button data-note-pin="${n.id}" class="text-xs text-amber-600">${n.pinned ? 'Открепить' : '📌'}</button>
+          <button data-note-del="${n.id}" class="text-xs text-rose-500">Удалить</button>
+        </div>
+      </div>
+    </div>`).join('');
+  box.querySelectorAll('[data-note-pin]').forEach(el => {
+    el.onclick = () => { cabinetVm.toggleNotePin(el.dataset.notePin); renderCabNotepad(); };
+  });
+  box.querySelectorAll('[data-note-del]').forEach(el => {
+    el.onclick = () => { cabinetVm.removeNote(el.dataset.noteDel); renderCabNotepad(); };
+  });
+}
+
 function renderCabBlocks() {
   const st = cabinetVm.settings;
   if (st) {
@@ -502,19 +655,90 @@ function renderCabClients() {
   const list = cabinetVm.clients;
   if (!list.length) {
     box.innerHTML = '<div class="p-8 text-center text-slate-400 text-sm">Нет клиентов</div>';
-    return;
+  } else {
+    box.innerHTML = list.map(c => {
+      const n = cabinetVm.sessions.filter(s => s.clientId === c.id && s.status !== 'cancelled').length;
+      const entries = db.entriesOf(c.id).length;
+      const selected = cabinetVm.selectedClientId === c.id;
+      return `<div class="p-4 flex justify-between items-center border-b last:border-0 ${selected ? 'bg-indigo-50/50' : ''}">
+        <div><div class="font-medium">${c.nickname || c.name}</div>
+        <div class="text-sm text-slate-500">${c.phone || ''} · ${n} сессий${entries ? ` · ${entries} записей` : ''}</div>
+        ${c.note ? `<div class="text-xs text-slate-400 mt-0.5">${c.note}</div>` : ''}</div>
+        <div class="flex gap-2">
+          <button data-sel-client="${c.id}" class="text-sm text-indigo-600">${selected ? 'Скрыть' : 'Карточка'}</button>
+          <button data-edit-client="${c.id}" class="text-sm text-indigo-600">Изменить</button>
+          <button data-del-client="${c.id}" class="text-sm text-rose-500">Удалить</button>
+        </div></div>`;
+    }).join('');
+    box.querySelectorAll('[data-sel-client]').forEach(btn => {
+      btn.onclick = () => { cabinetVm.selectClient(btn.dataset.selClient); renderCabClients(); };
+    });
   }
-  box.innerHTML = list.map(c => {
-    const n = cabinetVm.sessions.filter(s => s.clientId === c.id && s.status !== 'cancelled').length;
-    return `<div class="p-4 flex justify-between items-center border-b last:border-0">
-      <div><div class="font-medium">${c.nickname || c.name}</div>
-      <div class="text-sm text-slate-500">${c.phone || ''} · ${n} сессий</div>
-      ${c.note ? `<div class="text-xs text-slate-400 mt-0.5">${c.note}</div>` : ''}</div>
-      <div class="flex gap-2">
-        <button data-edit-client="${c.id}" class="text-sm text-indigo-600">Изменить</button>
-        <button data-del-client="${c.id}" class="text-sm text-rose-500">Удалить</button>
-      </div></div>`;
-  }).join('');
+  renderClientDetail();
+}
+
+// ——— Карточка клиента: сессии + записи (журнал работы) ———
+function renderClientDetail() {
+  const box = $('#client-detail');
+  if (!box) return;
+  const c = cabinetVm.selectedClient;
+  if (!c) { box.innerHTML = ''; return; }
+
+  const sessions = cabinetVm.sessions.filter(s => s.clientId === c.id)
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const entries = cabinetVm.clientEntriesOf(c.id);
+
+  box.innerHTML = `
+    <div class="bg-white rounded-xl border p-6">
+      <h2 class="text-lg font-bold">${esc(c.nickname || c.name)}</h2>
+      <div class="text-sm text-slate-500">${esc(c.name || '')}${c.phone ? ' · ' + esc(c.phone) : ''}${c.contact ? ' · ' + esc(c.contact) : ''}</div>
+      ${c.note ? `<div class="text-xs text-slate-400 mt-1">${esc(c.note)}</div>` : ''}
+
+      <h3 class="font-semibold text-sm mt-5 mb-2">Сессии (${sessions.length})</h3>
+      ${sessions.length ? `<div class="divide-y border rounded-xl mb-6 max-h-64 overflow-y-auto">
+        ${sessions.map(s => {
+          const sv = cabinetVm.serviceById(s.serviceId);
+          return `<div class="p-2.5 text-sm flex justify-between gap-2">
+            <span class="font-mono text-slate-500 shrink-0">${s.date} ${s.time}</span>
+            <span class="flex-1">${sv?.name || ''}</span>
+            <span class="text-xs px-2 py-0.5 rounded-full ${statusClass(s.status)} shrink-0">${statusLabel(s.status)}</span>
+          </div>`;
+        }).join('')}
+      </div>` : '<p class="text-sm text-slate-400 mb-6">Сессий пока нет</p>'}
+
+      <h3 class="font-semibold text-sm mb-2">Записи о работе (видны только вам)</h3>
+      <div class="flex flex-wrap gap-2 items-end mb-3">
+        <div><label class="text-xs text-slate-500 block">Дата</label><input id="ce-date" type="date" value="${todayStr()}" class="px-3 py-1.5 rounded-xl border text-sm"></div>
+        <input id="ce-text" placeholder="Что происходило, наблюдения, договорённости…" class="flex-1 min-w-[220px] px-3 py-1.5 rounded-xl border text-sm">
+        <button id="btn-add-ce" class="px-4 py-1.5 rounded-full bg-indigo-600 text-white text-sm">Добавить</button>
+      </div>
+      ${entries.length ? `<div class="space-y-2 max-h-80 overflow-y-auto">
+        ${entries.map(e => `
+        <div class="rounded-xl border p-3 text-sm">
+          <div class="flex justify-between items-center">
+            <span class="text-xs text-slate-400">${formatDate(e.date)}${e.sessionId ? ' · по сессии' : ''}</span>
+            <button data-del-entry="${e.id}" class="text-xs text-rose-500">Удалить</button>
+          </div>
+          <div class="whitespace-pre-wrap mt-1">${esc(e.text)}</div>
+        </div>`).join('')}
+      </div>` : '<p class="text-sm text-slate-400">Записей пока нет</p>'}
+    </div>`;
+
+  $('#btn-add-ce')?.addEventListener('click', () => {
+    const text = $('#ce-text')?.value;
+    if (text?.trim()) {
+      cabinetVm.addClientEntry({ clientId: c.id, text, date: $('#ce-date')?.value || todayStr() });
+      renderCabClients();
+    }
+  });
+  box.querySelectorAll('[data-del-entry]').forEach(btn => {
+    btn.onclick = () => {
+      if (confirm('Удалить запись?')) {
+        cabinetVm.removeClientEntry(btn.dataset.delEntry);
+        renderCabClients();
+      }
+    };
+  });
 }
 
 function renderCabServices() {
@@ -700,8 +924,8 @@ function serviceMetaLine(s) {
 }
 
 /** Публичный профиль психолога на странице записи (модель сайта — без потерь) */
-function renderBookAbout(p) {
-  const box = $('#book-about');
+function renderBookProfile(p) {
+  const box = $('#book-profile');
   if (!box) return;
   const dirs = p.directions || [];
   const eduBasic = p.education?.basic || [];
@@ -710,20 +934,22 @@ function renderBookAbout(p) {
   const socials = p.socials || [];
   const links = p.paymentLinks || [];
   const req = p.paymentRequisites || {};
+  const services = bookingVm.services || [];
   const hasReq = req.recipient || req.account || req.unp || req.purpose;
 
   const eduList = items => items.length
-    ? `<ul class="mt-1 space-y-1 text-sm text-slate-700 list-disc list-inside">${items.map(x => `<li>${esc(x.title)}</li>`).join('')}</ul>`
+    ? `<ul class="mt-2 space-y-1.5 text-sm text-slate-700 list-disc list-inside">${items.map(x =>
+        `<li>${esc(x.title)}${x.institution ? ` — <span class="text-slate-500">${esc(x.institution)}</span>` : ''}${x.details ? ` <span class="text-slate-500">(${esc(x.details)})</span>` : ''}</li>`).join('')}</ul>`
     : '';
 
   const expHtml = exp.length
-    ? `<ul class="mt-1 space-y-1 text-sm text-slate-700 list-disc list-inside">${exp.map(x =>
-        `<li>${esc(x.details || x.organisation)}${x.years ? ` (${esc(x.years)} лет)` : ''}</li>`).join('')}</ul>`
-    : (p.experience ? `<p class="mt-1 text-sm text-slate-700">${esc(p.experience)}</p>` : '');
+    ? `<ul class="mt-2 space-y-1.5 text-sm text-slate-700 list-disc list-inside">${exp.map(x =>
+        `<li><span class="font-medium">${esc(x.organisation || x.details)}</span>${x.details && x.organisation ? ` — ${esc(x.details)}` : ''}${x.years ? ` <span class="text-slate-500">(${esc(x.years)} ${x.isCurrent ? 'лет, по наст. время' : 'лет'})</span>` : ''}</li>`).join('')}</ul>`
+    : (p.experience ? `<p class="mt-2 text-sm text-slate-700">${esc(p.experience)}</p>` : '');
 
   const reqHtml = hasReq ? `
-      <h3 class="font-semibold text-slate-900 mt-5">Реквизиты для оплаты</h3>
-      <div class="mt-1 text-sm text-slate-700 space-y-0.5">
+      <h3 class="font-semibold text-slate-900 mt-6">Реквизиты для оплаты</h3>
+      <div class="mt-2 text-sm text-slate-700 space-y-0.5">
         ${req.recipient ? `<div>Получатель: ${esc(req.recipient)}</div>` : ''}
         ${req.legalAddress ? `<div>Адрес: ${esc(req.legalAddress)}</div>` : ''}
         ${req.unp ? `<div>УНП: ${esc(req.unp)}</div>` : ''}
@@ -734,6 +960,7 @@ function renderBookAbout(p) {
       </div>` : '';
 
   const contacts = [
+    p.phone ? `<div>Тел: <a class="text-indigo-600 hover:underline" href="tel:${esc(String(p.phone).replace(/[^\d+]/g, ''))}">${esc(p.phone)}</a></div>` : '',
     p.address ? `<div>${esc(p.address)}</div>` : '',
     p.publicEmail ? `<div><a class="text-indigo-600 hover:underline" href="mailto:${esc(p.publicEmail)}">${esc(p.publicEmail)}</a></div>` : '',
     p.website ? `<div><a class="text-indigo-600 hover:underline" target="_blank" rel="noopener" href="${esc(p.website)}">${esc(p.website)}</a></div>` : '',
@@ -743,35 +970,53 @@ function renderBookAbout(p) {
     })
   ].join('');
 
+  const servicesHtml = services.length ? `
+      <h3 class="font-semibold text-slate-900 mt-6">Услуги и стоимость</h3>
+      <div class="mt-2 divide-y border rounded-xl overflow-hidden">
+        ${services.map(s => `
+        <div class="p-3 flex justify-between items-start gap-3 text-sm">
+          <div><div class="font-medium">${esc(s.name)}</div>
+          <div class="text-slate-500">${esc(serviceMetaLine(s))}</div>
+          ${s.description ? `<div class="text-slate-500">${esc(s.description)}</div>` : ''}</div>
+          <div class="font-semibold text-indigo-700 whitespace-nowrap">${esc(s.priceLabel())}</div>
+        </div>`).join('')}
+      </div>` : '';
+
   const html = `
-    <div class="rounded-2xl bg-white border p-6 space-y-1">
-      ${p.photoUrl ? `<img src="${esc(p.photoUrl)}" alt="${esc(p.fullName)}" class="w-32 h-32 object-cover rounded-2xl mb-3">` : ''}
-      ${p.greeting ? `<p class="text-sm text-slate-500 italic">${esc(p.greeting)}</p>` : ''}
-      ${p.about ? `<p class="text-sm text-slate-700">${esc(p.about)}</p>` : ''}
-      ${p.approach ? `<p class="text-sm text-slate-700">${esc(p.approach)}</p>` : ''}
+    <div class="rounded-2xl bg-white border p-6">
+      <div class="flex flex-col sm:flex-row gap-5 items-start">
+        ${p.photoUrl ? `<img src="${esc(p.photoUrl)}" alt="${esc(p.fullName)}" class="w-32 h-32 object-cover rounded-2xl shrink-0">` : ''}
+        <div class="flex-1">
+          ${p.greeting ? `<p class="text-slate-600">${esc(p.greeting)}</p>` : ''}
+          ${p.about ? `<p class="text-sm text-slate-700 mt-2">${esc(p.about)}</p>` : ''}
+          ${p.approach ? `<p class="text-sm text-slate-700 mt-2">${esc(p.approach)}</p>` : ''}
+          <a href="#book-form-block" data-scroll-book class="inline-block mt-4 px-6 py-2.5 rounded-full bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">Записаться на консультацию</a>
+        </div>
+      </div>
 
       ${dirs.length ? `
-      <h3 class="font-semibold text-slate-900 mt-5">С чем могу помочь</h3>
-      <ul class="mt-1 space-y-1 text-sm text-slate-700 list-disc list-inside">
+      <h3 class="font-semibold text-slate-900 mt-6">С чем могу помочь</h3>
+      <ul class="mt-2 space-y-1.5 text-sm text-slate-700 list-disc list-inside">
         ${dirs.map(d => `<li>${esc(d.title)}${d.details ? ` <span class="text-slate-500">(${esc(d.details)})</span>` : ''}</li>`).join('')}
       </ul>` : ''}
 
-      ${eduBasic.length ? `<h3 class="font-semibold text-slate-900 mt-5">Психологическое образование</h3>${eduList(eduBasic)}` : ''}
-      ${eduExtra.length ? `<h3 class="font-semibold text-slate-900 mt-5">Дополнительное образование</h3>${eduList(eduExtra)}` : ''}
+      ${servicesHtml}
 
-      ${expHtml ? `<h3 class="font-semibold text-slate-900 mt-5">Опыт</h3>${expHtml}` : ''}
+      ${eduBasic.length ? `<h3 class="font-semibold text-slate-900 mt-6">Психологическое образование</h3>${eduList(eduBasic)}` : ''}
+      ${eduExtra.length ? `<h3 class="font-semibold text-slate-900 mt-6">Дополнительное образование</h3>${eduList(eduExtra)}` : ''}
+
+      ${expHtml ? `<h3 class="font-semibold text-slate-900 mt-6">Опыт</h3>${expHtml}` : ''}
 
       ${links.length ? `
-      <h3 class="font-semibold text-slate-900 mt-5">Оплата</h3>
+      <h3 class="font-semibold text-slate-900 mt-6">Оплата онлайн</h3>
       <div class="mt-2 flex flex-wrap gap-2">
         ${links.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">${esc(l.label)}</a>`).join('')}
       </div>` : ''}
       ${reqHtml}
 
-      ${contacts ? `<h3 class="font-semibold text-slate-900 mt-5">Контакты</h3><div class="mt-1 text-sm text-slate-700 space-y-0.5">${contacts}</div>` : ''}
+      ${contacts ? `<h3 class="font-semibold text-slate-900 mt-6">Контакты</h3><div class="mt-2 text-sm text-slate-700 space-y-0.5">${contacts}</div>` : ''}
     </div>`;
-  box.innerHTML = html.trim() === '' ? '' : html;
-  box.classList.toggle('hidden', !box.innerHTML);
+  box.innerHTML = html;
 }
 
 function renderBooking() {
@@ -793,9 +1038,21 @@ function renderBooking() {
   $('#book-psy-name') && ($('#book-psy-name').textContent = p.fullName);
   $('#book-psy-spec') && ($('#book-psy-spec').textContent = p.specialization);
   $('#book-psy-city') && ($('#book-psy-city').textContent = (p.city || 'Онлайн') + ' · при необходимости Google Meet');
-  renderBookAbout(p);
+  renderBookProfile(p);
   // SEO: title/description/OG/JSON-LD для индексации страницы специалиста
   try { applyProfileSeo(p, bookingVm.services, urlFor.psy(p.slug)); } catch (e) { console.warn('seo', e); }
+  // залогиненный владелец видит свою страницу с панелью управления
+  const banner = $('#own-page-banner');
+  if (banner) {
+    const own = authService.isAuthenticated()
+      && authService.currentPsychologist && authService.currentPsychologist.id === p.id;
+    banner.classList.toggle('hidden', !own);
+  }
+  // переход к форме записи по якорю (#book из карточки каталога)
+  if (route.params.anchor === 'book') {
+    route.params.anchor = null;
+    setTimeout(() => document.getElementById('book-form-block')?.scrollIntoView({ behavior: 'smooth' }), 30);
+  }
 
   const svcBox = $('#book-services');
   if (svcBox) {
@@ -1102,6 +1359,46 @@ function bindEvents() {
       }
     });
     renderCabinet();
+  });
+
+  // ——— Задачи ———
+  $('#btn-add-task')?.addEventListener('click', () => {
+    cabinetVm.addTask({
+      title: $('#task-title')?.value,
+      details: $('#task-details')?.value,
+      dueDate: $('#task-due')?.value,
+      clientId: $('#task-client')?.value || null
+    });
+    ['#task-title', '#task-details', '#task-due'].forEach(s => { const el = $(s); if (el) el.value = ''; });
+    renderCabTasks();
+  });
+
+  // ——— Блокнот ———
+  $('#btn-add-note')?.addEventListener('click', () => {
+    cabinetVm.addNote({
+      title: $('#note-title')?.value,
+      body: $('#note-body')?.value,
+      date: $('#note-date')?.value
+    });
+    ['#note-title', '#note-body', '#note-date'].forEach(s => { const el = $(s); if (el) el.value = ''; });
+    renderCabNotepad();
+  });
+
+  // ——— Панель владельца на своей странице + скролл к форме записи ———
+  document.addEventListener('click', e => {
+    const cab = e.target.closest('[data-cabtab]');
+    if (cab) {
+      e.preventDefault();
+      if (!authService.isAuthenticated()) { navigate('auth', { mode: 'login' }); return; }
+      cabinetVm.tab = cab.dataset.cabtab;
+      navigate('cabinet');
+      return;
+    }
+    const sc = e.target.closest('[data-scroll-book]');
+    if (sc) {
+      e.preventDefault();
+      document.getElementById('book-form-block')?.scrollIntoView({ behavior: 'smooth' });
+    }
   });
 
   // добавление строк в списки профиля
@@ -1452,6 +1749,14 @@ function boot() {
     bookingVm.onAvailability = () => { if (route.name === 'booking') renderBooking(); };
     route = routeFromUrl();
     if (route.name === 'cabinet' && !authService.isAuthenticated()) {
+      route = { name: 'auth', params: { mode: 'login' } };
+    }
+    navigate(route.name, route.params, { push: false });
+  })();
+}
+
+boot();
+d()) {
       route = { name: 'auth', params: { mode: 'login' } };
     }
     navigate(route.name, route.params, { push: false });

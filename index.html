@@ -152,9 +152,12 @@
         </div>
         <div class="md:hidden flex overflow-x-auto gap-1 px-3 py-2 bg-white border-b text-sm">
           <button data-tab="home" class="cab-nav-btn px-3 py-1.5 rounded-full bg-indigo-600 text-white whitespace-nowrap">Главная</button>
+          <button data-tab="journal" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Книга записей</button>
           <button data-tab="schedule" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Расписание</button>
           <button data-tab="blocks" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Занятость</button>
           <button data-tab="clients" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Клиенты</button>
+          <button data-tab="tasks" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Задачи</button>
+          <button data-tab="notepad" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Блокнот</button>
           <button data-tab="waiting" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Ожидание</button>
           <button data-tab="services" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Услуги</button>
         </div>
@@ -243,6 +246,40 @@
               <button id="btn-add-client" class="px-4 py-2 rounded-full bg-indigo-600 text-white text-sm">+ Клиент</button>
             </div>
             <div id="clients-list" class="bg-white rounded-xl border"></div>
+            <div id="client-detail" class="mt-6"></div>
+          </div>
+          <div id="tab-journal" class="cab-tab hidden">
+            <h1 class="text-2xl font-bold mb-2">Книга записей</h1>
+            <p class="text-sm text-slate-500 mb-4">Все записи клиентов: подтверждение, перенос, заметки о сессии, неявка, календарь.</p>
+            <div id="journal-filters" class="flex flex-wrap gap-2 mb-4"></div>
+            <div id="journal-list" class="bg-white rounded-xl border"></div>
+          </div>
+          <div id="tab-tasks" class="cab-tab hidden">
+            <h1 class="text-2xl font-bold mb-2">Задачи</h1>
+            <p class="text-sm text-slate-500 mb-6">Дела кабинета: звонки, подготовка, документы. Можно привязать к клиенту.</p>
+            <div class="bg-white rounded-xl border p-4 mb-6 space-y-3">
+              <input id="task-title" placeholder="Задача * (например: Позвонить Анне после сессии)" class="w-full px-3 py-2 rounded-xl border text-sm">
+              <textarea id="task-details" rows="2" placeholder="Детали (необязательно)" class="w-full px-3 py-2 rounded-xl border text-sm resize-none"></textarea>
+              <div class="flex flex-wrap gap-3 items-end">
+                <div><label class="text-xs text-slate-500 block">Срок</label><input id="task-due" type="date" class="px-3 py-2 rounded-xl border text-sm"></div>
+                <div><label class="text-xs text-slate-500 block">Клиент</label><select id="task-client" class="px-3 py-2 rounded-xl border text-sm min-w-[180px]"><option value="">— не привязывать —</option></select></div>
+                <button id="btn-add-task" class="px-6 py-2 rounded-full bg-indigo-600 text-white text-sm font-medium">Добавить</button>
+              </div>
+            </div>
+            <div id="tasks-list" class="bg-white rounded-xl border"></div>
+          </div>
+          <div id="tab-notepad" class="cab-tab hidden">
+            <h1 class="text-2xl font-bold mb-2">Блокнот · планировщик</h1>
+            <p class="text-sm text-slate-500 mb-6">Свободные заметки и планы. Закреплённые — сверху.</p>
+            <div class="bg-white rounded-xl border p-4 mb-6 space-y-3">
+              <input id="note-title" placeholder="Заголовок (необязательно)" class="w-full px-3 py-2 rounded-xl border text-sm">
+              <textarea id="note-body" rows="3" placeholder="Заметка / план *" class="w-full px-3 py-2 rounded-xl border text-sm resize-none"></textarea>
+              <div class="flex flex-wrap gap-3 items-end">
+                <div><label class="text-xs text-slate-500 block">Дата (план на день)</label><input id="note-date" type="date" class="px-3 py-2 rounded-xl border text-sm"></div>
+                <button id="btn-add-note" class="px-6 py-2 rounded-full bg-indigo-600 text-white text-sm font-medium">Добавить</button>
+              </div>
+            </div>
+            <div id="notes-list" class="space-y-3"></div>
           </div>
           <div id="tab-services" class="cab-tab hidden">
             <div class="flex justify-between mb-4">
@@ -405,12 +442,19 @@
       </div>
     </header>
     <div id="book-body" class="max-w-3xl mx-auto px-4 py-10">
+      <div id="own-page-banner" class="hidden mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 flex flex-wrap items-center gap-3">
+        <span class="text-sm font-medium text-emerald-800 flex-1">✓ Это ваша публичная страница — так её видят клиенты</span>
+        <button data-cabtab="journal" class="own-page-btn px-4 py-2 rounded-full bg-emerald-600 text-white text-sm font-medium">Книга записей</button>
+        <button data-cabtab="tasks" class="own-page-btn px-4 py-2 rounded-full border border-emerald-300 text-emerald-700 text-sm font-medium bg-white">Задачи</button>
+        <button data-cabtab="notepad" class="own-page-btn px-4 py-2 rounded-full border border-emerald-300 text-emerald-700 text-sm font-medium bg-white">Блокнот</button>
+        <button data-cabtab="home" class="own-page-btn px-4 py-2 rounded-full border border-emerald-300 text-emerald-700 text-sm font-medium bg-white">Кабинет</button>
+      </div>
       <div class="rounded-2xl bg-indigo-50 p-6 mb-8">
         <h2 class="text-xl font-bold" id="book-psy-name">—</h2>
         <p class="text-sm text-indigo-700" id="book-psy-spec"></p>
         <p class="text-xs text-slate-500 mt-1" id="book-psy-city"></p>
       </div>
-      <div id="book-about" class="mb-8"></div>
+      <div id="book-profile" class="mb-10"></div>
       <div id="book-error" class="hidden mb-4 text-sm text-rose-600 bg-rose-50 px-3 py-2 rounded-lg"></div>
       <div id="book-payment-info" class="mb-6"></div>
       <div id="book-pay-actions" class="hidden mb-8"></div>

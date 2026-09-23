@@ -29,6 +29,9 @@ export class CabinetViewModel extends BaseViewModel {
     this.scheduleRange = 'week'; // today | tomorrow | week | biweek | month
     this.editingSession = null;
     this.editingClient = null;
+    // книга записей / клиенты / задачи / блокнот
+    this.journalFilter = 'upcoming'; // upcoming | pending | past | all
+    this.selectedClientId = null;
   }
 
   get scheduleRangeOptions() {
@@ -471,5 +474,105 @@ export class CabinetViewModel extends BaseViewModel {
     this.showToast(`Синхронизировано событий: ${res.count}`);
     this.notify();
     return true;
+  }
+
+  // ——— Книга записей (журнал всех записей с взаимодействием) ———
+
+  get journalSessions() {
+    const today = todayStr();
+    const all = [...this.sessions].sort((a, b) =>
+      (a.date || '').localeCompare(b.date || '') || (a.time || '').localeCompare(b.time || ''));
+    switch (this.journalFilter) {
+      case 'upcoming': return all.filter(s => s.date >= today && !['cancelled', 'expired'].includes(s.status)).reverse();
+      case 'pending': return all.filter(s => ['pending', 'held'].includes(s.status) || s.changeConsentStatus === 'pending').reverse();
+      case 'past': return all.filter(s => s.date < today || ['done', 'no_show', 'cancelled'].includes(s.status)).reverse();
+      default: return all.slice().reverse();
+    }
+  }
+
+  setJournalFilter(f) {
+    if (!['upcoming', 'pending', 'past', 'all'].includes(f)) return;
+    this.journalFilter = f;
+    this.notify();
+  }
+
+  confirmSession(id) {
+    const s = this.sessions.find(x => x.id === id);
+    if (!s) return;
+    s.status = 'confirmed';
+    db.saveChanges();
+    this.showToast('Запись подтверждена');
+    this.notify();
+  }
+
+  // ——— Задачи ———
+
+  get tasks() {
+    return this.psyId ? db.tasksOf(this.psyId) : [];
+  }
+
+  addTask({ title, details, dueDate, clientId }) {
+    if (!title?.trim()) return;
+    db.addTask({ psychologistId: this.psyId, title: title.trim(), details: (details || '').trim(), dueDate: dueDate || '', clientId: clientId || null });
+    this.notify();
+  }
+
+  toggleTask(id) {
+    db.toggleTask(id);
+    this.notify();
+  }
+
+  removeTask(id) {
+    db.removeTask(id);
+    this.notify();
+  }
+
+  // ——— Блокнот (планировщик) ———
+
+  get notes() {
+    return this.psyId ? db.notesOf(this.psyId) : [];
+  }
+
+  addNote({ title, body, date }) {
+    if (!title?.trim() && !body?.trim()) return;
+    db.addNote({ psychologistId: this.psyId, title: (title || '').trim(), body: (body || '').trim(), date: date || '' });
+    this.notify();
+  }
+
+  toggleNotePin(id) {
+    db.toggleNotePin(id);
+    this.notify();
+  }
+
+  removeNote(id) {
+    db.removeNote(id);
+    this.notify();
+  }
+
+  // ——— Записи о клиентах (журнал работы с клиентом) ———
+
+  get selectedClient() {
+    return this.selectedClientId ? this.clients.find(c => c.id === this.selectedClientId) : null;
+  }
+
+  selectClient(id) {
+    this.selectedClientId = this.selectedClientId === id ? null : id;
+    this.notify();
+  }
+
+  clientEntriesOf(clientId) {
+    return clientId ? db.entriesOf(clientId) : [];
+  }
+
+  addClientEntry({ clientId, text, date, sessionId }) {
+    if (!clientId || !text?.trim()) return;
+    db.addClientEntry({ psychologistId: this.psyId, clientId, sessionId: sessionId || null, date: date || todayStr(), text: text.trim() });
+    this.showToast('Запись добавлена');
+    this.notify();
+  }
+
+  removeClientEntry(id) {
+    db.removeClientEntry(id);
+    this.notify();
   }
 }
