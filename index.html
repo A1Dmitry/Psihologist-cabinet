@@ -10,6 +10,30 @@
   <meta property="og:title" content="ПсихоПортал — кабинеты психологов" />
   <meta property="og:type" content="website" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- Видимый отчёт об ошибках: белый экран без диагностики исключён.
+       Ловит и ошибки загрузки/парсинга модулей (capture), и runtime-ошибки. -->
+  <script>
+    (function () {
+      function show(msg) {
+        var el = document.getElementById('boot-error');
+        if (!el) {
+          el = document.createElement('div');
+          el.id = 'boot-error';
+          el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#e11d48;color:#fff;' +
+            'font:13px/1.5 system-ui,sans-serif;padding:10px 14px;white-space:pre-wrap;';
+          (document.body || document.documentElement).appendChild(el);
+        }
+        el.textContent += (el.textContent ? '\n' : '') + msg;
+      }
+      window.addEventListener('error', function (e) {
+        if (e.target && e.target.tagName === 'SCRIPT') show('Не загрузился скрипт: ' + (e.target.src || '') );
+        else if (e.message) show('Ошибка: ' + e.message + (e.filename ? ' @ ' + e.filename + ':' + e.lineno : ''));
+      }, true);
+      window.addEventListener('unhandledrejection', function (e) {
+        show('Promise: ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason));
+      });
+    })();
+  </script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -605,6 +629,6 @@
     </div>
   </div>
 
-  <script type="module" src="%BASE%js/app.js"></script>
+  <script type="module" src="%BASE%js/app.js?v=20260923b"></script>
 </body>
 </html>

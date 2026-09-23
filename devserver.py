@@ -51,13 +51,17 @@ class SpaHandler(http.server.SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.send_header('Content-Length', str(len(body)))
-            self.send_header('Cache-Control', 'no-cache')
             self.end_headers()
             # файл отдаётся вне стандартного потока — возвращаем bytes-обёртку
             from io import BytesIO
             return BytesIO(body)
 
         return super().send_head()
+
+    def end_headers(self):
+        # dev/preview: никогда не кешировать — иначе браузер показывает устаревшую версию
+        self.send_header('Cache-Control', 'no-store, must-revalidate')
+        super().end_headers()
 
     def copyfile(self, source, outputfile):
         # send_head вернул BytesIO для index — стандартный copyfile совместим
