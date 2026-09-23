@@ -12,6 +12,8 @@ import { PaymentPolicy } from './models/entities.js';
 import { reminderService } from './services/reminderService.js';
 import { supabaseSync } from './services/supabaseSync.js';
 import { cabinetApi } from './services/cabinetApi.js';
+import { telegramService } from './services/telegramService.js';
+import { NOTIFY_WEBHOOK_URL } from './services/supabaseConfig.js';
 import { supabaseApi } from './services/supabaseApi.js';
 import { isSupabaseConfigured } from './services/supabaseConfig.js';
 import { applyProfileSeo, applyPortalSeo, applyBookingSeo } from './services/seoService.js';
@@ -233,6 +235,36 @@ function render() {
     }
   });
 }
+
+// ——— Telegram: outbox новых записей + должные напоминания (пока кабинет открыт) ———
+let _tgLoop = null;
+function startTelegramLoops(psyId) {
+  clearInterval(_tgLoop);
+  const tick = async () => {
+    try {
+      const a = await telegramService.notifyNewBookings(psyId);
+      if (a.sent) showToast(`Telegram: уведомлений о записях — ${a.sent}`);
+      await telegramService.sendDueReminders(psyId);
+    } catch (e) { console.warn('[Telegram] loop', e); }
+  };
+  tick();
+  _tgLoop = setInterval(tick, 60 * 1000);
+}
+
+// ——— Поделиться ссылкой на специалиста (Telegram/WhatsApp/Viber/системное меню) ———
+window.sharePsyLink = async function (slug) {
+  const url = `${location.origin}${urlFor.psy(slug)}`;
+  const text = 'Запись к специалисту:';
+  if (navigator.share) {
+    try { await navigator.share({ title: document.title, text, url }); return; } catch (_) { /* отмена */ }
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    showToast('Ссылка скопирована: ' + url);
+  } catch (_) {
+    window.prompt('Скопируйте ссылку:', url);
+  }
+};
 
 /** Диагностика сервера: что применено в БД, что нет (показывается в UI) */
 window.runServerDiagnostics = async containerId => {
@@ -465,6 +497,7 @@ function renderCabinet() {
   if (cabinetVm.tab === 'journal') renderCabJournal();
   if (cabinetVm.tab === 'tasks') renderCabTasks();
   if (cabinetVm.tab === 'notepad') renderCabNotepad();
+  if (cabinetVm.tab === 'telegram') { renderCabTelegram(); bindTelegramTab(); }
   if (cabinetVm.tab === 'stats') renderCabStats();
   if (cabinetVm.tab === 'profile') renderCabProfile();
   if (cabinetVm.tab === 'link') renderCabLink();
@@ -761,7 +794,7 @@ function renderCabClients() {
       const selected = cabinetVm.selectedClientId === c.id;
       return `<div class="p-4 flex justify-between items-center border-b last:border-0 ${selected ? 'bg-indigo-50/50' : ''}">
         <div><div class="font-medium">${c.nickname || c.name}</div>
-        <div class="text-sm text-slate-500">${c.phone || ''} · ${n} сессий${entries ? ` · ${entries} записей` : ''}</div>
+        <div class="text-sm text-slate-500">${c.phone || ''} · ${n} сессий${entries ? ` · ${entries} записей` : ''}${c.telegramChat ? ' · <span class="text-emerald-600">✓ Telegram</span>' : ''}</div>
         ${c.note ? `<div class="text-xs text-slate-400 mt-0.5">${c.note}</div>` : ''}</div>
         <div class="flex gap-2">
           <button data-sel-client="${c.id}" class="text-sm text-indigo-600">${selected ? 'Скрыть' : 'Карточка'}</button>
@@ -816,6 +849,170 @@ function renderVaultPanel() {
 }
 
 // ——— Карточка клиента: сессии + записи (журнал работы) ———
+// ——— Кабинет: вкладка «Уведомления» (Telegram) ———
+function renderCabTelegram() {
+  const cfg = telegramService.config();
+  const token = $('#tg-token');
+  if (!token) return;
+  if (cfg.botToken && !token.value) token.value = cfg.botToken;
+  const label = $('#tg-chat-label');
+  if (label) label.textContent = cfg.chatId ? `Выбран чат: ${cfg.chatId}${cfg.botName ? ` (бот @${cfg.botName})` : ''}` : 'Чат не выбран';
+  $('#tg-notify-booking').checked = cfg.notifyBooking;
+  $('#tg-notify-reminders').checked = cfg.notifyReminders;
+  $('#tg-notify-payments').checked = cfg.notifyPayments;
+  renderTgClients();
+}
+
+function renderTgClients() {
+  const box = $('#tg-clients');
+  if (!box) return;
+  const cfg = telegramService.config();
+  const clients = cabinetVm.clients;
+  if (!clients.length) { box.innerHTML = '<div class="p-4 text-sm text-slate-400">Клиентов пока нет</div>'; return; }
+  box.innerHTML = clients.map(c => {
+    const invite = `https://t.me/${cfg.botName || 'ваш_бот'}?start=${c.id}`;
+    return `<div class="p-3 flex justify-between items-center gap-2 border-b last:border-0 text-sm">
+      <div><span class="font-medium">${escHtml(c.nickname || c.name)}</span>
+        ${c.telegramChat ? '<span class="text-emerald-600 text-xs"> · ✓ подключен</span>' : '<span class="text-slate-400 text-xs"> · не подключен</span>'}</div>
+      ${c.telegramChat
+        ? `<button data-tg-unlink="${c.id}" class="text-xs text-rose-500">Отключить</button>`
+        : `<button data-tg-copy-invite="${escHtml(invite)}" class="text-xs text-indigo-600">Скопировать приглашение</button>`}
+    </div>`;
+  }).join('');
+  box.querySelectorAll('[data-tg-copy-invite]').forEach(btn => {
+    btn.onclick = async () => {
+      try { await navigator.clipboard.writeText(btn.dataset.tgCopyInvite); showToast('Ссылка-приглашение скопирована'); }
+      catch (_) { window.prompt('Скопируйте ссылку:', btn.dataset.tgCopyInvite); }
+    };
+  });
+  box.querySelectorAll('[data-tg-unlink]').forEach(btn => {
+    btn.onclick = async () => {
+      if (!confirm('Отключить Telegram-уведомления этому клиенту?')) return;
+      cabinetVm.setClientTelegramChat(btn.dataset.tgUnlink, '');
+      renderTgClients();
+    };
+  });
+}
+
+function bindTelegramTab() {
+  const psy = cabinetVm.psychologist;
+  if (!psy) return;
+
+  $('#btn-tg-test')?.addEventListener('click', async () => {
+    const token = $('#tg-token')?.value.trim();
+    const out = $('#tg-test-result');
+    if (!token) { out.textContent = 'Введите токен от @BotFather.'; out.className = 'text-xs mt-1 text-rose-500'; return; }
+    out.textContent = 'Проверяем…'; out.className = 'text-xs mt-1 text-slate-400';
+    try {
+      const name = await telegramService.testToken(token);
+      out.innerHTML = `✓ Бот найден: <b>@${escHtml(name)}</b>`;
+      out.className = 'text-xs mt-1 text-emerald-600';
+    } catch (e) {
+      out.textContent = `✗ ${e.message}. Проверьте токен (формат 1234567890:AA…).`;
+      out.className = 'text-xs mt-1 text-rose-500';
+    }
+  });
+
+  $('#btn-tg-find-chat')?.addEventListener('click', async () => {
+    const token = $('#tg-token')?.value.trim();
+    const box = $('#tg-chats');
+    const label = $('#tg-chat-label');
+    if (!token) { showToast('Сначала введите токен бота', true); return; }
+    box.innerHTML = '<div class="text-xs text-slate-400">Ищем сообщения…</div>';
+    try {
+      const chats = await telegramService.recentChats(token);
+      if (!chats.length) {
+        box.innerHTML = '<div class="text-xs text-slate-400">Пока нет сообщений боту. Откройте бота в Telegram и напишите /start, затем повторите.</div>';
+        return;
+      }
+      box.innerHTML = chats.slice(0, 5).map((ch, i) => `
+        <button data-i="${i}" class="w-full text-left px-3 py-2 rounded-xl border hover:bg-indigo-50 text-xs">
+          <b>${escHtml(ch.name || 'Чат ' + ch.chatId)}</b> · chat_id <code>${escHtml(ch.chatId)}</code>
+          ${ch.text ? ` · «${escHtml(ch.text.slice(0, 30))}»` : ''}
+        </button>`).join('');
+      box.querySelectorAll('button[data-i]').forEach(b => {
+        b.onclick = () => {
+          const ch = chats[+b.dataset.i];
+          label.textContent = `Выбран чат: ${ch.chatId}${ch.name ? ` (${ch.name})` : ''}`;
+          label.dataset.chatId = ch.chatId;
+        };
+      });
+    } catch (e) {
+      box.innerHTML = `<div class="text-xs text-rose-500">✗ ${escHtml(e.message)}</div>`;
+    }
+  });
+
+  $('#btn-tg-save')?.addEventListener('click', () => {
+    const token = $('#tg-token')?.value.trim() || '';
+    const chatId = ($('#tg-chat-label')?.dataset.chatId) || telegramService.config().chatId || '';
+    if (!token) { showToast('Введите токен бота', true); return; }
+    if (!chatId) { showToast('Выберите ваш чат («Найти чат»)', true); return; }
+    cabinetVm.saveTelegramSettings({
+      botToken: token,
+      chatId,
+      notifyBooking: $('#tg-notify-booking')?.checked !== false,
+      notifyReminders: $('#tg-notify-reminders')?.checked !== false,
+      notifyPayments: $('#tg-notify-payments')?.checked !== false
+    });
+    telegramService.testToken(token).then(name => {
+      cabinetVm.saveTelegramSettings({ botName: name });
+      renderTgClients();
+    }).catch(() => {});
+    showToast('Настройки Telegram сохранены');
+    renderCabTelegram();
+  });
+
+  $('#btn-tg-link-clients')?.addEventListener('click', async () => {
+    const out = $('#tg-link-result');
+    const token = $('#tg-token')?.value.trim() || telegramService.config().botToken;
+    if (!token) { showToast('Сначала настройте токен бота', true); return; }
+    out.textContent = 'Проверяем…';
+    try {
+      const r = await telegramService.linkClientChats(psy.id);
+      await cabinetVm.refreshClients();
+      out.textContent = `Новых подключений: ${r.linked}`;
+      renderTgClients();
+      renderCabClients();
+      showToast(r.linked ? `Подключено клиентов: ${r.linked}` : 'Новых подключений нет');
+    } catch (e) {
+      out.textContent = `Ошибка: ${e.message}`;
+    }
+  });
+}
+
+function renderClientTelegramBlock(c) {
+  const cfg = telegramService.config();
+  if (c.telegramChat) {
+    return '<div class="mt-3 flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 rounded-xl px-3 py-2"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> Telegram подключен — напоминания о сессиях приходят клиенту.</div>';
+  }
+  const invite = `https://t.me/${cfg.botName || 'ваш_бот'}?start=${c.id}`;
+  return `<div class="mt-3 text-xs">
+    <div class="flex flex-wrap items-center gap-2 text-slate-500">
+      <span>Telegram не подключен</span>
+      <button data-tg-invite class="px-3 py-1 rounded-full border border-indigo-300 text-indigo-700">Как подключить</button>
+      <button data-tg-copy="${esc(invite)}" class="px-3 py-1 rounded-full border border-slate-300 text-slate-600">Скопировать ссылку-приглашение</button>
+    </div>
+    <div data-tg-invite-box class="hidden mt-2 p-3 rounded-xl bg-slate-50 text-slate-600 leading-relaxed">
+      1. Настройте бота — вкладка «Уведомления».<br>
+      2. Отправьте клиенту ссылку: <code class="select-all break-all">${esc(invite)}</code><br>
+      3. Клиент нажимает <b>Start</b> у вашего бота.<br>
+      4. На вкладке «Уведомления» нажмите «Проверить подключения (/start)» — чат привяжется автоматически.
+    </div>
+  </div>`;
+}
+
+window.bindClientTelegramBlock = function (box) {
+  box.querySelectorAll('[data-tg-invite]').forEach(btn => {
+    btn.onclick = () => box.querySelector('[data-tg-invite-box]')?.classList.toggle('hidden');
+  });
+  box.querySelectorAll('[data-tg-copy]').forEach(btn => {
+    btn.onclick = async () => {
+      try { await navigator.clipboard.writeText(btn.dataset.tgCopy); showToast('Ссылка скопирована'); }
+      catch (_) { window.prompt('Скопируйте ссылку:', btn.dataset.tgCopy); }
+    };
+  });
+};
+
 function renderClientDetail() {
   const box = $('#client-detail');
   if (!box) return;
@@ -831,6 +1028,7 @@ function renderClientDetail() {
       <h2 class="text-lg font-bold">${esc(c.nickname || c.name)}</h2>
       <div class="text-sm text-slate-500">${esc(c.name || '')}${c.phone ? ' · ' + esc(c.phone) : ''}${c.contact ? ' · ' + esc(c.contact) : ''}</div>
       ${c.note ? `<div class="text-xs text-slate-400 mt-1">${esc(c.note)}</div>` : ''}
+      ${renderClientTelegramBlock(c)}
 
       <h3 class="font-semibold text-sm mt-5 mb-2">Сессии (${sessions.length})</h3>
       ${sessions.length ? `<div class="divide-y border rounded-xl mb-6 max-h-64 overflow-y-auto">
@@ -869,6 +1067,7 @@ function renderClientDetail() {
       renderCabClients();
     }
   });
+  bindClientTelegramBlock(box);
   box.querySelectorAll('[data-del-entry]').forEach(btn => {
     btn.onclick = () => {
       if (confirm('Удалить запись?')) {
@@ -1160,7 +1359,13 @@ function renderProfile() {
           <p class="text-slate-600">${esc(p.greeting || '')}</p>
           ${p.about ? `<p class="text-sm text-slate-700 mt-2">${esc(p.about)}</p>` : ''}
           ${p.approach ? `<p class="text-sm text-slate-700 mt-2">${esc(p.approach)}</p>` : ''}
-          <a href="${esc(bookUrl)}" data-spa-book data-slug="${esc(p.slug)}" class="inline-block mt-4 px-8 py-3 rounded-full bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700">Записаться на консультацию</a>
+          <div class="mt-4 flex flex-wrap items-center gap-3">
+            <a href="${esc(bookUrl)}" data-spa-book data-slug="${esc(p.slug)}" class="px-8 py-3 rounded-full bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700">Записаться на консультацию</a>
+            <button onclick="sharePsyLink('${esc(p.slug || p.id)}')" class="inline-flex items-center gap-1.5 text-sm text-indigo-600 hover:underline">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>
+              Поделиться специалистом
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1441,6 +1646,7 @@ function bindEvents() {
       // кабинет — с сервера (clients/sessions/settings/blocks/tasks/notes/entries/waiting)
       try { await cabinetApi.refresh(psy.id); } catch (e) { console.warn('pull cabinet', e); }
       await cabinetVm.refreshClients();
+      startTelegramLoops(psy.id);
       navigate('cabinet');
     }
   });

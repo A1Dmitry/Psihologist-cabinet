@@ -228,6 +228,18 @@ create table if not exists session_settings (
 alter table session_settings add column if not exists google_calendar_ical_url text not null default '';
 alter table session_settings add column if not exists google_sync_busy         boolean not null default true;
 
+-- Telegram-уведомления (настройка в кабинете; токен — приватно, RLS-владелец)
+alter table session_settings add column if not exists telegram_bot_token        text not null default '';
+alter table session_settings add column if not exists telegram_chat_id          text not null default '';
+alter table session_settings add column if not exists telegram_bot_name         text not null default '';
+alter table session_settings add column if not exists telegram_notify_booking   boolean not null default true;
+alter table session_settings add column if not exists telegram_notify_reminders boolean not null default true;
+alter table session_settings add column if not exists telegram_notify_payments  boolean not null default true;
+alter table session_settings add column if not exists last_notified_session_at  timestamptz;
+
+-- chat_id клиента для напоминаний (подключение бота по /start <clientId>)
+alter table clients add column if not exists telegram_chat text not null default '';
+
 -- ——— Платёж / чек ———
 create table if not exists payments (
   id              text primary key default ('pay_' || extract(epoch from now())::bigint::text || '_' || substr(md5(random()::text), 1, 6)),

@@ -3,6 +3,7 @@ import { db } from '../core/dbContext.js';
 import { paymentService } from '../services/paymentService.js';
 import { fraudProtectionService } from '../services/fraudProtectionService.js';
 import { reminderService } from '../services/reminderService.js';
+import { telegramService } from '../services/telegramService.js';
 import { clientVaultService } from '../services/clientVaultService.js';
 import { cryptoService } from '../services/cryptoService.js';
 import { supabaseSync } from '../services/supabaseSync.js';
@@ -338,6 +339,13 @@ export class CabinetViewModel extends BaseViewModel {
     }
     const s2 = this.sessions.find(x => x.id === sessionId);
     if (s2) cabinetApi.pushSessionPatch(sessionId, sessPatchOf(s2));
+    if (s2) {
+      const c = this.clientById(s2.clientId);
+      const sv = this.serviceById(s2.serviceId);
+      telegramService.sendToPsychologist('payment',
+        `💰 <b>Оплата отмечена</b>\nКлиент: ${c?.name || c?.nickname || '—'}\nКогда: ${s2.date} в ${s2.time}${sv ? `\nУслуга: ${sv.name} · ${sv.priceLabel()}` : ''}${receiptCode ? `\nКвитанция: ${receiptCode}` : ''}`
+      ).catch(() => {});
+    }
     this.showToast(res.message);
     reminderService.scheduleForSession(sessionId);
     this.notify();
@@ -453,6 +461,29 @@ export class CabinetViewModel extends BaseViewModel {
     db.removeScheduleBlock(id);
     cabinetApi.pushBlockDelete(id);
     this.showToast('Блокировка снята');
+    this.notify();
+  }
+
+  saveTelegramSettings({ botToken, chatId, botName, notifyBooking, notifyReminders, notifyPayments }) {
+    const st = this.settings;
+    if (!st) return;
+    if (botToken != null) st.telegramBotToken = botToken;
+    if (chatId != null) st.telegramChatId = chatId;
+    if (botName != null) st.telegramBotName = botName;
+    st.telegramNotifyBooking = notifyBooking !== false;
+    st.telegramNotifyReminders = notifyReminders !== false;
+    st.telegramNotifyPayments = notifyPayments !== false;
+    db.saveChanges();
+    cabinetApi.pushSettings(this.psyId, st);
+    this.notify();
+  }
+
+  setClientTelegramChat(clientId, chat) {
+    const c = this.clientById(clientId);
+    if (!c) return;
+    c.telegramChat = chat || '';
+    db.saveChanges();
+    cabinetApi.pushClientChat(clientId, c.telegramChat);
     this.notify();
   }
 

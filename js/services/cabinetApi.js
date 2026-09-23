@@ -112,7 +112,7 @@ export const cabinetApi = {
       db.clients.push(new Client({
         id: row.id, psychologistId: row.psychologist_id, name: row.name || '',
         nickname: row.nickname || '', phone: row.phone || '', contact: row.contact || '',
-        note: row.note || '', createdAt: row.created_at
+        note: row.note || '', telegramChat: row.telegram_chat || '', createdAt: row.created_at
       }));
     });
     db.sessions = db.sessions.filter(x => x.psychologistId !== psyId)
@@ -163,7 +163,14 @@ export const cabinetApi = {
         depositPercent: Number(r.settings.deposit_percent) || 30,
         holdMinutes: r.settings.hold_minutes || 30,
         googleCalendarIcalUrl: prev?.googleCalendarIcalUrl || '',
-        googleSyncBusy: prev ? prev.googleSyncBusy !== false : true
+        googleSyncBusy: prev ? prev.googleSyncBusy !== false : true,
+        telegramBotToken: r.settings.telegram_bot_token ?? prev?.telegramBotToken ?? '',
+        telegramChatId: r.settings.telegram_chat_id ?? prev?.telegramChatId ?? '',
+        telegramBotName: r.settings.telegram_bot_name ?? prev?.telegramBotName ?? '',
+        telegramNotifyBooking: (r.settings.telegram_notify_booking ?? prev?.telegramNotifyBooking ?? true) !== false,
+        telegramNotifyReminders: (r.settings.telegram_notify_reminders ?? prev?.telegramNotifyReminders ?? true) !== false,
+        telegramNotifyPayments: (r.settings.telegram_notify_payments ?? prev?.telegramNotifyPayments ?? true) !== false,
+        lastNotifiedSessionAt: r.settings.last_notified_session_at || prev?.lastNotifiedSessionAt || null
       }));
     }
     db.saveChanges();
@@ -258,7 +265,14 @@ export const cabinetApi = {
       reminder_hours_before: st.reminderHoursBefore ?? 24,
       reminder_second_hours_before: st.reminderSecondHoursBefore ?? 12,
       google_calendar_ical_url: st.googleCalendarIcalUrl || '',
-      google_sync_busy: st.googleSyncBusy !== false
+      google_sync_busy: st.googleSyncBusy !== false,
+      telegram_bot_token: st.telegramBotToken || '',
+      telegram_chat_id: st.telegramChatId || '',
+      telegram_bot_name: st.telegramBotName || '',
+      telegram_notify_booking: st.telegramNotifyBooking !== false,
+      telegram_notify_reminders: st.telegramNotifyReminders !== false,
+      telegram_notify_payments: st.telegramNotifyPayments !== false,
+      last_notified_session_at: st.lastNotifiedSessionAt || null
     }));
   },
 
@@ -346,6 +360,13 @@ export const cabinetApi = {
 
   pushEntryDelete(id) {
     push('entry:delete', () => supabaseApi.request(`client_entries?id=eq.${id}`, { method: 'DELETE' }));
+  },
+
+  /** chat_id клиента (подключение Telegram-уведомлений) */
+  pushClientChat(id, telegramChat) {
+    push('client:chat', () => supabaseApi.request(`clients?id=eq.${id}`, {
+      method: 'PATCH', body: JSON.stringify({ telegram_chat: telegramChat || '' })
+    }));
   },
 
   // ——— Ожидание ———

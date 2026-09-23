@@ -161,9 +161,13 @@
         </div>
         <nav class="flex-1 p-3 space-y-0.5 text-sm">
           <button data-tab="home" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg bg-slate-800 font-medium">Главная</button>
+          <button data-tab="journal" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Книга записей</button>
           <button data-tab="schedule" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Расписание</button>
           <button data-tab="blocks" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Занятость</button>
           <button data-tab="clients" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Клиенты</button>
+          <button data-tab="tasks" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Задачи</button>
+          <button data-tab="notepad" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Блокнот</button>
+          <button data-tab="telegram" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Уведомления</button>
           <button data-tab="services" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Услуги</button>
           <button data-tab="waiting" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800 flex justify-between">Ожидание <span id="wait-badge" class="bg-rose-500 text-[10px] px-1.5 rounded-full hidden">0</span></button>
           <button data-tab="stats" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Статистика</button>
@@ -190,6 +194,7 @@
           <button data-tab="clients" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Клиенты</button>
           <button data-tab="tasks" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Задачи</button>
           <button data-tab="notepad" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Блокнот</button>
+          <button data-tab="telegram" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Уведомления</button>
           <button data-tab="waiting" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Ожидание</button>
           <button data-tab="services" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Услуги</button>
         </div>
@@ -286,6 +291,48 @@
             <p class="text-sm text-slate-500 mb-4">Все записи клиентов: подтверждение, перенос, заметки о сессии, неявка, календарь.</p>
             <div id="journal-filters" class="flex flex-wrap gap-2 mb-4"></div>
             <div id="journal-list" class="bg-white rounded-xl border"></div>
+          </div>
+          <div id="tab-telegram" class="cab-tab hidden">
+            <h1 class="text-2xl font-bold mb-2">Telegram-уведомления</h1>
+            <p class="text-sm text-slate-500 mb-6">Свой бот: клиенту — напоминания о сессиях, вам — новые записи и оплаты. Настройка один раз.</p>
+            <div class="grid lg:grid-cols-2 gap-6">
+              <div class="bg-white rounded-xl border p-6 space-y-4 text-sm">
+                <div>
+                  <label class="font-medium">1. Токен бота (от @BotFather)</label>
+                  <div class="flex gap-2 mt-1">
+                    <input id="tg-token" placeholder="1234567890:AA…" class="flex-1 px-3 py-2 rounded-xl border font-mono">
+                    <button id="btn-tg-test" class="px-4 py-2 rounded-full bg-slate-900 text-white text-sm">Проверить</button>
+                  </div>
+                  <div id="tg-test-result" class="text-xs text-slate-400 mt-1">Бот создается за минуту: в Telegram у @BotFather → /newbot.</div>
+                </div>
+                <div>
+                  <label class="font-medium">2. Ваш чат для уведомлений</label>
+                  <p class="text-xs text-slate-400 mt-1">Напишите вашему боту <code>/start</code> в Telegram, затем нажмите «Найти чат».</p>
+                  <div class="flex flex-wrap gap-2 mt-1 items-center">
+                    <button id="btn-tg-find-chat" class="px-4 py-2 rounded-full border border-indigo-300 text-indigo-700 text-sm">Найти чат</button>
+                    <span id="tg-chat-label" class="text-xs text-slate-500"></span>
+                  </div>
+                  <div id="tg-chats" class="mt-2 space-y-1"></div>
+                </div>
+                <div>
+                  <label class="font-medium">3. Какие уведомления присылать</label>
+                  <div class="mt-2 space-y-1.5">
+                    <label class="flex gap-2 items-center"><input id="tg-notify-booking" type="checkbox" class="accent-indigo-600" checked> Новая запись → вам</label>
+                    <label class="flex gap-2 items-center"><input id="tg-notify-reminders" type="checkbox" class="accent-indigo-600" checked> Напоминание о сессии → клиенту (подключившим бота)</label>
+                    <label class="flex gap-2 items-center"><input id="tg-notify-payments" type="checkbox" class="accent-indigo-600" checked> Оплаты → вам</label>
+                  </div>
+                </div>
+                <button id="btn-tg-save" class="px-6 py-2.5 rounded-full bg-indigo-600 text-white font-medium">Сохранить настройки</button>
+                <p class="text-xs text-slate-400">Токен хранится в настройках кабинета (доступ — только у вас). Напоминания уходят, когда кабинет открыт (вкладка/телефон); для мгновенной доставки с сайта подключите Edge Function — см. docs.</p>
+              </div>
+              <div>
+                <h2 class="font-semibold mb-2">Клиенты и бот</h2>
+                <p class="text-xs text-slate-500 mb-2">Клиент пишет боту <code>/start</code> с вашим кодом-приглашением — после этого получает напоминания в Telegram.</p>
+                <button id="btn-tg-link-clients" class="px-4 py-2 rounded-full border border-indigo-300 text-indigo-700 text-sm">Проверить подключения (/start)</button>
+                <span id="tg-link-result" class="text-xs text-slate-500 ml-2"></span>
+                <div id="tg-clients" class="mt-3 bg-white rounded-xl border"></div>
+              </div>
+            </div>
           </div>
           <div id="tab-tasks" class="cab-tab hidden">
             <h1 class="text-2xl font-bold mb-2">Задачи</h1>
@@ -646,6 +693,6 @@
     </div>
   </div>
 
-  <script type="module" src="%BASE%js/app.js?v=20260923h"></script>
+  <script type="module" src="%BASE%js/app.js?v=20260923i"></script>
 </body>
 </html>

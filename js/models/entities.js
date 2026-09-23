@@ -274,6 +274,8 @@ export class Client {
     encryptedPii = null,
     nicknameHash = '',
     needsEncryption = false,
+    /** Telegram-чат клиента (для уведомлений; подключается по /start <clientId>) */
+    telegramChat = '',
     createdAt = null
   } = {}) {
     this.id = id;
@@ -290,6 +292,7 @@ export class Client {
     this.encryptedPii = encryptedPii;
     this.nicknameHash = nicknameHash || '';
     this.needsEncryption = !!needsEncryption;
+    this.telegramChat = telegramChat || '';
     this.createdAt = createdAt || new Date().toISOString();
   }
 }
@@ -448,7 +451,15 @@ export class SessionSettings {
     // —— Google Calendar (занятость) ——
     /** secret iCal-адрес календаря (basic.ics) — хранится приватно, импорт в блокировки */
     googleCalendarIcalUrl = '',
-    googleSyncBusy = true
+    googleSyncBusy = true,
+    // —— Telegram-уведомления (настройка через админ-часть кабинета) ——
+    telegramBotToken = '',
+    telegramChatId = '',
+    telegramBotName = '',
+    telegramNotifyBooking = true,   // психологу: новые записи
+    telegramNotifyReminders = true, // клиенту: напоминания о сессии
+    telegramNotifyPayments = true,  // психологу: оплаты
+    lastNotifiedSessionAt = null
   } = {}) {
     this.psychologistId = psychologistId;
     this.workHours = workHours;
@@ -476,6 +487,13 @@ export class SessionSettings {
     this.reminderChannel = reminderChannel || 'telegram_sms';
     this.googleCalendarIcalUrl = googleCalendarIcalUrl || '';
     this.googleSyncBusy = googleSyncBusy !== false;
+    this.telegramBotToken = telegramBotToken || '';
+    this.telegramChatId = telegramChatId || '';
+    this.telegramBotName = telegramBotName || '';
+    this.telegramNotifyBooking = telegramNotifyBooking !== false;
+    this.telegramNotifyReminders = telegramNotifyReminders !== false;
+    this.telegramNotifyPayments = telegramNotifyPayments !== false;
+    this.lastNotifiedSessionAt = lastNotifiedSessionAt || null;
   }
 }
 

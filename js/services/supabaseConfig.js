@@ -23,3 +23,11 @@ export function isSupabaseConfigured() {
     SUPABASE_ANON_KEY.length > 40
   );
 }
+
+/**
+ * Опционально: URL Edge Function для мгновенных Telegram-уведомлений с ПУБЛИЧНОЙ
+ * страницы записи (токен бота нельзя светить на клиенте). Код функции —
+ * supabase/functions/telegram-notify/index.ts. Пусто = уведомления уходят,
+ * когда психолог открывает кабинет (outbox-режим).
+ */
+export const NOTIFY_WEBHOOK_URL = '';

@@ -182,4 +182,17 @@ Service (услуга)
 (tel:, `wa.me/<digits>`, `viber://chat?number=%2B<digits>`, Telegram/Instagram из
 `socials`), адрес практики + схема проезда (Google Maps embed по строке адреса +
 ссылки на маршруты Google/Яндекс), услуги/цены, образование, опыт, платёжные
-ссылки и реквизиты. Ссылка на первоисточник — в подвале карточки.
+ссылки и реквизиты. Ссылка на первоисточник — в подвале карточки. Плюс кнопка
+«Поделиться специалистом» (navigator.share → копирование `/psy/{slug}`).
+
+### 6.7 Telegram-уведомления (свой бот психолога)
+
+- `session_settings`: `telegram_bot_token`, `telegram_chat_id`, `telegram_bot_name`,
+  `telegram_notify_booking|reminders|payments` (bool), `last_notified_session_at`
+  (watermark против дублей outbox).
+- `clients.telegram_chat` — chat_id клиента (подключение бота по `/start <clientId>`).
+- `js/services/telegramService.js`: тест токена/чата, переключатели событий,
+  напоминания, outbox новых записей (таймер кабинета 60 с), привязка чатов.
+- Мгновенная доставка с публичной страницы — `NOTIFY_WEBHOOK_URL`
+  (Edge Function `supabase/functions/telegram-notify`; токен — только там).
+  См. docs/TELEGRAM.md.

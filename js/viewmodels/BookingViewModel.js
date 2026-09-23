@@ -7,6 +7,7 @@ import { reminderService } from '../services/reminderService.js';
 import { nicknameService, normalizeNickname } from '../services/nicknameService.js';
 import { clientVaultService } from '../services/clientVaultService.js';
 import { supabaseApi } from '../services/supabaseApi.js';
+import { telegramService } from '../services/telegramService.js';
 
 /** Покрывает ли блокировка занятости слот (формат ScheduleBlock / public_schedule_blocks) */
 function blockCovers(b, date, time) {
@@ -359,6 +360,13 @@ export class BookingViewModel extends BaseViewModel {
       reminderService.scheduleForSession(session.id);
     }
 
+    // Telegram: мгновенно через webhook (если настроен), иначе — outbox при открытии кабинета
+    telegramService.notifyViaWebhook(
+      this.psychologist.id, 'booking',
+      telegramService.bookingText(session, client, svc),
+      session.createdAt
+    ).catch(() => {});
+
     this.createdSessionId = session.id;
     this.paymentInfo = payFields.resolve;
 
@@ -391,6 +399,15 @@ export class BookingViewModel extends BaseViewModel {
       return false;
     }
     reminderService.scheduleForSession(this.createdSessionId);
+
+    const paidSession = db.sessions.find(x => x.id === this.createdSessionId);
+    if (paidSession) {
+      const c = db.clientsOf(this.psychologist.id).find(x => x.id === paidSession.clientId);
+      const sv = db.servicesOf(this.psychologist.id).find(x => x.id === paidSession.serviceId);
+      telegramService.notifyViaWebhook(this.psychologist.id, 'payment',
+        `💰 <b>Оплата прошла (сайт)</b>\nКлиент: ${c?.name || c?.nickname || '—'}\nКогда: ${paidSession.date} в ${paidSession.time}${sv ? `\nУслуга: ${sv.name} · ${sv.priceLabel()}` : ''}`
+      ).catch(() => {});
+    }
 
     this.awaitingPayment = false;
     this.done = true;
