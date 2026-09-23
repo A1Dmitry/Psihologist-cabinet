@@ -225,11 +225,23 @@ export const supabaseApi = {
   // ——— Собственный код входа (Edge Function auth-code; письмо через Resend,
   //     шаблоны Supabase Auth не участвуют; код живёт в таблице auth_login_codes) ———
   async _authCodeFn(action, payload) {
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/auth-code`, {
-      method: 'POST',
-      headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, ...payload })
-    });
+    let res;
+    try {
+      res = await fetch(`${SUPABASE_URL}/functions/v1/auth-code`, {
+        method: 'POST',
+        headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, ...payload })
+      });
+    } catch (e) {
+      // Ответа нет вообще (сеть/CORS). В браузере «функция не задеплоена»
+      // выглядит именно так: preflight OPTIONS получает 404 без CORS-заголовков,
+      // fetch бросает TypeError и статус прочитать нельзя. Помечаем status=0,
+      // чтобы use case мог отличить «канал недоступен» (→ запасной OTP)
+      // от честного HTTP-отказа задеплоенной функции (429/500/502).
+      const err = new Error('Функция auth-code недоступна (нет ответа: сеть или CORS)');
+      err.status = 0;
+      throw err;
+    }
     if (res.status === 404) {
       const e = new Error('Функция auth-code не задеплоена');
       e.status = 404;
@@ -380,6 +392,16 @@ export const supabaseApi = {
     await check('RPC claim_psychologist_profile (вход по коду)', 'Выполните supabase/schema.sql (функция claim_psychologist_profile)', async () => {
       await request('rpc/claim_psychologist_profile', { method: 'POST', body: JSON.stringify({}) });
       return null;
+    });
+    await check('Edge Function auth-code (письма с кодом входа)', 'Задеплойте функцию: supabase functions deploy auth-code --project-ref phiavtroybgwyjdhqqkh --no-verify-jwt (см. docs/INFRA.md). Не задеплоенная функция в браузере выглядит как CORS-ошибка', async () => {
+      const r = await fetch(`${SUPABASE_URL}/functions/v1/auth-code`, {
+        method: 'POST',
+        headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+        body: '{}'
+      });
+      if (r.status === 404) throw new Error('не задеплоена (HTTP 404)');
+      // задеплоенная функция на пустой body отвечает 400 «Неизвестное действие» — это норма
+      return `отвечает (HTTP ${r.status})`;
     });
     return out;
   }

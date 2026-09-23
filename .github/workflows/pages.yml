@@ -48,14 +48,24 @@ jobs:
           echo "first_slug=$(head -n1 slugs.txt)" >> "$GITHUB_OUTPUT"
           echo "slugs fetched: $(grep -c . slugs.txt || true)"
 
+      # Tailwind CSS: пересборка из исходников (index.html + js/) вместо
+      # runtime CDN. Полноту классов в сборке проверяет tools/verify_tailwind.mjs
+      # (локально). Фолбэк: если npx недоступен, берётся закоммиченный css/tailwind.css.
+      - name: Rebuild Tailwind CSS
+        run: |
+          npx --yes tailwindcss@3.4.17 -c tailwind.config.js -i css/tailwind.src.css -o css/tailwind.css --minify \
+            || echo "::warning::tailwindcss build failed — используется закоммиченный css/tailwind.css"
+
       # Статический сайт: только UI-часть (index.html + js/).
       # %BASE% → /<repo>/, index.html дублируется в 404.html — SPA-fallback.
       # Маршруты приложения и страницы /psy|/book каждого активного слага
       # раскладываются как реальные папки с index.html → GitHub Pages отдаёт
       # их с HTTP 200 (важно для SEO: 404.html-fallback отдаёт статус 404).
-      - name: Build site (inject base path + static routes + SPA fallback)        run: |
+      - name: Build site (inject base path + static routes + SPA fallback)
+        run: |
           mkdir -p _site
           cp -r js _site/js
+          cp -r css _site/css
           sed "s|%BASE%|/${GITHUB_REPOSITORY#*/}/|g" index.html > _site/index.html
           cp _site/index.html _site/404.html
           for r in cabinet auth booking-done reply; do
@@ -84,7 +94,8 @@ jobs:
           slug = urllib.parse.quote(os.environ["SLUG"])
           # Hash History: индексируемая ссылка — .../#/psy/<slug>
           print(f"  <url><loc>{site}/#/psy/{slug}</loc></url>")'
-            done < slugs.txt            echo '</urlset>'
+            done < slugs.txt
+            echo '</urlset>'
           } > _site/sitemap.xml
           {
             echo 'User-agent: *'

@@ -42,6 +42,9 @@ globalThis.fetch = async (url, opts = {}) => {
   if (u.includes('/functions/v1/auth-code')) {
     // Edge Function auth-code: свой код в БД (письмо через Resend)
     if (state.fnMode === 'missing') return resp(404, { msg: 'Function not found' });
+    // 'cors': функция не задеплоена → preflight OPTIONS получает 404 без
+    // CORS-заголовков → браузер бросает TypeError и статус прочитать нельзя
+    if (state.fnMode === 'cors') throw new TypeError('Failed to fetch');
     state.fnRequests.push(body);
     if (body.action === 'request') {
       if (body.email === 'noresend@x.by') return resp(500, { ok: false, error: 'Почта не настроена: задайте секрет RESEND_API_KEY (supabase secrets set RESEND_API_KEY=re_...)' });
@@ -221,6 +224,23 @@ await authVm.requestCode();
 authVm.code = 'WRONG01';
 await authVm.confirmCode();
 ok('fn: неверный код → понятная ошибка', /Код неверный|Неверный код/.test(authVm.error));
+
+// —— функция не задеплоена: браузер видит CORS-ошибку (TypeError без статуса) ——
+state.fnMode = 'cors';
+authService.logout();
+authVm.step = 'email'; authVm.error = ''; authVm.email = 'doc@x.by'; authVm.code = ''; authVm.mode = 'login';
+const { registration } = await import(new URL('./js/domain/registration.js', 'file://' + process.cwd() + '/').href);
+const direct = await registration.requestVerification('doc@x.by');
+ok('cors: TypeError вместо 404 → запасной канал OTP, сообщение называет канал',
+  direct.ok === true && direct.channel === 'otp' && /запасной канал/.test(direct.message));
+const otpCallsBefore = state.otpTypes.length;
+r = await authVm.requestCode();
+ok('cors: «Получить код» работает (не «Failed to fetch»)',
+  r === true && state.otpTypes.length === otpCallsBefore + 1 && authService.channel === 'otp');
+authVm.code = '111111';
+const psyOtp = await authVm.confirmCode();
+ok('cors: вход по OTP-коду после переключения канала', !!psyOtp && psyOtp.id === 'psy_test_1');
+state.fnMode = 'on';
 
 let failed = 0;
 for (const [n, p] of checks) { console.log((p ? 'PASS' : 'FAIL') + '  ' + n); if (!p) failed++; }

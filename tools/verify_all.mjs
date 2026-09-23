@@ -29,6 +29,7 @@ const SUITES = [
   ['Карточка специалиста из строк БД', 'node', ['verify_profile.mjs']],
   ['Telegram-уведомления', 'node', ['verify_telegram.mjs']],
   ['Роутер (Hash History)', 'node', ['test_routing.mjs']],
+  ['Сборка Tailwind покрывает все классы', 'node', ['tools/verify_tailwind.mjs']],
   ['Загрузка SPA', 'node', ['verify_app.mjs']]
 ];
 

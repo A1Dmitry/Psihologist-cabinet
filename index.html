@@ -51,24 +51,10 @@
       });
     })();
   </script>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
-          colors: {
-            indigo: { 50:'#eef2ff',100:'#e0e7ff',600:'#4f46e5',700:'#4338ca' }
-          }
-        }
-      }
-    }
-  </script>
-  <style>
-    body { font-family: Inter, system-ui, sans-serif; }
-    .line-clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-    .modal-bg { background: rgba(15,23,42,.45); backdrop-filter: blur(4px); }
-  </style>
+  <!-- Tailwind CSS — предсобранный файл вместо runtime CDN (cdn.tailwindcss.com
+       не для продакшена). Пересборка: см. tailwind.config.js и css/tailwind.src.css;
+       полнота набора классов проверяется tools/verify_tailwind.mjs. -->
+  <link rel="stylesheet" href="%BASE%css/tailwind.css?v=20260923m">
 </head>
 <body class="bg-slate-50 text-slate-800 antialiased min-h-screen">
   <div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] hidden"></div>
@@ -124,51 +110,51 @@
         <div id="auth-error" class="hidden mb-4 text-sm text-rose-600 bg-rose-50 px-3 py-2 rounded-lg"></div>
         <div id="auth-demo-code" class="hidden mb-4 text-sm bg-amber-50 text-amber-900 px-3 py-2 rounded-lg"></div>
 
-        <div id="auth-step-email" class="space-y-4">
+        <form id="auth-step-email" class="space-y-4" novalidate>
           <div>
-            <label class="text-sm font-medium">Email *</label>
-            <input id="auth-email" type="email" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="you@email.com">
+            <label for="auth-email" class="text-sm font-medium">Email *</label>
+            <input id="auth-email" name="email" type="email" autocomplete="email" inputmode="email" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="you@email.com">
           </div>
-          <button id="auth-send" class="w-full py-3 rounded-full bg-indigo-600 text-white font-medium hover:bg-indigo-700">Получить код</button>
-        </div>
+          <button id="auth-send" type="submit" class="w-full py-3 rounded-full bg-indigo-600 text-white font-medium hover:bg-indigo-700">Получить код</button>
+        </form>
 
-        <div id="auth-step-code" class="hidden space-y-4">
+        <form id="auth-step-code" class="hidden space-y-4" novalidate>
           <div>
-            <label class="text-sm font-medium">Код из письма *</label>
-            <input id="auth-code" type="text" autocomplete="one-time-code" maxlength="8" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300 font-mono text-lg tracking-widest uppercase" placeholder="6–8 букв и цифр">
+            <label for="auth-code" class="text-sm font-medium">Код из письма *</label>
+            <input id="auth-code" name="code" type="text" autocomplete="one-time-code" maxlength="8" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300 font-mono text-lg tracking-widest uppercase" placeholder="6–8 букв и цифр">
           </div>
           <div id="auth-pass-wrap">
-            <label class="text-sm font-medium">Пароль кабинета * <span class="text-slate-400 font-normal">(ключ шифрования клиентов)</span></label>
-            <input id="auth-password" type="password" minlength="6" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="минимум 6 символов">
+            <label for="auth-password" class="text-sm font-medium">Пароль кабинета * <span class="text-slate-400 font-normal">(ключ шифрования клиентов)</span></label>
+            <input id="auth-password" name="password" type="password" minlength="6" autocomplete="new-password" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="минимум 6 символов">
             <p class="text-xs text-slate-400 mt-1">Пароль не хранится: из него выводится ключ AES. Без пароля чужие не прочитают ваших клиентов.</p>
           </div>
           <div id="auth-reg-fields" class="hidden space-y-3">
             <div>
-              <label class="text-sm font-medium">ФИО *</label>
-              <input id="auth-fullname" type="text" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="Как в кабинете">
+              <label for="auth-fullname" class="text-sm font-medium">ФИО *</label>
+              <input id="auth-fullname" name="fullname" type="text" autocomplete="name" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="Как в кабинете">
             </div>
             <div>
-              <label class="text-sm font-medium">Телефон *</label>
-              <input id="auth-phone" type="tel" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="+375 (29) 000-00-00">
+              <label for="auth-phone" class="text-sm font-medium">Телефон *</label>
+              <input id="auth-phone" name="phone" type="tel" autocomplete="tel" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="+375 (29) 000-00-00">
             </div>
             <div>
-              <label class="text-sm font-medium">Специализация *</label>
-              <input id="auth-spec" type="text" value="Психолог" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300">
+              <label for="auth-spec" class="text-sm font-medium">Специализация *</label>
+              <input id="auth-spec" name="specialization" type="text" value="Психолог" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300">
             </div>
             <div>
-              <label class="text-sm font-medium">Город *</label>
-              <input id="auth-city" type="text" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="Гродно">
+              <label for="auth-city" class="text-sm font-medium">Город *</label>
+              <input id="auth-city" name="city" type="text" autocomplete="address-level2" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="Гродно">
             </div>
             <div>
-              <label class="text-sm font-medium">О себе *</label>
-              <textarea id="auth-about" rows="3" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="С чем работаете, форматы приёма, подход — это текст вашей публичной страницы"></textarea>
+              <label for="auth-about" class="text-sm font-medium">О себе *</label>
+              <textarea id="auth-about" name="about" rows="3" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="С чем работаете, форматы приёма, подход — это текст вашей публичной страницы"></textarea>
               <p class="text-xs text-slate-400 mt-1">Показывается на вашей публичной странице специалиста.</p>
             </div>
           </div>
-          <button id="auth-confirm" class="w-full py-3 rounded-full bg-indigo-600 text-white font-medium hover:bg-indigo-700">Подтвердить и войти</button>
+          <button id="auth-confirm" type="submit" class="w-full py-3 rounded-full bg-indigo-600 text-white font-medium hover:bg-indigo-700">Подтвердить и войти</button>
           <button id="auth-resend" type="button" class="w-full text-sm text-indigo-600 hover:underline">Отправить код снова</button>
           <button id="auth-back-email" type="button" class="w-full text-sm text-slate-500 hover:text-indigo-600">← Другой email</button>
-        </div>
+        </form>
       </div>
     </div>
   </div>
@@ -763,6 +749,6 @@
     </div>
   </div>
 
-  <script type="module" src="%BASE%js/app.js?v=20260923l"></script>
+  <script type="module" src="%BASE%js/app.js?v=20260923m"></script>
 </body>
 </html>
