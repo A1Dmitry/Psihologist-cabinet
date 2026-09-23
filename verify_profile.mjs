@@ -35,7 +35,7 @@ globalThis.document = { title:'', head:fakeEl(), body:fakeEl(), documentElement:
   addEventListener:(n,f)=>{(listeners[n] ||= []).push(f);}, removeEventListener:()=>{} };
 const lsMap = new Map();
 globalThis.localStorage = { get:k=>lsMap.get(k)??null, set:(k,v)=>lsMap.set(k,String(v)), remove:k=>lsMap.delete(k), clear:()=>lsMap.clear() };
-const loc = { pathname:'/psy/наталия-михайловская-19', search:'', hash:'', origin:'http://x' };
+const loc = { pathname:'/', search:'', hash:'#/psy/наталия-михайловская-19', origin:'http://x' }; // Hash History
 globalThis.window = new Proxy({ localStorage: globalThis.localStorage, addEventListener:(n,f)=>{(listeners['w:'+n] ||= []).push(f);}, scrollTo:()=>{}, location: loc },
   { get(t,p){ return p in t ? t[p] : fakeEl(); }, set(){return true;} });
 globalThis.location = loc; globalThis.history = { pushState(){}, replaceState(){} };
@@ -82,7 +82,9 @@ globalThis.fetch = async (url) => {
 
 await import(new URL('./js/app.js', 'file://' + process.cwd() + '/').href);
 await new Promise(r => setTimeout(r, 60)); // дождаться асинхронной загрузки каталога с «сервера»
-for (const fn of listeners['w:popstate'] || []) fn(); // /psy/{slug} → renderProfile
+// Hash History: маршрут уже в location.hash; renderProfile подтягивает данные
+// после загрузки каталога (loadServerCatalog → render()). Событие — для контроля.
+for (const fn of listeners['w:hashchange'] || []) fn();
 
 // текстовые вхождения в отрисованную карточку
 const contains = [];

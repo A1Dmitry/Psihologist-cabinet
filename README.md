@@ -11,14 +11,15 @@
 ## Запуск
 
 ```bash
-python3 devserver.py 8765        # SPA-fallback: работают /psy/{slug}, /cabinet, /auth
+python3 devserver.py 8765        # SPA-fallback: deep-link /psy/{slug} → index.html + авто-нормализация в #/psy/{slug}
 # или
 chmod +x serve.sh && ./serve.sh  # простой статический сервер (только корень)
 ```
 
 Открыть: http://127.0.0.1:8765/
 
-Смоук маршрутов: `python3 verify_pages.py` (или `BASE_URL=https://… python3 verify_pages.py` для Pages).
+Смоук маршрутов: `python3 verify_pages.py` (или `BASE_URL=https://… python3 verify_pages.py` для Pages),
+роутер Hash History: `node test_routing.mjs`, воронка записи: `node tests/booking-wizard.mjs`.
 
 ## Структура
 

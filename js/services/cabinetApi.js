@@ -112,7 +112,9 @@ export const cabinetApi = {
       const client = new Client({
         id: row.id, psychologistId: row.psychologist_id, name: row.name || '',
         nickname: row.nickname || '', phone: row.phone || '', contact: row.contact || '',
-        note: row.note || '', telegramChat: row.telegram_chat || '', createdAt: row.created_at
+        note: row.note || '', telegramChat: row.telegram_chat || '',
+        consent: !!row.consent, consentAt: row.consent_at || null, // T-25: факт согласия
+        createdAt: row.created_at
       });
       // индивидуальные условия (SR-102): серверные значения — fallback для сейфа
       const cond = {};

@@ -53,8 +53,7 @@ jobs:
       # Маршруты приложения и страницы /psy|/book каждого активного слага
       # раскладываются как реальные папки с index.html → GitHub Pages отдаёт
       # их с HTTP 200 (важно для SEO: 404.html-fallback отдаёт статус 404).
-      - name: Build site (inject base path + static routes + SPA fallback)
-        run: |
+      - name: Build site (inject base path + static routes + SPA fallback)        run: |
           mkdir -p _site
           cp -r js _site/js
           sed "s|%BASE%|/${GITHUB_REPOSITORY#*/}/|g" index.html > _site/index.html
@@ -83,9 +82,9 @@ jobs:
               SITE="$SITE" SLUG="$slug" python3 -c 'import os, urllib.parse
           site = os.environ["SITE"]
           slug = urllib.parse.quote(os.environ["SLUG"])
-          print(f"  <url><loc>{site}/psy/{slug}</loc></url>")'
-            done < slugs.txt
-            echo '</urlset>'
+          # Hash History: индексируемая ссылка — .../#/psy/<slug>
+          print(f"  <url><loc>{site}/#/psy/{slug}</loc></url>")'
+            done < slugs.txt            echo '</urlset>'
           } > _site/sitemap.xml
           {
             echo 'User-agent: *'

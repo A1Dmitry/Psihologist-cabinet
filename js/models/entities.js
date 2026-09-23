@@ -277,6 +277,9 @@ export class Client {
     needsEncryption = false,
     /** Telegram-чат клиента (для уведомлений; подключается по /start <clientId>) */
     telegramChat = '',
+    /** T-25: факт согласия на обработку ПДн (checkbox при записи) */
+    consent = false,
+    consentAt = null,
     createdAt = null
   } = {}) {
     this.id = id;
@@ -294,6 +297,8 @@ export class Client {
     this.nicknameHash = nicknameHash || '';
     this.needsEncryption = !!needsEncryption;
     this.telegramChat = telegramChat || '';
+    this.consent = !!consent;
+    this.consentAt = consentAt || null;
     this.createdAt = createdAt || new Date().toISOString();
   }
 }
@@ -326,6 +331,8 @@ export class Session {
     pendingChange = null, // { date, time, reason, proposedAt } | null
     previousSlot = null, // { date, time } до переноса
     changeConsentStatus = null, // pending | confirmed | declined
+    /** T-03: часовой пояс клиента (разница с поясом психолога, '+02:00' / '-01:30'; '' = совпадает) */
+    timezoneOffset = '',
     createdAt = null
   } = {}) {
     this.id = id;
@@ -351,6 +358,7 @@ export class Session {
     this.pendingChange = pendingChange;
     this.previousSlot = previousSlot;
     this.changeConsentStatus = changeConsentStatus;
+    this.timezoneOffset = timezoneOffset || '';
     this.createdAt = createdAt || new Date().toISOString();
   }
 
@@ -585,6 +593,9 @@ export class BookingAttempt {
     fingerprint = '',
     success = false,
     reason = '',
+    /** T-25: факт согласия на обработку ПДн, данное при попытке записи */
+    consent = false,
+    consentAt = null,
     createdAt = null
   } = {}) {
     this.id = id;
@@ -593,6 +604,8 @@ export class BookingAttempt {
     this.fingerprint = fingerprint;
     this.success = !!success;
     this.reason = reason;
+    this.consent = !!consent;
+    this.consentAt = consentAt || null;
     this.createdAt = createdAt || new Date().toISOString();
   }
 }
