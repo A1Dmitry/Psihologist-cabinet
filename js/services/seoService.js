@@ -26,8 +26,22 @@ export function setCanonical(href) {
   el.href = href;
 }
 
-export function setMeta({ title, description, url, image, ogType = 'website' }) {
+/**
+ * robots: по умолчанию страницы открыты для индексации. Явно снимаем noindex,
+ * чтобы он «не прилипал» при переходах между маршрутами (SPA без перезагрузки).
+ */
+export function setRobots(content = 'index,follow') {
+  const el = upsertMeta('meta[name="robots"]', () => {
+    const m = document.createElement('meta');
+    m.name = 'robots';
+    return m;
+  });
+  el.setAttribute('content', content);
+}
+
+export function setMeta({ title, description, url, image, ogType = 'website', robots }) {
   if (title) document.title = title;
+  setRobots(robots || 'index,follow');
   const set = (selector, attr, key, value, create) => {
     if (!value) return;
     const el = upsertMeta(selector, create);
@@ -47,6 +61,7 @@ export function setMeta({ title, description, url, image, ogType = 'website' }) 
 }
 
 export function setJsonLd(data) {
+  if (!data) { clearJsonLd(); return; }
   let el = document.head.querySelector('script#ld-json');
   if (!el) {
     el = document.createElement('script');
@@ -54,14 +69,74 @@ export function setJsonLd(data) {
     el.id = 'ld-json';
     document.head.appendChild(el);
   }
-  el.textContent = JSON.stringify(data || {});
+  el.textContent = JSON.stringify(data);
+}
+
+/** Убрать структурированные данные (например, когда страницы-сущности нет). */
+export function clearJsonLd() {
+  document.head.querySelector('script#ld-json')?.remove();
+}
+
+/** Корень сайта по URL страницы специалиста (/{repo}/psy/{slug} → /{repo}/). */
+function baseOf(pageUrl) {
+  try {
+    const u = new URL(pageUrl, typeof location !== 'undefined' ? location.origin : 'https://localhost');
+    return u.origin + u.pathname.replace(/\/(psy|book)\/[^/]+\/?$/, '/');
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Хлебные крошки schema.org: ПсихоПортал → Специалист → (Запись). */
+export function buildBreadcrumbs(baseUrl, items) {
+  const list = (items || []).filter(Boolean).map((it, i) => ({
+    '@type': 'ListItem',
+    position: i + 1,
+    name: it.name,
+    ...(it.url ? { item: it.url } : {})
+  }));
+  return list.length
+    ? { '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: list }
+    : null;
+}
+
+/** Действие «Записаться» — чтобы карточка специалиста отвечала на запрос «запись онлайн». */
+function reserveAction(bookUrl, psyName) {
+  return {
+    '@type': 'ReserveAction',
+    name: `Запись на консультацию — ${psyName}`,
+    target: {
+      '@type': 'EntryPoint',
+      urlTemplate: bookUrl,
+      inLanguage: 'ru',
+      actionPlatform: [
+        'http://schema.org/DesktopWebPlatform',
+        'http://schema.org/MobileWebPlatform'
+      ]
+    },
+    result: { '@type': 'Reservation', name: 'Запись на консультацию' }
+  };
 }
 
 /**
- * JSON-LD страницы специалиста: @graph [Person + ProfessionalService/MedicalBusiness/…].
- * services — его услуги (Offer).
+ * Пустая/несуществующая страница: честный noindex.
+ * GitHub Pages теперь отдаёт реальные маршруты со статусом 200, поэтому без
+ * этой метки в индекс попадали бы пустые карточки («Психолог не найден»).
  */
-export function buildProfileJsonLd(psy, services, pageUrl) {
+export function applyNoIndex(reason = '') {
+  document.title = 'Страница не найдена — ПсихоПортал';
+  setRobots('noindex,nofollow');
+  clearJsonLd();
+  if (reason) console.info('[SEO] noindex:', reason);
+}
+
+/**
+ * JSON-LD страницы специалиста:
+ * @graph [Person + ProfessionalService/MedicalBusiness/… + BreadcrumbList].
+ * services — его услуги (Offer). Действие «Записаться» (ReserveAction) ссылается
+ * на /book/{slug} — индексируемая страница записи.
+ */
+export function buildProfileJsonLd(psy, services, pageUrl, { bookUrl } = {}) {
   const profession = Professions[psy.profession] || Professions.psychologist;
   const personId = `${pageUrl}#person`;
   const offerCatalog = (services || []).filter(s => s.isActive !== false).map(s => ({
@@ -88,6 +163,7 @@ export function buildProfileJsonLd(psy, services, pageUrl) {
 
   const organization = {
     '@type': profession.schemaType,
+    '@id': pageUrl,
     name: `${psy.fullName} — ${psy.specialization || profession.label}`,
     description: psy.about || undefined,
     url: pageUrl,
@@ -108,15 +184,26 @@ export function buildProfileJsonLd(psy, services, pageUrl) {
       name: 'Услуги',
       itemListElement: offerCatalog
     } : undefined,
-    makesOffer: offerCatalog.length ? offerCatalog : undefined
+    makesOffer: offerCatalog.length ? offerCatalog : undefined,
+    ...(bookUrl ? { potentialAction: reserveAction(bookUrl, psy.fullName) } : {})
   };
 
-  return { '@context': 'https://schema.org', '@graph': [person, organization] };
+  const base = baseOf(pageUrl);
+  const breadcrumbs = buildBreadcrumbs(base, [
+    { name: 'ПсихоПортал', url: base },
+    { name: psy.fullName, url: pageUrl }
+  ]);
+
+  return {
+    '@context': 'https://schema.org',
+    '@graph': [person, organization, breadcrumbs].filter(Boolean)
+  };
 }
 
 /** SEO для страницы публичной записи специалиста */
-export function applyProfileSeo(psy, services, pageUrl) {
-  const title = `${psy.fullName} — ${psy.specialization || 'психолог'} · запись онлайн`;
+export function applyProfileSeo(psy, services, pageUrl, { bookUrl } = {}) {
+  const profession = Professions[psy.profession] || Professions.psychologist;
+  const title = `${psy.fullName} — ${psy.specialization || profession.label.toLowerCase()} · запись онлайн`;
   const description = [psy.greeting, psy.about].filter(Boolean).join(' ').slice(0, 300)
     || `Запись на консультацию: ${psy.fullName}. ${psy.city || ''}`.trim();
   setMeta({
@@ -126,7 +213,7 @@ export function applyProfileSeo(psy, services, pageUrl) {
     image: psy.photoUrl || '',
     ogType: 'profile'
   });
-  setJsonLd(buildProfileJsonLd(psy, services, pageUrl));
+  setJsonLd(buildProfileJsonLd(psy, services, pageUrl, { bookUrl }));
 }
 
 /** SEO главной (каталог) */
@@ -150,13 +237,39 @@ export function applyPortalSeo(baseUrl) {
   });
 }
 
-/** SEO страницы записи /book/{slug} (лёгкое: JSON-LD остаётся на странице профиля) */
-export function applyBookingSeo(psy, pageUrl) {
+/**
+ * SEO страницы записи /book/{slug}: заголовок и описание — под выбранную услугу
+ * (пришли по ссылке «услуга → окна»), плюс хлебные крошки.
+ * Основной JSON-LD (Person + ProfessionalService) остаётся на странице профиля —
+ * так карточка специалиста не дублируется между URL.
+ */
+export function applyBookingSeo(psy, pageUrl, { service } = {}) {
+  const profession = Professions[psy.profession] || Professions.psychologist;
+  const svcText = service
+    ? `«${service.name}»${service.duration ? `, ${service.duration} мин` : ''}${service.price ? `, ${service.price} ${service.currency === 'RUB' ? 'рос. руб.' : 'бел. руб.'}` : ''}`
+    : '';
+  const title = svcText
+    ? `Запись на ${svcText} — ${psy.fullName} · ПсихоПортал`
+    : `Запись — ${psy.fullName} · ПсихоПортал`;
+  const description = `Онлайн-запись к специалисту ${psy.fullName}${psy.city ? ` (${psy.city})` : ''}`
+    + `${svcText ? ` на ${svcText}` : ''}: выбор свободного времени в вашем часовом поясе`
+    + ' и удобного способа оплаты. Без регистрации.';
   setMeta({
-    title: `Запись — ${psy.fullName} · ПсихоПортал`,
-    description: `Онлайн-запись на консультацию к специалисту ${psy.fullName}${psy.city ? ` (${psy.city})` : ''}: выбор услуги, свободного времени и удобного способа оплаты.`,
+    title,
+    description,
     url: pageUrl,
     image: psy.photoUrl || '',
     ogType: 'website'
   });
+  const base = baseOf(pageUrl);
+  setJsonLd(buildBreadcrumbs(base, [
+    { name: 'ПсихоПортал', url: base },
+    { name: psy.fullName, url: psy.slug ? `${base}psy/${encodeURIComponent(psy.slug)}` : null },
+    { name: 'Запись' }
+  ]));
+}
+
+/** Профессия специалиста в человеческой формулировке (для подписей/заголовков). */
+export function professionLabel(key) {
+  return (Professions[key] || Professions.psychologist).label.toLowerCase();
 }

@@ -17,7 +17,7 @@ import { NOTIFY_WEBHOOK_URL } from './services/supabaseConfig.js';
 import { supabaseApi } from './services/supabaseApi.js';
 import { reportClientError } from './services/errorLogService.js';
 import { isSupabaseConfigured } from './services/supabaseConfig.js';
-import { applyProfileSeo, applyPortalSeo, applyBookingSeo } from './services/seoService.js';
+import { applyProfileSeo, applyPortalSeo, applyBookingSeo, applyNoIndex } from './services/seoService.js';
 import { googleAddLink } from './services/calendarService.js';
 
 const portalVm = new PortalViewModel();
@@ -1272,6 +1272,12 @@ function renderProfile() {
   if (!body) return;
   if (!p || !p.isActive) {
     body.innerHTML = '<div class="text-center py-20 text-slate-400">Страница не найдена. <button class="text-indigo-600" onclick="navigate(\'portal\')">К каталогу</button></div>';
+    // честный ответ для поисковиков: несуществующая карточка не индексируется.
+    // Пока каталог ещё грузится, noindex НЕ ставим — иначе валидная страница
+    // успела бы попасть под noindex на первой отрисовке.
+    try {
+      if (portalVm.source === 'server' || portalVm.source === 'demo') applyNoIndex('profile: специалист не найден');
+    } catch (e) { console.warn('seo', e); }
     return;
   }
   $('#prof-header-name') && ($('#prof-header-name').textContent = p.fullName);
@@ -1380,14 +1386,18 @@ function renderProfile() {
 
       ${services.length ? `
       <h3 class="font-semibold text-slate-900 mt-6">Услуги и стоимость</h3>
+      <p class="text-xs text-slate-500 mt-0.5">Нажмите на услугу — покажем её свободные окна и сразу перейдём к записи.</p>
       <div class="mt-2 divide-y border rounded-xl overflow-hidden">
         ${services.map(x => `
-        <div class="p-3 flex justify-between items-start gap-3 text-sm">
+        <a href="${esc(urlFor.book(p.slug))}?service=${encodeURIComponent(x.id)}" class="p-3 flex justify-between items-start gap-3 text-sm hover:bg-indigo-50/60 transition-colors">
           <div><div class="font-medium">${esc(x.name)}</div>
           <div class="text-slate-500">${esc(serviceMetaLine(x))}</div>
           ${x.description ? `<div class="text-slate-500">${esc(x.description)}</div>` : ''}</div>
-          <div class="font-semibold text-indigo-700 whitespace-nowrap">${esc(x.priceLabel())}</div>
-        </div>`).join('')}
+          <div class="text-right shrink-0">
+            <div class="font-semibold text-indigo-700 whitespace-nowrap">${esc(x.priceLabel())}</div>
+            <div class="text-xs text-indigo-600 mt-0.5 whitespace-nowrap">свободные окна →</div>
+          </div>
+        </a>`).join('')}
       </div>` : ''}
 
       ${eduBasic.length ? `<h3 class="font-semibold text-slate-900 mt-6">Психологическое образование</h3>${eduList(eduBasic)}` : ''}
@@ -1410,7 +1420,7 @@ function renderProfile() {
     ${srcHost ? `<p class="mt-4 text-xs text-slate-400 text-center">Профиль из БД портала · фото и данные — с официального сайта: <a href="${esc(p.sourceUrl)}" target="_blank" rel="noopener" class="underline">${esc(srcHost)}</a></p>` : ''}`;
 
   // SEO-лендинг: canonical/OG/JSON-LD именно здесь
-  try { applyProfileSeo(p, services, urlFor.psy(p.slug)); } catch (e) { console.warn('seo', e); }
+  try { applyProfileSeo(p, services, urlFor.psy(p.slug), { bookUrl: urlFor.book(p.slug) }); } catch (e) { console.warn('seo', e); }
 }
 
 function renderBooking() {
@@ -1418,10 +1428,22 @@ function renderBooking() {
   // ==== НОВАЯ ФУНКЦИОНАЛЬНОСТЬ: сохраняем состояние формы записи ====
   // Перерисовка вызывается после выбора услуги, даты и времени. Повторный
   // loadBySlug сбрасывал введённые данные и делал отправку записи невозможной.
-  if (slug && bookingVm.psychologist?.slug !== slug) bookingVm.loadBySlug(slug);
+  if (slug && bookingVm.psychologist?.slug !== slug) {
+    // T-04: ссылка с профиля «услуга → сразу её окна»: /book/{slug}?service=<id>
+    const preService = new URLSearchParams(location.search).get('service');
+    bookingVm.loadBySlug(slug, { service: preService });
+  }
   // ==== КОНЕЦ новой функциональности ====
   if (!bookingVm.psychologist) {
-    $('#book-body').innerHTML = '<div class="text-center py-20 text-slate-400">Психолог не найден. <button class="text-indigo-600" onclick="navigate(\'portal\')">К каталогу</button></div>';
+    const body = $('#book-body');
+    if (body) {
+      body.innerHTML = '<div class="text-center py-20 text-slate-400">Специалист не найден. <button class="text-indigo-600" onclick="navigate(\'portal\')">К каталогу</button></div>';
+    }
+    // честный ответ для поисковиков: пустая страница записи не индексируется
+    // (только когда каталог точно загружен — см. комментарий в renderProfile).
+    try {
+      if (portalVm.source === 'server' || portalVm.source === 'demo') applyNoIndex('booking: специалист не найден');
+    } catch (e) { console.warn('seo', e); }
     return;
   }
   if (bookingVm.done) {
@@ -1440,23 +1462,72 @@ function renderBooking() {
   }
   const toProfile = $('#book-to-profile');
   if (toProfile) toProfile.href = urlFor.psy(p.slug);
-  // SEO страницы записи (лёгкое: JSON-LD остаётся на профиле)
-  try { applyBookingSeo(p, urlFor.book(p.slug)); } catch (e) { console.warn('seo', e); }
+  // SEO страницы записи (T-04/SEO: заголовок и описание — под выбранную услугу)
+  try { applyBookingSeo(p, urlFor.book(p.slug), { service: bookingVm.selectedService }); } catch (e) { console.warn('seo', e); }
 
+  // ——— общие помощники wizard'а (T-01) ———
+  const scrollToWizard = () => {
+    const el = document.getElementById('book-form-block');
+    if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+  const goStep = n => { bookingVm.goToStep(n); renderBooking(); scrollToWizard(); };
+
+  // ——— индикатор прогресса ———
+  const stepsBox = $('#book-steps');
+  if (stepsBox) {
+    stepsBox.innerHTML = bookingVm.steps.map(s => `
+      <li class="flex-1">
+        <button type="button" data-step="${s.id}" ${s.reachable ? '' : 'disabled'}
+          aria-current="${s.state === 'current' ? 'step' : 'false'}"
+          class="w-full flex flex-col items-center gap-1 py-1 ${s.reachable ? 'cursor-pointer' : 'cursor-not-allowed'}">
+          <span class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold ${
+            s.state === 'done' ? 'bg-emerald-100 text-emerald-700'
+              : s.state === 'current' ? 'bg-indigo-600 text-white'
+                : 'bg-slate-100 text-slate-400'}">${s.state === 'done' ? '\u2713' : s.id}</span>
+          <span class="text-xs font-medium ${
+            s.state === 'current' ? 'text-indigo-700'
+              : s.state === 'done' ? 'text-emerald-700' : 'text-slate-400'}">${esc(s.label)}</span>
+        </button>
+      </li>`).join('');
+    stepsBox.querySelectorAll('button').forEach(btn => {
+      btn.onclick = () => goStep(Number(btn.dataset.step));
+    });
+  }
+
+  // ——— показываем только активный шаг ———
+  $$('.book-step').forEach(el => el.classList.add('hidden'));
+  const activeStep = document.getElementById(`book-step-${bookingVm.step}`);
+  if (activeStep) activeStep.classList.remove('hidden');
+
+  // ——— ШАГ 1 · услуги (клик = услуга выбрана → сразу её окна) ———
   const svcBox = $('#book-services');
   if (svcBox) {
     svcBox.innerHTML = bookingVm.services.map(s => `
-      <label class="flex items-start gap-4 p-4 rounded-xl border-2 cursor-pointer ${bookingVm.serviceId === s.id ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200'}">
+      <label class="flex items-start gap-4 p-4 rounded-xl border-2 cursor-pointer ${bookingVm.serviceId === s.id ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200 hover:border-indigo-300'}">
         <input type="radio" name="bs" value="${s.id}" ${bookingVm.serviceId === s.id ? 'checked' : ''} class="mt-1 accent-indigo-600">
-        <div class="flex-1"><div class="font-medium">${esc(s.name)}</div>
-        <div class="text-sm text-slate-500">${esc(serviceMetaLine(s))}</div>
-        ${s.description ? `<div class="text-sm text-slate-500 mt-0.5">${esc(s.description)}</div>` : ''}
-        ${s.payUrl ? `<a href="${esc(s.payUrl)}" target="_blank" rel="noopener" class="inline-block mt-1 text-sm text-indigo-600 hover:underline" onclick="event.stopPropagation()">Оплатить ↗</a>` : ''}</div>
-        <div class="font-semibold text-indigo-700">${esc(s.priceLabel())}</div>
+        <span class="flex-1"><span class="block font-medium">${esc(s.name)}</span>
+        <span class="block text-sm text-slate-500">${esc(serviceMetaLine(s))}</span>
+        ${s.description ? `<span class="block text-sm text-slate-500 mt-0.5">${esc(s.description)}</span>` : ''}
+        ${s.payUrl ? `<a href="${esc(s.payUrl)}" target="_blank" rel="noopener" class="inline-block mt-1 text-sm text-indigo-600 hover:underline" onclick="event.stopPropagation()">Оплатить ↗</a>` : ''}</span>
+        <span class="font-semibold text-indigo-700">${esc(s.priceLabel())}</span>
       </label>`).join('');
     svcBox.querySelectorAll('input').forEach(inp => {
-      inp.onchange = () => { bookingVm.selectService(inp.value); renderBooking(); };
+      inp.onchange = () => { bookingVm.selectServiceAndContinue(inp.value); renderBooking(); scrollToWizard(); };
     });
+  }
+
+  // ——— ШАГ 2 · день и время (сетка под длительность услуги, T-02) ———
+  const step2Hint = $('#book-step-2-hint');
+  if (step2Hint) {
+    const svc = bookingVm.selectedService;
+    step2Hint.textContent = svc
+      ? `${svc.name} · ${bookingVm.selection?.durationLabel || `${bookingVm.durationMinutes} мин`} · приём ${bookingVm.dayWindowLabel}`
+      : 'Выберите услугу на предыдущем шаге';
+  }
+  const tzNote = $('#book-tz-note');
+  if (tzNote) {
+    tzNote.textContent = bookingVm.timeZoneNote || '';
+    tzNote.classList.toggle('hidden', !bookingVm.timeZoneNote);
   }
 
   const rangeBox = $('#book-range');
@@ -1474,8 +1545,10 @@ function renderBooking() {
   if (daysBox) {
     daysBox.innerHTML = bookingVm.availableDays.map(d => {
       const off = bookingVm.dayBlockTitle(d);
-      const label = off ? ` · ${esc(off)}` : '';
-      return `<button type="button" data-day="${d}" class="px-4 py-2 rounded-full text-sm whitespace-nowrap ${bookingVm.date === d ? 'bg-indigo-600 text-white' : 'bg-white border border-slate-200'}">${formatDate(d)}${label}</button>`;
+      const free = bookingVm.freeCountOnDate(d);
+      const label = off ? ` · ${esc(off)}` : (free ? '' : ' · нет окон');
+      const dim = off || !free;
+      return `<button type="button" data-day="${d}" title="${off ? esc(off) : (free ? `${free} свободных окон` : 'нет свободных окон')}" class="px-4 py-2 rounded-full text-sm whitespace-nowrap ${bookingVm.date === d ? 'bg-indigo-600 text-white' : 'bg-white border border-slate-200'} ${dim && bookingVm.date !== d ? 'opacity-50' : ''}">${formatDate(d)}${label}</button>`;
     }).join('');
     daysBox.querySelectorAll('button').forEach(btn => {
       btn.onclick = () => { bookingVm.selectDate(btn.dataset.day); renderBooking(); };
@@ -1484,14 +1557,78 @@ function renderBooking() {
 
   const slotsBox = $('#book-slots');
   if (slotsBox) {
+    const foreign = bookingVm.isForeignTimeZone;
     slotsBox.innerHTML = bookingVm.slots.map(s => `
-      <button type="button" data-time="${s.time}" ${s.busy ? 'disabled' : ''}
-        class="py-2.5 rounded-lg border text-sm font-medium ${s.busy ? 'opacity-35 line-through' : ''} ${bookingVm.time === s.time ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-200 hover:border-indigo-300'}">
-        ${s.time}
+      <button type="button" data-time="${s.time}" ${s.available ? '' : 'disabled'}
+        title="${s.available ? `${s.time}–${s.endTime}` : esc(s.reason || 'занято')}"
+        class="py-2.5 px-1 rounded-lg border text-sm font-medium ${s.available ? '' : 'opacity-35 line-through cursor-not-allowed'} ${bookingVm.time === s.time ? 'bg-indigo-600 text-white border-indigo-600' : (s.available ? 'border-slate-200 hover:border-indigo-300' : 'border-slate-200')}">
+        <span class="block">${s.time}</span>
+        ${foreign ? `<span class="block text-[11px] font-normal opacity-75">${s.clientTime} у вас${s.clientDayShift ? ` (+${s.clientDayShift} д)` : ''}</span>` : ''}
       </button>`).join('');
     slotsBox.querySelectorAll('button:not([disabled])').forEach(btn => {
-      btn.onclick = () => { bookingVm.selectTime(btn.dataset.time); renderBooking(); };
+      btn.onclick = () => { bookingVm.selectTimeAndContinue(btn.dataset.time); renderBooking(); scrollToWizard(); };
     });
+  }
+  const slotHint = $('#book-slot-hint');
+  if (slotHint) {
+    const free = bookingVm.slotsAvailableCount;
+    const text = free
+      ? (bookingVm.isForeignTimeZone
+        ? `Верхняя строка — время специалиста, нижняя — ваше. Свободных окон: ${free}.`
+        : `Свободных окон: ${free}. Зачёркнутые часы заняты или не помещаются в приём.`)
+      : 'На этот день свободных окон нет — выберите другую дату или период выше.';
+    slotHint.textContent = text;
+    slotHint.classList.remove('hidden');
+  }
+
+  // ——— ШАГ 3 · контакт + итог выбора ———
+  const recap = $('#book-recap');
+  if (recap) {
+    const sel = bookingVm.selection;
+    const shift = sel?.clientDayShift ? ` (${sel.clientDayShift > 0 ? '+' : '−'}${Math.abs(sel.clientDayShift)} дн)` : '';
+    recap.innerHTML = !sel ? '' : `
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <div class="font-medium">${esc(sel.serviceName)}</div>
+          <div class="text-slate-500">${esc(sel.durationLabel)} · ${esc(sel.priceLabel)}</div>
+        </div>
+        <button type="button" data-step-link="1" class="shrink-0 text-xs text-indigo-600 hover:underline">изменить</button>
+      </div>
+      <div class="mt-2 pt-2 border-t border-slate-200 flex items-start justify-between gap-3">
+        <div>
+          <div class="font-medium">${formatDate(sel.date)}${sel.time ? ` · ${esc(sel.time)}–${esc(sel.endTime)}` : ''}</div>
+          ${sel.isForeignTimeZone && sel.clientTime ? `<div class="text-slate-500">у вас: ${esc(sel.clientTime)}–${esc(sel.clientEndTime)}${shift}</div>` : ''}
+          <div class="text-xs text-slate-400">время специалиста · ${esc(sel.psychologistTimeZone)}</div>
+        </div>
+        <button type="button" data-step-link="2" class="shrink-0 text-xs text-indigo-600 hover:underline">изменить</button>
+      </div>`;
+    recap.querySelectorAll('[data-step-link]').forEach(btn => {
+      btn.onclick = () => goStep(Number(btn.dataset.stepLink));
+    });
+  }
+
+  // ——— навигация wizard'а ———
+  const backBtn = $('#book-back');
+  if (backBtn) {
+    backBtn.classList.toggle('hidden', bookingVm.step === 1);
+    backBtn.onclick = () => goStep(bookingVm.step - 1);
+  }
+  const nextBtn = $('#book-next');
+  const submitBtn = $('#book-submit');
+  const canNext = bookingVm.canGoToStep(bookingVm.step + 1);
+  if (nextBtn) {
+    nextBtn.classList.toggle('hidden', bookingVm.step === 3);
+    nextBtn.textContent = bookingVm.step === 1 ? 'Далее — выбрать время' : 'Далее — контакт';
+    nextBtn.disabled = !canNext;
+    nextBtn.classList.toggle('opacity-50', !canNext);
+    nextBtn.onclick = () => goStep(bookingVm.step + 1);
+  }
+  if (submitBtn) submitBtn.classList.toggle('hidden', bookingVm.step !== 3);
+  const navHint = $('#book-nav-hint');
+  if (navHint) {
+    navHint.textContent = bookingVm.step === 3
+      ? 'Заявка уйдёт специалисту сразу — он подтвердит запись'
+      : (canNext ? '' : (bookingVm.step === 2 ? 'Выберите свободное время выше' : 'Выберите услугу'));
   }
 
   const err = $('#book-error');
@@ -2136,14 +2273,14 @@ portalVm.serverError = '';
 async function loadServerCatalog() {
   portalVm.source = 'loading';
   portalVm.serverError = '';
-  renderPortal();
+  render();  // перерисовать ТЕКУЩИЙ маршрут: глубокие ссылки /psy|/book ждут каталог
   if (!isSupabaseConfigured()) {
     db.psychologists = [];
     db.services = [];
     db.settings = [];
     portalVm.source = 'none';
     portalVm.serverError = 'SUPABASE_URL / SUPABASE_ANON_KEY не заданы (js/services/supabaseConfig.js)';
-    renderPortal();
+    render();  // перерисовать ТЕКУЩИЙ маршрут: глубокие ссылки /psy|/book ждут каталог
     return false;
   }
   try {
@@ -2152,7 +2289,7 @@ async function loadServerCatalog() {
     portalVm.source = 'server';
     showToast('Каталог загружен с сервера');
     console.info('[Supabase] server catalog loaded:', result.message);
-    renderPortal();
+    render();  // перерисовать ТЕКУЩИЙ маршрут: глубокие ссылки /psy|/book ждут каталог
     return true;
   } catch (e) {
     // не показываем локальный seed как «настоящий» — только честная ошибка
@@ -2169,7 +2306,7 @@ async function loadServerCatalog() {
       stack: e.stack,
       extra: { configured: isSupabaseConfigured() }
     });
-    renderPortal();
+    render();  // перерисовать ТЕКУЩИЙ маршрут: глубокие ссылки /psy|/book ждут каталог
     return false;
   }
 }
@@ -2181,7 +2318,7 @@ window.enableDemoData = () => {
   portalVm.source = 'demo';
   portalVm.serverError = '';
   showToast('Включены демонстрационные данные (не из БД)');
-  renderPortal();
+  render();  // перерисовать ТЕКУЩИЙ маршрут: глубокие ссылки /psy|/book ждут каталог
 };
 
 function boot() {
