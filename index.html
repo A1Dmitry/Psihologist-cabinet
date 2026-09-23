@@ -4,7 +4,36 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ПсихоПортал — кабинеты психологов</title>
+  <meta name="description" content="Каталог психологов: публичный профиль, услуги и цены, онлайн-запись на консультацию." />
+  <link rel="canonical" href="/" />
+  <meta property="og:site_name" content="ПсихоПортал" />
+  <meta property="og:title" content="ПсихоПортал — кабинеты психологов" />
+  <meta property="og:type" content="website" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- Видимый отчёт об ошибках: белый экран без диагностики исключён.
+       Ловит и ошибки загрузки/парсинга модулей (capture), и runtime-ошибки. -->
+  <script>
+    (function () {
+      function show(msg) {
+        var el = document.getElementById('boot-error');
+        if (!el) {
+          el = document.createElement('div');
+          el.id = 'boot-error';
+          el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#e11d48;color:#fff;' +
+            'font:13px/1.5 system-ui,sans-serif;padding:10px 14px;white-space:pre-wrap;';
+          (document.body || document.documentElement).appendChild(el);
+        }
+        el.textContent += (el.textContent ? '\n' : '') + msg;
+      }
+      window.addEventListener('error', function (e) {
+        if (e.target && e.target.tagName === 'SCRIPT') show('Не загрузился скрипт: ' + (e.target.src || '') );
+        else if (e.message) show('Ошибка: ' + e.message + (e.filename ? ' @ ' + e.filename + ':' + e.lineno : ''));
+      }, true);
+      window.addEventListener('unhandledrejection', function (e) {
+        show('Promise: ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason));
+      });
+    })();
+  </script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -32,7 +61,10 @@
     <header class="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-100">
       <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
         <button onclick="navigate('portal')" class="font-bold text-lg text-indigo-700 tracking-tight">ПсихоПортал</button>
-        <div class="flex items-center gap-3" id="nav-auth-area"></div>
+        <div class="flex items-center gap-3">
+          <span id="portal-src-badge" class="text-xs px-2.5 py-1 rounded-full font-medium whitespace-nowrap bg-slate-100 text-slate-500">…</span>
+          <span id="nav-auth-area" class="flex items-center gap-3"></span>
+        </div>
       </div>
     </header>
     <main class="max-w-6xl mx-auto px-4 py-10">
@@ -65,6 +97,10 @@
           <button data-auth-mode="login" class="flex-1 py-2 rounded-full text-sm font-medium bg-indigo-600 text-white">Вход</button>
           <button data-auth-mode="register" class="flex-1 py-2 rounded-full text-sm font-medium bg-slate-100">Регистрация</button>
         </div>
+        <details class="mb-4" onclick="runServerDiagnostics('auth-diag')">
+          <summary class="text-xs text-slate-400 cursor-pointer select-none">Диагностика сервера (если код не приходит)</summary>
+          <div id="auth-diag" class="mt-2"></div>
+        </details>
         <h1 id="auth-title" class="text-2xl font-bold mb-1">Вход в кабинет</h1>
         <p id="auth-subtitle" class="text-sm text-slate-500 mb-6">Войдите по коду, отправленному на email</p>
 
@@ -82,9 +118,9 @@
         <div id="auth-step-code" class="hidden space-y-4">
           <div>
             <label class="text-sm font-medium">Код из письма *</label>
-            <input id="auth-code" type="text" inputmode="numeric" maxlength="6" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300 font-mono text-lg tracking-widest" placeholder="000000">
+            <input id="auth-code" type="text" autocomplete="one-time-code" maxlength="8" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300 font-mono text-lg tracking-widest uppercase" placeholder="6–8 букв и цифр">
           </div>
-          <div>
+          <div id="auth-pass-wrap">
             <label class="text-sm font-medium">Пароль кабинета * <span class="text-slate-400 font-normal">(ключ шифрования клиентов)</span></label>
             <input id="auth-password" type="password" minlength="6" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="минимум 6 символов">
             <p class="text-xs text-slate-400 mt-1">Пароль не хранится: из него выводится ключ AES. Без пароля чужие не прочитают ваших клиентов.</p>
@@ -107,7 +143,8 @@
               <input id="auth-city" type="text" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="Гродно">
             </div>
           </div>
-          <button id="auth-confirm" class="w-full py-3 rounded-full bg-indigo-600 text-white font-medium hover:bg-indigo-700">Подтвердить</button>
+          <button id="auth-confirm" class="w-full py-3 rounded-full bg-indigo-600 text-white font-medium hover:bg-indigo-700">Подтвердить и войти</button>
+          <button id="auth-resend" type="button" class="w-full text-sm text-indigo-600 hover:underline">Отправить код снова</button>
           <button id="auth-back-email" type="button" class="w-full text-sm text-slate-500 hover:text-indigo-600">← Другой email</button>
         </div>
       </div>
@@ -124,8 +161,13 @@
         </div>
         <nav class="flex-1 p-3 space-y-0.5 text-sm">
           <button data-tab="home" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg bg-slate-800 font-medium">Главная</button>
+          <button data-tab="journal" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Книга записей</button>
           <button data-tab="schedule" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Расписание</button>
+          <button data-tab="blocks" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Занятость</button>
           <button data-tab="clients" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Клиенты</button>
+          <button data-tab="tasks" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Задачи</button>
+          <button data-tab="notepad" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Блокнот</button>
+          <button data-tab="telegram" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Уведомления</button>
           <button data-tab="services" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Услуги</button>
           <button data-tab="waiting" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800 flex justify-between">Ожидание <span id="wait-badge" class="bg-rose-500 text-[10px] px-1.5 rounded-full hidden">0</span></button>
           <button data-tab="stats" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Статистика</button>
@@ -146,8 +188,13 @@
         </div>
         <div class="md:hidden flex overflow-x-auto gap-1 px-3 py-2 bg-white border-b text-sm">
           <button data-tab="home" class="cab-nav-btn px-3 py-1.5 rounded-full bg-indigo-600 text-white whitespace-nowrap">Главная</button>
+          <button data-tab="journal" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Книга записей</button>
           <button data-tab="schedule" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Расписание</button>
+          <button data-tab="blocks" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Занятость</button>
           <button data-tab="clients" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Клиенты</button>
+          <button data-tab="tasks" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Задачи</button>
+          <button data-tab="notepad" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Блокнот</button>
+          <button data-tab="telegram" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Уведомления</button>
           <button data-tab="waiting" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Ожидание</button>
           <button data-tab="services" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Услуги</button>
         </div>
@@ -189,12 +236,130 @@
             <div id="sch-days" class="flex gap-2 overflow-x-auto mb-4 pb-1"></div>
             <div id="sch-list" class="bg-white rounded-xl border"></div>
           </div>
+          <div id="tab-blocks" class="cab-tab hidden">
+            <h1 class="text-2xl font-bold mb-2">Занятость: выходные и блокировки</h1>
+            <p class="text-sm text-slate-500 mb-6">Закройте период (выходной, занят, отпуск) — в это время онлайн-запись недоступна. Клиентам видно только «занято», ваши заметки не публикуются.</p>
+            <div class="grid lg:grid-cols-2 gap-6">
+              <div class="bg-white rounded-xl border p-6 space-y-3 text-sm">
+                <div class="grid grid-cols-2 gap-3">
+                  <div><label class="font-medium">Дата с *</label><input id="blk-date-from" type="date" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                  <div><label class="font-medium">Дата по</label><input id="blk-date-to" type="date" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                  <div><label class="font-medium">Время с (пусто = весь день)</label><input id="blk-time-from" type="time" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                  <div><label class="font-medium">Время по</label><input id="blk-time-to" type="time" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                </div>
+                <div><label class="font-medium">Причина</label>
+                  <select id="blk-kind" class="w-full mt-1 px-3 py-2 rounded-xl border">
+                    <option value="day_off">Выходной</option>
+                    <option value="busy">Занят</option>
+                    <option value="vacation">Отпуск</option>
+                    <option value="holiday">Праздник</option>
+                    <option value="other">Другое</option>
+                  </select>
+                </div>
+                <div><label class="font-medium">Заголовок (виден клиентам)</label><input id="blk-title" placeholder="Например: Отпуск" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                <div><label class="font-medium">Заметка (только для вас)</label><input id="blk-note" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                <button id="btn-add-block" class="px-6 py-2.5 rounded-full bg-indigo-600 text-white font-medium">Заблокировать</button>
+                <div class="pt-4 border-t space-y-2">
+                  <div class="font-medium">Google Calendar</div>
+                  <div><label class="text-xs">Секретный iCal-адрес (Google Calendar → Настройки → «Secret address in iCal format»)</label>
+                    <input id="set-gcal-url" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                  <label class="flex items-center gap-2"><input id="set-gcal-sync" type="checkbox" class="accent-indigo-600" checked> Учитывать занятость из Google Calendar</label>
+                  <button id="btn-sync-gcal" class="px-5 py-2 rounded-full border border-indigo-300 text-indigo-700 font-medium">Синхронизировать сейчас</button>
+                  <button id="btn-save-gcal" class="px-5 py-2 rounded-full bg-slate-900 text-white font-medium">Сохранить настройки</button>
+                  <p class="text-xs text-slate-400">События календаря импортируются в блокировки — сам календарь не публикуется. Кнопка «В календарь» в расписании добавляет сессию в ваш Google Calendar.</p>
+                </div>
+              </div>
+              <div>
+                <h2 class="font-semibold mb-2">Активные блокировки</h2>
+                <div id="blocks-list" class="bg-white rounded-xl border"></div>
+              </div>
+            </div>
+          </div>
           <div id="tab-clients" class="cab-tab hidden">
             <div class="flex justify-between mb-4">
               <h1 class="text-2xl font-bold">Клиенты</h1>
               <button id="btn-add-client" class="px-4 py-2 rounded-full bg-indigo-600 text-white text-sm">+ Клиент</button>
             </div>
+            <div id="vault-panel"></div>
             <div id="clients-list" class="bg-white rounded-xl border"></div>
+            <div id="client-detail" class="mt-6"></div>
+          </div>
+          <div id="tab-journal" class="cab-tab hidden">
+            <h1 class="text-2xl font-bold mb-2">Книга записей</h1>
+            <p class="text-sm text-slate-500 mb-4">Все записи клиентов: подтверждение, перенос, заметки о сессии, неявка, календарь.</p>
+            <div id="journal-filters" class="flex flex-wrap gap-2 mb-4"></div>
+            <div id="journal-list" class="bg-white rounded-xl border"></div>
+          </div>
+          <div id="tab-telegram" class="cab-tab hidden">
+            <h1 class="text-2xl font-bold mb-2">Telegram-уведомления</h1>
+            <p class="text-sm text-slate-500 mb-6">Свой бот: клиенту — напоминания о сессиях, вам — новые записи и оплаты. Настройка один раз.</p>
+            <div class="grid lg:grid-cols-2 gap-6">
+              <div class="bg-white rounded-xl border p-6 space-y-4 text-sm">
+                <div>
+                  <label class="font-medium">1. Токен бота (от @BotFather)</label>
+                  <div class="flex gap-2 mt-1">
+                    <input id="tg-token" placeholder="1234567890:AA…" class="flex-1 px-3 py-2 rounded-xl border font-mono">
+                    <button id="btn-tg-test" class="px-4 py-2 rounded-full bg-slate-900 text-white text-sm">Проверить</button>
+                  </div>
+                  <div id="tg-test-result" class="text-xs text-slate-400 mt-1">Бот создается за минуту: в Telegram у @BotFather → /newbot.</div>
+                </div>
+                <div>
+                  <label class="font-medium">2. Ваш чат для уведомлений</label>
+                  <p class="text-xs text-slate-400 mt-1">Напишите вашему боту <code>/start</code> в Telegram, затем нажмите «Найти чат».</p>
+                  <div class="flex flex-wrap gap-2 mt-1 items-center">
+                    <button id="btn-tg-find-chat" class="px-4 py-2 rounded-full border border-indigo-300 text-indigo-700 text-sm">Найти чат</button>
+                    <span id="tg-chat-label" class="text-xs text-slate-500"></span>
+                  </div>
+                  <div id="tg-chats" class="mt-2 space-y-1"></div>
+                </div>
+                <div>
+                  <label class="font-medium">3. Какие уведомления присылать</label>
+                  <div class="mt-2 space-y-1.5">
+                    <label class="flex gap-2 items-center"><input id="tg-notify-booking" type="checkbox" class="accent-indigo-600" checked> Новая запись → вам</label>
+                    <label class="flex gap-2 items-center"><input id="tg-notify-reminders" type="checkbox" class="accent-indigo-600" checked> Напоминание о сессии → клиенту (подключившим бота)</label>
+                    <label class="flex gap-2 items-center"><input id="tg-notify-payments" type="checkbox" class="accent-indigo-600" checked> Оплаты → вам</label>
+                  </div>
+                </div>
+                <button id="btn-tg-save" class="px-6 py-2.5 rounded-full bg-indigo-600 text-white font-medium">Сохранить настройки</button>
+                <p class="text-xs text-slate-400">Токен хранится в настройках кабинета (доступ — только у вас). Напоминания уходят, когда кабинет открыт (вкладка/телефон); для мгновенной доставки с сайта подключите Edge Function — см. docs.</p>
+              </div>
+              <div>
+                <h2 class="font-semibold mb-2">Клиенты и бот</h2>
+                <p class="text-xs text-slate-500 mb-2">Клиент пишет боту <code>/start</code> с вашим кодом-приглашением — после этого получает напоминания в Telegram.</p>
+                <button id="btn-tg-link-clients" class="px-4 py-2 rounded-full border border-indigo-300 text-indigo-700 text-sm">Проверить подключения (/start)</button>
+                <span id="tg-link-result" class="text-xs text-slate-500 ml-2"></span>
+                <div id="tg-clients" class="mt-3 bg-white rounded-xl border"></div>
+              </div>
+            </div>
+          </div>
+          <div id="tab-tasks" class="cab-tab hidden">
+            <h1 class="text-2xl font-bold mb-2">Задачи</h1>
+            <p class="text-sm text-slate-500 mb-6">Дела кабинета: звонки, подготовка, документы. Можно привязать к клиенту.</p>
+            <div class="bg-white rounded-xl border p-4 mb-6 space-y-3">
+              <input id="task-title" placeholder="Задача * (например: Позвонить Анне после сессии)" class="w-full px-3 py-2 rounded-xl border text-sm">
+              <textarea id="task-details" rows="2" placeholder="Детали (необязательно)" class="w-full px-3 py-2 rounded-xl border text-sm resize-none"></textarea>
+              <div class="flex flex-wrap gap-3 items-end">
+                <div><label class="text-xs text-slate-500 block">Срок</label><input id="task-due" type="date" class="px-3 py-2 rounded-xl border text-sm"></div>
+                <div><label class="text-xs text-slate-500 block">Клиент</label><select id="task-client" class="px-3 py-2 rounded-xl border text-sm min-w-[180px]"><option value="">— не привязывать —</option></select></div>
+                <button id="btn-add-task" class="px-6 py-2 rounded-full bg-indigo-600 text-white text-sm font-medium">Добавить</button>
+              </div>
+            </div>
+            <div id="tasks-list" class="bg-white rounded-xl border"></div>
+          </div>
+          <div id="tab-notepad" class="cab-tab hidden">
+            <h1 class="text-2xl font-bold mb-2">Блокнот · планировщик</h1>
+            <p class="text-sm text-slate-500 mb-6">Свободные заметки и планы. Закреплённые — сверху.</p>
+            <div class="bg-white rounded-xl border p-4 mb-6 space-y-3">
+              <input id="note-title" placeholder="Заголовок (необязательно)" class="w-full px-3 py-2 rounded-xl border text-sm">
+              <textarea id="note-body" rows="3" placeholder="Заметка / план *" class="w-full px-3 py-2 rounded-xl border text-sm resize-none"></textarea>
+              <div class="flex flex-wrap gap-3 items-end">
+                <div><label class="text-xs text-slate-500 block">Дата (план на день)</label><input id="note-date" type="date" class="px-3 py-2 rounded-xl border text-sm"></div>
+                <button id="btn-add-note" class="px-6 py-2 rounded-full bg-indigo-600 text-white text-sm font-medium">Добавить</button>
+              </div>
+            </div>
+            <div id="notes-list" class="space-y-3"></div>
           </div>
           <div id="tab-services" class="cab-tab hidden">
             <div class="flex justify-between mb-4">
@@ -282,12 +447,63 @@
           <div id="tab-profile" class="cab-tab hidden">
             <h1 class="text-2xl font-bold mb-4">Профиль</h1>
             <div class="bg-white rounded-xl border p-6 max-w-lg space-y-3">
-              <p class="text-sm text-slate-500">Email: <span id="pf-email"></span></p>
+              <p class="text-sm text-slate-500">Email (вход): <span id="pf-email"></span></p>
               <div><label class="text-sm font-medium">ФИО</label><input id="pf-name" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
               <div><label class="text-sm font-medium">Телефон</label><input id="pf-phone" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
               <div><label class="text-sm font-medium">Специализация</label><input id="pf-spec" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
               <div><label class="text-sm font-medium">Город</label><input id="pf-city" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+              <div><label class="text-sm font-medium">Приветствие</label><input id="pf-greeting" placeholder="Добро пожаловать…" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
               <div><label class="text-sm font-medium">О себе</label><textarea id="pf-about" rows="3" class="w-full mt-1 px-3 py-2 rounded-xl border resize-none"></textarea></div>
+              <div><label class="text-sm font-medium">Подход в работе</label><textarea id="pf-approach" rows="2" class="w-full mt-1 px-3 py-2 rounded-xl border resize-none"></textarea></div>
+              <div><label class="text-sm font-medium">Фото (URL)</label><input id="pf-photo" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+              <div><label class="text-sm font-medium">Контактный email</label><input id="pf-public-email" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+              <div><label class="text-sm font-medium">Адрес приёма</label><input id="pf-address" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+              <div><label class="text-sm font-medium">Сайт</label><input id="pf-website" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+              <div><label class="text-sm font-medium">Telegram (ссылка)</label><input id="pf-telegram" placeholder="https://t.me/…" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+              <div><label class="text-sm font-medium">Instagram (ссылка)</label><input id="pf-instagram" placeholder="https://www.instagram.com/…" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+
+              <div class="pt-3 border-t">
+                <div class="font-medium text-sm mb-1">Направления работы («С чем могу помочь»)</div>
+                <div id="pe-directions" class="pe-list space-y-2"></div>
+                <button type="button" data-pe-add="pe-directions" class="mt-2 text-sm text-indigo-600">+ добавить направление</button>
+              </div>
+              <div class="pt-3 border-t">
+                <div class="font-medium text-sm mb-1">Психологическое образование</div>
+                <div id="pe-edu-basic" class="pe-list space-y-2"></div>
+                <button type="button" data-pe-add="pe-edu-basic" class="mt-2 text-sm text-indigo-600">+ добавить</button>
+              </div>
+              <div class="pt-3 border-t">
+                <div class="font-medium text-sm mb-1">Дополнительное образование</div>
+                <div id="pe-edu-extra" class="pe-list space-y-2"></div>
+                <button type="button" data-pe-add="pe-edu-extra" class="mt-2 text-sm text-indigo-600">+ добавить</button>
+              </div>
+              <div class="pt-3 border-t">
+                <div class="font-medium text-sm mb-1">Опыт работы</div>
+                <div id="pe-experience" class="pe-list space-y-2"></div>
+                <button type="button" data-pe-add="pe-experience" class="mt-2 text-sm text-indigo-600">+ добавить место работы</button>
+              </div>
+              <div class="pt-3 border-t">
+                <div class="font-medium text-sm mb-1">Платёжные ссылки (кнопки «Оплатить»)</div>
+                <div id="pe-links" class="pe-list space-y-2"></div>
+                <button type="button" data-pe-add="pe-links" class="mt-2 text-sm text-indigo-600">+ добавить ссылку</button>
+              </div>
+
+              <div class="pt-3 border-t space-y-3">
+                <div class="font-medium text-sm">Реквизиты для оплаты <span class="text-rose-500 text-xs">· обязательны по налоговым требованиям, публикуются в профиле</span></div>
+                <div><label class="text-xs">Получатель (ФИО ИП / организация)</label><input id="pe-req-recipient" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                <div><label class="text-xs">Юридический адрес</label><input id="pe-req-legal-address" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                <div class="grid grid-cols-2 gap-3">
+                  <div><label class="text-xs">УНП</label><input id="pe-req-unp" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                  <div><label class="text-xs">Р/с (IBAN)</label><input id="pe-req-account" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                  <div><label class="text-xs">Банк</label><input id="pe-req-bank" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                  <div><label class="text-xs">БИК</label><input id="pe-req-bik" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                </div>
+                <div><label class="text-xs">Назначение платежа</label><input id="pe-req-purpose" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                <div><label class="text-xs">Страница свободного платежа (URL)</label><input id="pe-req-donation" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+              </div>
+
               <button id="btn-save-profile" class="px-6 py-2.5 rounded-full bg-indigo-600 text-white text-sm font-medium">Сохранить</button>
             </div>
           </div>
@@ -296,7 +512,19 @@
     </div>
   </div>
 
-  <!-- ========== BOOKING ========== -->
+  <!-- ========== PSY PROFILE (SEO-лендинг специалиста) ========== -->
+  <div id="page-profile" class="page hidden">
+    <header class="sticky top-0 z-40 bg-white border-b">
+      <div class="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
+        <button onclick="navigate('portal')" class="text-sm text-slate-500">← Каталог</button>
+        <span class="font-semibold text-sm truncate max-w-[50%]" id="prof-header-name"></span>
+        <div class="w-16"></div>
+      </div>
+    </header>
+    <div id="prof-body" class="max-w-3xl mx-auto px-4 py-10"></div>
+  </div>
+
+  <!-- ========== BOOKING (запись — отдельный шаг) ========== -->
   <div id="page-booking" class="page hidden">
     <header class="sticky top-0 z-40 bg-white border-b">
       <div class="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
@@ -306,10 +534,14 @@
       </div>
     </header>
     <div id="book-body" class="max-w-3xl mx-auto px-4 py-10">
-      <div class="rounded-2xl bg-indigo-50 p-6 mb-8">
-        <h2 class="text-xl font-bold" id="book-psy-name">—</h2>
-        <p class="text-sm text-indigo-700" id="book-psy-spec"></p>
-        <p class="text-xs text-slate-500 mt-1" id="book-psy-city"></p>
+      <div class="rounded-2xl bg-indigo-50 p-5 mb-8 flex items-center gap-4">
+        <img id="book-psy-photo" alt="" class="hidden w-14 h-14 rounded-xl object-cover shrink-0">
+        <div class="flex-1 min-w-0">
+          <h2 class="text-lg font-bold truncate" id="book-psy-name">—</h2>
+          <p class="text-sm text-indigo-700 truncate" id="book-psy-spec"></p>
+          <p class="text-xs text-slate-500 mt-0.5" id="book-psy-city"></p>
+        </div>
+        <a id="book-to-profile" class="text-sm text-indigo-600 hover:underline whitespace-nowrap">О специалисте →</a>
       </div>
       <div id="book-error" class="hidden mb-4 text-sm text-rose-600 bg-rose-50 px-3 py-2 rounded-lg"></div>
       <div id="book-payment-info" class="mb-6"></div>
@@ -364,7 +596,10 @@
       <div class="text-center max-w-md">
         <div class="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 text-3xl flex items-center justify-center mx-auto mb-6">✓</div>
         <h2 class="text-2xl font-bold mb-3">Заявка принята</h2>
-        <p id="success-text" class="text-slate-600 mb-8">—</p>
+        <p id="success-text" class="text-slate-600 mb-6">—</p>
+        <a id="success-gcal" class="hidden mb-8 inline-flex items-center gap-2 px-6 py-2.5 rounded-full border border-slate-300 text-sm font-medium text-slate-700 hover:bg-slate-50" target="_blank" rel="noopener">
+          📅 Добавить в Google Calendar
+        </a>
         <button onclick="navigate('portal')" class="px-8 py-3 rounded-full bg-indigo-600 text-white font-medium">К каталогу</button>
       </div>
     </div>
@@ -458,6 +693,6 @@
     </div>
   </div>
 
-  <script type="module" src="./js/app.js"></script>
+  <script type="module" src="%BASE%js/app.js?v=20260923j"></script>
 </body>
 </html>

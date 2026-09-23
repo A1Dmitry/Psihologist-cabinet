@@ -11,7 +11,13 @@ import { paymentService } from './services/paymentService.js';
 import { PaymentPolicy } from './models/entities.js';
 import { reminderService } from './services/reminderService.js';
 import { supabaseSync } from './services/supabaseSync.js';
+import { cabinetApi } from './services/cabinetApi.js';
+import { telegramService } from './services/telegramService.js';
+import { NOTIFY_WEBHOOK_URL } from './services/supabaseConfig.js';
+import { supabaseApi } from './services/supabaseApi.js';
 import { isSupabaseConfigured } from './services/supabaseConfig.js';
+import { applyProfileSeo, applyPortalSeo, applyBookingSeo } from './services/seoService.js';
+import { googleAddLink } from './services/calendarService.js';
 
 const portalVm = new PortalViewModel();
 const authVm = new AuthViewModel();
@@ -58,6 +64,21 @@ function platformLabel(p) {
   return ({ google_meet: 'Google Meet', zoom: 'Zoom', telegram: 'Telegram', whatsapp: 'WhatsApp', other: 'Видео' })[p] || '';
 }
 
+function esc(v) {
+  return String(v ?? '')
+    .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+}
+
+const PLATFORM_TITLES = {
+  skype: 'Skype', whatsapp: 'WhatsApp', viber: 'Viber', telegram: 'Telegram', zoom: 'Zoom'
+};
+
+const SOCIAL_TITLES = {
+  telegram: 'Telegram', instagram: 'Instagram', skype: 'Skype',
+  whatsapp: 'WhatsApp', viber: 'Viber', vk: 'VK', other: 'Ссылка'
+};
+
 function showToast(msg, isError) {
   const el = $('#toast');
   if (!el) return;
@@ -68,15 +89,87 @@ function showToast(msg, isError) {
   setTimeout(() => el.classList.add('hidden'), 3000);
 }
 
-// ——— Router ———
-function navigate(name, params = {}) {
+// ——— Router (indexable URLs: /psy/{slug}, /cabinet, /auth) ———
+function computeBasePath() {
+  let p = location.pathname;
+  if (p.endsWith('/index.html')) p = p.slice(0, -'index.html'.length);
+  p = p.replace(/\/(psy\/[^/]+|book\/[^/]+|cabinet|auth|booking-done|reply)\/?$/i, '');
+  return p.endsWith('/') ? p : p + '/';
+}
+const BASE = computeBasePath();
+const urlFor = {
+  home: () => BASE,
+  psy: slug => `${BASE}psy/${encodeURIComponent(slug)}`,
+  book: slug => `${BASE}book/${encodeURIComponent(slug)}`,
+  cabinet: () => `${BASE}cabinet`,
+  auth: () => `${BASE}auth`,
+  success: () => `${BASE}booking-done`,
+  reply: token => `${BASE}reply?reply=${encodeURIComponent(token)}`,
+  /** Публичная (индексируемая) ссылка записи для клиентов */
+  bookingLink: slug => `${location.origin}${urlFor.book(slug)}`
+};
+
+function routeUrl(r) {
+  if (r.name === 'profile' && r.params.slug) return urlFor.psy(r.params.slug);
+  if (r.name === 'booking' && r.params.slug) return urlFor.book(r.params.slug);
+  if (r.name === 'portal') return urlFor.home();
+  if (r.name === 'cabinet') return urlFor.cabinet();
+  if (r.name === 'auth') return urlFor.auth();
+  if (r.name === 'success') return urlFor.success();
+  if (r.name === 'clientReply' && r.params.token) return urlFor.reply(r.params.token);
+  return null;
+}
+
+/** Маршрут из URL (path /psy/slug, /cabinet + легаси ?book=, ?reply=) */
+function routeFromUrl() {
+  const qs = new URLSearchParams(location.search);
+  const book = qs.get('book');          // легаси-ссылка
+  if (book) return { name: 'booking', params: { slug: book } };
+  const reply = qs.get('reply') || qs.get('token');
+  if (reply && /\/reply\/?$/.test(location.pathname)) return { name: 'clientReply', params: { token: reply } };
+  let m = location.pathname.match(/\/book\/([^/]+)\/?$/);
+  if (m) {
+    try { return { name: 'booking', params: { slug: decodeURIComponent(m[1]) } }; }
+    catch { return { name: 'booking', params: { slug: m[1] } }; }
+  }
+  m = location.pathname.match(/\/psy\/([^/]+)\/?$/);
+  if (m) {
+    // легаси: /psy/{slug}#book раньше открывал форму — ведём на отдельную страницу записи
+    if (location.hash === '#book') {
+      try { return { name: 'booking', params: { slug: decodeURIComponent(m[1]) } }; }
+      catch { return { name: 'booking', params: { slug: m[1] } }; }
+    }
+    try { return { name: 'profile', params: { slug: decodeURIComponent(m[1]) } }; }
+    catch { return { name: 'profile', params: { slug: m[1] } }; }
+  }
+  if (/\/cabinet\/?$/.test(location.pathname)) return { name: 'cabinet', params: {} };
+  if (/\/auth\/?$/.test(location.pathname)) return { name: 'auth', params: { mode: qs.get('mode') || 'login' } };
+  if (/\/booking-done\/?$/.test(location.pathname)) return { name: 'success', params: {} };
+  return { name: 'portal', params: {} };
+}
+
+function navigate(name, params = {}, { push = true } = {}) {
   route = { name, params };
   if (name === 'cabinet' && !authService.isAuthenticated()) {
     route = { name: 'auth', params: { mode: 'login' } };
   }
+  if (push) {
+    const url = routeUrl(route);
+    if (url && url !== location.pathname + location.search) {
+      history.pushState({ name: route.name, params: route.params }, '', url);
+    }
+  }
   render();
   window.scrollTo(0, 0);
 }
+
+window.addEventListener('popstate', () => {
+  route = routeFromUrl();
+  if (route.name === 'cabinet' && !authService.isAuthenticated()) {
+    route = { name: 'auth', params: { mode: 'login' } };
+  }
+  render();
+});
 
 window.navigate = navigate;
 window.resetPortalData = () => {
@@ -115,6 +208,7 @@ function render() {
   $$('.page').forEach(p => p.classList.add('hidden'));
   const map = {
     portal: 'page-portal',
+    profile: 'page-profile',
     auth: 'page-auth',
     cabinet: 'page-cabinet',
     booking: 'page-booking',
@@ -125,7 +219,8 @@ function render() {
   const page = document.getElementById(id);
   if (page) page.classList.remove('hidden');
 
-  if (route.name === 'portal') renderPortal();
+  if (route.name === 'portal') { renderPortal(); applyPortalSeo(urlFor.home()); }
+  if (route.name === 'profile') renderProfile();
   if (route.name === 'auth') renderAuth();
   if (route.name === 'cabinet') renderCabinet();
   if (route.name === 'booking') renderBooking();
@@ -141,10 +236,76 @@ function render() {
   });
 }
 
+// ——— Telegram: outbox новых записей + должные напоминания (пока кабинет открыт) ———
+let _tgLoop = null;
+function startTelegramLoops(psyId) {
+  clearInterval(_tgLoop);
+  const tick = async () => {
+    try {
+      const a = await telegramService.notifyNewBookings(psyId);
+      if (a.sent) showToast(`Telegram: уведомлений о записях — ${a.sent}`);
+      await telegramService.sendDueReminders(psyId);
+    } catch (e) { console.warn('[Telegram] loop', e); }
+  };
+  tick();
+  _tgLoop = setInterval(tick, 60 * 1000);
+}
+
+// ——— Поделиться ссылкой на специалиста (Telegram/WhatsApp/Viber/системное меню) ———
+window.sharePsyLink = async function (slug) {
+  const url = `${location.origin}${urlFor.psy(slug)}`;
+  const text = 'Запись к специалисту:';
+  if (navigator.share) {
+    try { await navigator.share({ title: document.title, text, url }); return; } catch (_) { /* отмена */ }
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    showToast('Ссылка скопирована: ' + url);
+  } catch (_) {
+    window.prompt('Скопируйте ссылку:', url);
+  }
+};
+
+/** Диагностика сервера: что применено в БД, что нет (показывается в UI) */
+window.runServerDiagnostics = async containerId => {
+  const box = document.getElementById(containerId);
+  if (!box) return;
+  box.innerHTML = '<div class="text-sm text-slate-400">Проверяем…</div>';
+  const rows = await supabaseApi.serverDiagnostics();
+  box.innerHTML = `<div class="bg-white rounded-xl border p-4 text-sm space-y-2">
+    <div class="font-medium">Состояние сервера БД</div>
+    ${rows.map(r => `
+      <div class="flex gap-2 items-start">
+        <span>${r.ok ? '✅' : '❌'}</span>
+        <div>
+          <div class="${r.ok ? 'text-slate-700' : 'text-slate-900 font-medium'}">${esc(r.name)}</div>
+          ${r.ok ? (r.detail ? `<div class="text-xs text-slate-400">${esc(r.detail)}</div>` : '')
+                 : `<div class="text-xs text-rose-500">${esc(r.detail)}</div><div class="text-xs text-slate-500">→ ${esc(r.hint)}</div>`}
+        </div>
+      </div>`).join('')}
+  </div>`;
+};
+
+/** Бейдж источника данных в шапке каталога */
+function renderSourceBadge() {
+  const el = $('#portal-src-badge');
+  if (!el) return;
+  const map = {
+    server: { text: 'Данные: сервер', cls: 'bg-emerald-100 text-emerald-700' },
+    demo: { text: 'ДЕМО-данные', cls: 'bg-amber-100 text-amber-700' },
+    none: { text: 'Нет связи с сервером', cls: 'bg-rose-100 text-rose-700' },
+    loading: { text: 'Загрузка…', cls: 'bg-slate-100 text-slate-500' }
+  };
+  const it = map[portalVm.source] || map.loading;
+  el.textContent = it.text;
+  el.className = 'text-xs px-2.5 py-1 rounded-full font-medium whitespace-nowrap ' + it.cls;
+}
+
 function renderPortal() {
   const list = portalVm.psychologists;
   const box = $('#portal-list');
   const navAuth = $('#nav-auth-area');
+  renderSourceBadge();
   if (navAuth) {
     if (portalVm.isLoggedIn) {
       navAuth.innerHTML = `
@@ -166,21 +327,57 @@ function renderPortal() {
   }
 
   if (!box) return;
+
+  // строго серверный режим: без сервера показываем причину, не локальные данные
+  if (portalVm.source === 'none' || (portalVm.source === 'loading' && !list.length)) {
+    box.innerHTML = `
+      <div class="bg-white rounded-2xl border p-8 max-w-2xl mx-auto text-center">
+        <div class="text-4xl mb-3">${portalVm.source === 'loading' ? '⏳' : '🔌'}</div>
+        <h3 class="font-bold text-lg mb-1">${portalVm.source === 'loading' ? 'Загружаем каталог с сервера…' : 'Нет связи с сервером данных'}</h3>
+        ${portalVm.serverError ? `<p class="text-sm text-rose-600 mb-4">${esc(portalVm.serverError)}</p>` : ''}
+        <div class="text-sm text-slate-600 bg-slate-50 rounded-xl p-4 text-left mb-5">
+          <div class="font-medium mb-2">Как подключить серверные данные:</div>
+          <ol class="list-decimal list-inside space-y-1">
+            <li>Откройте проект в Supabase → <b>SQL Editor</b></li>
+            <li>Выполните <code class="text-indigo-600">supabase/schema.sql</code> (таблицы, view, RLS)</li>
+            <li>Выполните <code class="text-indigo-600">supabase/seed.sql</code> (данные специалиста)</li>
+            <li>Нажмите «Повторить» ниже</li>
+          </ol>
+        </div>
+        <div class="flex flex-wrap gap-3 justify-center">
+          <button onclick="retryServerData()" class="px-6 py-2.5 rounded-full bg-indigo-600 text-white text-sm font-medium">Повторить</button>
+          <button onclick="runServerDiagnostics('portal-diag')" class="px-6 py-2.5 rounded-full border border-indigo-300 text-indigo-700 text-sm font-medium">Проверить сервер</button>
+          <button onclick="enableDemoData()" class="px-6 py-2.5 rounded-full border border-slate-300 text-slate-600 text-sm font-medium">Показать демо-данные</button>
+        </div>
+        <div id="portal-diag" class="mt-5 text-left"></div>
+      </div>`;
+    return;
+  }
+
   if (!list.length) {
     box.innerHTML = '<div class="col-span-full text-center text-slate-400 py-12">Психологи не найдены</div>';
     return;
   }
-  box.innerHTML = list.map(p => {
+  const demoStrip = portalVm.source === 'demo'
+    ? `<div class="mb-6 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 max-w-2xl mx-auto">
+         ⚠ Показаны демонстрационные данные (не из БД). <button onclick="retryServerData()" class="underline font-medium">Загрузить серверные</button>
+       </div>`
+    : '';
+  box.innerHTML = demoStrip + list.map(p => {
     const svcs = db.servicesOf(p.id);
     const online = svcs.some(s => s.format === 'online');
     return `
       <article class="bg-white rounded-2xl border border-slate-100 p-6 hover:shadow-lg transition flex flex-col">
         <div class="flex items-start gap-4 mb-4">
-          <div class="w-14 h-14 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-lg shrink-0">
-            ${p.fullName.split(' ').map(x => x[0]).slice(0, 2).join('')}
+          <div class="w-14 h-14 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-lg shrink-0 overflow-hidden">
+            ${p.photoUrl
+              ? `<img src="${esc(p.photoUrl)}" alt="${esc(p.fullName)}" class="w-full h-full object-cover">`
+              : esc(p.fullName.split(' ').map(x => x[0]).slice(0, 2).join(''))}
           </div>
           <div class="min-w-0">
-            <h3 class="font-bold text-slate-900 text-lg leading-tight">${p.fullName}</h3>
+            <h3 class="font-bold text-slate-900 text-lg leading-tight">
+              <a href="${urlFor.psy(p.slug)}" data-spa data-slug="${esc(p.slug)}" class="hover:text-indigo-700">${p.fullName}</a>
+            </h3>
             <p class="text-sm text-indigo-600 mt-0.5">${p.specialization}</p>
             <p class="text-xs text-slate-400 mt-1">${p.city || 'Онлайн'}${online ? ' · Google Meet' : ''}</p>
           </div>
@@ -189,11 +386,19 @@ function renderPortal() {
         <div class="flex flex-wrap gap-2 mb-4">
           ${svcs.slice(0, 3).map(s => `<span class="text-xs px-2 py-1 rounded-full bg-slate-50 text-slate-600">${s.name}</span>`).join('')}
         </div>
-        <button onclick="navigate('booking',{slug:'${p.slug}'})" class="w-full py-2.5 rounded-full bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">
+        <a href="${urlFor.book(p.slug)}" data-spa-book data-slug="${esc(p.slug)}" class="block w-full text-center py-2.5 rounded-full bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">
           Записаться
-        </button>
+        </a>
       </article>`;
   }).join('');
+}
+
+function collectAuthRegFields() {
+  if (authVm.mode !== 'register') return;
+  authVm.fullName = $('#auth-fullname')?.value || '';
+  authVm.phone = $('#auth-phone')?.value || '';
+  authVm.specialization = $('#auth-spec')?.value || 'Психолог';
+  authVm.city = $('#auth-city')?.value || '';
 }
 
 function renderAuth() {
@@ -204,7 +409,8 @@ function renderAuth() {
   const codeStep = $('#auth-step-code');
   const regFields = $('#auth-reg-fields');
   const err = $('#auth-error');
-  const demo = $('#auth-demo-code');
+  const hint = $('#auth-code-hint');
+  const resend = $('#auth-resend');
 
   if (title) title.textContent = authVm.mode === 'register' ? 'Регистрация психолога' : 'Вход в кабинет';
   if (subtitle) {
@@ -216,6 +422,8 @@ function renderAuth() {
   emailStep?.classList.toggle('hidden', authVm.step !== 'email');
   codeStep?.classList.toggle('hidden', authVm.step !== 'code');
   regFields?.classList.toggle('hidden', authVm.mode !== 'register' || authVm.step !== 'code');
+  const passWrap = $('#auth-pass-wrap');
+  passWrap?.classList.toggle('hidden', authVm.mode !== 'register'); // при входе пароль не нужен
 
   $('#auth-email') && ($('#auth-email').value = authVm.email);
   $('#auth-code') && ($('#auth-code').value = authVm.code);
@@ -223,13 +431,16 @@ function renderAuth() {
     err.textContent = authVm.error || '';
     err.classList.toggle('hidden', !authVm.error);
   }
-  if (demo) {
-    if (authVm.demoCode) {
-      demo.classList.remove('hidden');
-      demo.innerHTML = `<strong>Демо-код:</strong> <span class="font-mono text-lg">${authVm.demoCode}</span> <span class="text-slate-400">(в продакшене уходит на email)</span>`;
-    } else {
-      demo.classList.add('hidden');
-    }
+  if (hint) {
+    hint.textContent = authVm.step === 'code'
+      ? `Код отправлен на ${authVm.email}: 6–8 букв и цифр, действует 2 минуты. Проверьте письмо (и папку «Спам»).`
+      : '';
+  }
+  if (resend) {
+    resend.textContent = authVm.resendLabel;
+    resend.disabled = authVm.resendIn > 0;
+    resend.classList.toggle('opacity-50', authVm.resendIn > 0);
+    resend.classList.toggle('cursor-not-allowed', authVm.resendIn > 0);
   }
 
   // mode tabs
@@ -284,6 +495,11 @@ function renderCabinet() {
   }
   if (cabinetVm.tab === 'services') renderCabServices();
   if (cabinetVm.tab === 'waiting') renderCabWaiting();
+  if (cabinetVm.tab === 'blocks') renderCabBlocks();
+  if (cabinetVm.tab === 'journal') renderCabJournal();
+  if (cabinetVm.tab === 'tasks') renderCabTasks();
+  if (cabinetVm.tab === 'notepad') renderCabNotepad();
+  if (cabinetVm.tab === 'telegram') { renderCabTelegram(); bindTelegramTab(); }
   if (cabinetVm.tab === 'stats') renderCabStats();
   if (cabinetVm.tab === 'profile') renderCabProfile();
   if (cabinetVm.tab === 'link') renderCabLink();
@@ -367,15 +583,204 @@ function renderCabSchedule() {
   box.innerHTML = list.map(s => {
     const cl = cabinetVm.clientById(s.clientId);
     const sv = cabinetVm.serviceById(s.serviceId);
+    const gcal = googleAddLink({
+      title: `Консультация${cl?.name ? ' · ' + cl.name : ''}${sv?.name ? ' · ' + sv.name : ''}`,
+      date: s.date,
+      time: s.time,
+      durationMin: sv?.duration || 60,
+      location: s.meetLink || '',
+      details: '',
+      timezone: cabinetVm.settings?.timezone || 'Europe/Minsk'
+    });
     return `<div class="flex items-center gap-4 p-4 border-b last:border-0">
       <div class="font-mono text-sm text-slate-500 w-14">${s.time}</div>
       <div class="flex-1"><div class="font-medium">${cl?.name || '—'}</div>
       <div class="text-sm text-slate-500">${sv?.name || ''} ${s.meetLink ? '· <a class="text-blue-600" href="'+s.meetLink+'" target="_blank">Meet</a>' : ''}</div></div>
       <span class="text-xs px-2 py-1 rounded-full ${statusClass(s.status)}">${statusLabel(s.status)}</span>
+      <a href="${esc(gcal)}" target="_blank" rel="noopener" class="text-sm text-emerald-600">В календарь</a>
       <button data-edit-session="${s.id}" class="text-sm text-indigo-600">Изменить</button>
       <button data-del-session="${s.id}" class="text-sm text-rose-500">Удалить</button>
     </div>`;
   }).join('');
+}
+
+// ——— Книга записей ———
+function renderCabJournal() {
+  const filtersBox = $('#journal-filters');
+  if (filtersBox) {
+    const opts = [
+      ['upcoming', 'Предстоящие'],
+      ['pending', 'Ждут действия'],
+      ['past', 'Прошедшие'],
+      ['all', 'Все']
+    ];
+    filtersBox.innerHTML = opts.map(([id, label]) =>
+      `<button type="button" data-jf="${id}" class="px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap ${cabinetVm.journalFilter === id ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600'}">${label}</button>`
+    ).join('');
+    filtersBox.querySelectorAll('[data-jf]').forEach(btn => {
+      btn.onclick = () => { cabinetVm.setJournalFilter(btn.dataset.jf); renderCabJournal(); };
+    });
+  }
+  const box = $('#journal-list');
+  if (!box) return;
+  const list = cabinetVm.journalSessions;
+  if (!list.length) {
+    box.innerHTML = '<div class="p-8 text-center text-slate-400 text-sm">Записей нет</div>';
+    return;
+  }
+  box.innerHTML = list.map(s => {
+    const cl = cabinetVm.clientById(s.clientId);
+    const sv = cabinetVm.serviceById(s.serviceId);
+    const gcal = googleAddLink({
+      title: `Консультация${cl?.name ? ' · ' + cl.name : ''}`,
+      date: s.date, time: s.time, durationMin: sv?.duration || 60,
+      location: s.meetLink || '', timezone: cabinetVm.settings?.timezone || 'Europe/Minsk'
+    });
+    const canConfirm = ['pending', 'held'].includes(s.status);
+    return `<div class="p-4 border-b last:border-0">
+      <div class="flex items-center gap-3 flex-wrap">
+        <div class="font-mono text-sm text-slate-500 w-32 shrink-0">${formatDate(s.date)} · ${s.time}</div>
+        <div class="flex-1 min-w-[140px]">
+          <div class="font-medium">${cl?.name || cl?.nickname || '—'}</div>
+          <div class="text-sm text-slate-500">${sv?.name || ''} ${sv ? '· ' + sv.priceLabel() : ''}
+            ${s.paymentStatus === 'deposit_paid' ? ' · аванс ✓' : ''}${s.paymentStatus === 'fully_paid' ? ' · оплачено ✓' : ''}
+            ${s.changeConsentStatus === 'pending' ? ' · ⏳ ждём согласие на перенос' : ''}</div>
+        </div>
+        <span class="text-xs px-2 py-1 rounded-full ${statusClass(s.status)}">${statusLabel(s.status)}</span>
+      </div>
+      ${s.note ? `<div class="text-xs text-slate-400 mt-1">Заметка клиента: ${esc(s.note)}</div>` : ''}
+      <div class="flex flex-wrap gap-3 mt-2 text-sm">
+        ${canConfirm ? `<button data-j-confirm="${s.id}" class="text-emerald-600">Подтвердить</button>` : ''}
+        <button data-edit-session="${s.id}" class="text-indigo-600">Перенести/изменить</button>
+        <button data-j-note="${s.id}" class="text-indigo-600">+ запись о сессии</button>
+        ${s.date >= todayStr() && !['cancelled', 'done', 'no_show'].includes(s.status) ? `<button data-j-noshow="${s.id}" class="text-slate-400">Неявка</button>` : ''}
+        <a href="${esc(gcal)}" target="_blank" rel="noopener" class="text-emerald-600">В календарь</a>
+      </div>
+    </div>`;
+  }).join('');
+
+  box.querySelectorAll('[data-j-confirm]').forEach(btn => {
+    btn.onclick = () => { cabinetVm.confirmSession(btn.dataset.jConfirm); renderCabJournal(); };
+  });
+  box.querySelectorAll('[data-j-note]').forEach(btn => {
+    btn.onclick = () => {
+      const s = cabinetVm.sessions.find(x => x.id === btn.dataset.jNote);
+      const text = prompt('Запись о сессии (видна только вам):');
+      if (text?.trim() && s) {
+        cabinetVm.addClientEntry({ clientId: s.clientId, sessionId: s.id, date: s.date, text: text.trim() });
+        showToast('Запись сохранена в карточке клиента');
+      }
+    };
+  });
+  box.querySelectorAll('[data-j-noshow]').forEach(btn => {
+    btn.onclick = () => {
+      const s = cabinetVm.sessions.find(x => x.id === btn.dataset.jNoshow);
+      if (s && confirm('Отметить неявку клиента?')) {
+        s.status = 'no_show';
+        db.saveChanges();
+        cabinetApi.pushSessionPatch(s.id, { status: 'no_show' });
+        renderCabJournal();
+      }
+    };
+  });
+}
+
+// ——— Задачи ———
+function renderCabTasks() {
+  const sel = $('#task-client');
+  if (sel) {
+    const current = sel.value;
+    sel.innerHTML = '<option value="">— не привязывать —</option>' +
+      cabinetVm.clients.map(c => `<option value="${c.id}">${esc(c.nickname || c.name)}</option>`).join('');
+    sel.value = current;
+  }
+  const box = $('#tasks-list');
+  if (!box) return;
+  const list = cabinetVm.tasks;
+  if (!list.length) {
+    box.innerHTML = '<div class="p-8 text-center text-slate-400 text-sm">Задач нет</div>';
+    return;
+  }
+  box.innerHTML = list.map(t => {
+    const cl = t.clientId ? cabinetVm.clientById(t.clientId) : null;
+    const overdue = t.dueDate && !t.done && t.dueDate < todayStr();
+    return `<div class="p-4 flex items-start gap-3 border-b last:border-0">
+      <input type="checkbox" data-task-toggle="${t.id}" ${t.done ? 'checked' : ''} class="mt-1 accent-indigo-600">
+      <div class="flex-1 min-w-0 ${t.done ? 'line-through text-slate-400' : ''}">
+        <div class="font-medium">${esc(t.title)}</div>
+        ${t.details ? `<div class="text-sm text-slate-500">${esc(t.details)}</div>` : ''}
+        <div class="text-xs mt-1 ${overdue ? 'text-rose-500 font-medium' : 'text-slate-400'}">
+          ${t.dueDate ? 'Срок: ' + formatDate(t.dueDate) : ''}${cl ? ` · клиент: ${esc(cl.nickname || cl.name)}` : ''}
+        </div>
+      </div>
+      <button data-task-del="${t.id}" class="text-rose-500 text-sm shrink-0">Удалить</button>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('[data-task-toggle]').forEach(el => {
+    el.onchange = () => { cabinetVm.toggleTask(el.dataset.taskToggle); renderCabTasks(); };
+  });
+  box.querySelectorAll('[data-task-del]').forEach(el => {
+    el.onclick = () => { cabinetVm.removeTask(el.dataset.taskDel); renderCabTasks(); };
+  });
+}
+
+// ——— Блокнот (планировщик) ———
+function renderCabNotepad() {
+  const box = $('#notes-list');
+  if (!box) return;
+  const list = cabinetVm.notes;
+  if (!list.length) {
+    box.innerHTML = '<div class="bg-white rounded-xl border p-8 text-center text-slate-400 text-sm">Заметок нет. Планы на день, идеи, списки — всё сюда.</div>';
+    return;
+  }
+  box.innerHTML = list.map(n => `
+    <div class="bg-white rounded-xl border p-4 ${n.pinned ? 'border-amber-300 bg-amber-50/40' : ''}">
+      <div class="flex items-start gap-3">
+        <div class="flex-1 min-w-0">
+          ${n.title ? `<div class="font-medium">${esc(n.title)}</div>` : ''}
+          <div class="text-sm text-slate-700 whitespace-pre-wrap">${esc(n.body)}</div>
+          <div class="text-xs text-slate-400 mt-2">${n.date ? formatDate(n.date) + ' · ' : ''}${n.pinned ? '📌 закреплено' : ''}</div>
+        </div>
+        <div class="flex flex-col gap-1 shrink-0">
+          <button data-note-pin="${n.id}" class="text-xs text-amber-600">${n.pinned ? 'Открепить' : '📌'}</button>
+          <button data-note-del="${n.id}" class="text-xs text-rose-500">Удалить</button>
+        </div>
+      </div>
+    </div>`).join('');
+  box.querySelectorAll('[data-note-pin]').forEach(el => {
+    el.onclick = () => { cabinetVm.toggleNotePin(el.dataset.notePin); renderCabNotepad(); };
+  });
+  box.querySelectorAll('[data-note-del]').forEach(el => {
+    el.onclick = () => { cabinetVm.removeNote(el.dataset.noteDel); renderCabNotepad(); };
+  });
+}
+
+function renderCabBlocks() {
+  const st = cabinetVm.settings;
+  if (st) {
+    $('#set-gcal-url') && ($('#set-gcal-url').value = st.googleCalendarIcalUrl || '');
+    $('#set-gcal-sync') && ($('#set-gcal-sync').checked = st.googleSyncBusy !== false);
+  }
+  const box = $('#blocks-list');
+  if (!box) return;
+  const list = cabinetVm.blocks;
+  if (!list.length) {
+    box.innerHTML = '<div class="p-6 text-center text-slate-400 text-sm">Нет блокировок. Выходные и занятость закрываются формой слева.</div>';
+    return;
+  }
+  box.innerHTML = list.map(b => `
+    <div class="p-3 border-b last:border-0 flex items-center gap-3 text-sm">
+      <span class="text-xs px-2 py-1 rounded-full bg-slate-100 shrink-0">${esc(cabinetVm.blockKindLabels[b.kind] || b.kind)}</span>
+      <div class="flex-1 min-w-0">
+        <div class="font-medium">${esc(b.title || 'Занят')}</div>
+        <div class="text-slate-500 text-xs">${esc(b.dateFrom)}${b.dateTo && b.dateTo !== b.dateFrom ? ' → ' + esc(b.dateTo) : ''}${b.timeFrom ? ' · ' + esc(b.timeFrom) + '–' + esc(b.timeTo || '') : ' · весь день'}${b.source === 'google' ? ' · Google Calendar' : ''}</div>
+        ${b.note ? `<div class="text-slate-400 text-xs">${esc(b.note)} <span class="text-slate-300">(только для вас)</span></div>` : ''}
+      </div>
+      <button data-del-block="${esc(b.id)}" class="text-rose-500 shrink-0">Снять</button>
+    </div>`).join('');
+  box.querySelectorAll('[data-del-block]').forEach(btn => {
+    btn.onclick = () => { cabinetVm.removeBlock(btn.dataset.delBlock); renderCabinet(); };
+  });
 }
 
 function renderCabClients() {
@@ -384,19 +789,295 @@ function renderCabClients() {
   const list = cabinetVm.clients;
   if (!list.length) {
     box.innerHTML = '<div class="p-8 text-center text-slate-400 text-sm">Нет клиентов</div>';
+  } else {
+    box.innerHTML = list.map(c => {
+      const n = cabinetVm.sessions.filter(s => s.clientId === c.id && s.status !== 'cancelled').length;
+      const entries = db.entriesOf(c.id).length;
+      const selected = cabinetVm.selectedClientId === c.id;
+      return `<div class="p-4 flex justify-between items-center border-b last:border-0 ${selected ? 'bg-indigo-50/50' : ''}">
+        <div><div class="font-medium">${c.nickname || c.name}</div>
+        <div class="text-sm text-slate-500">${c.phone || ''} · ${n} сессий${entries ? ` · ${entries} записей` : ''}${c.telegramChat ? ' · <span class="text-emerald-600">✓ Telegram</span>' : ''}</div>
+        ${c.note ? `<div class="text-xs text-slate-400 mt-0.5">${c.note}</div>` : ''}</div>
+        <div class="flex gap-2">
+          <button data-sel-client="${c.id}" class="text-sm text-indigo-600">${selected ? 'Скрыть' : 'Карточка'}</button>
+          <button data-edit-client="${c.id}" class="text-sm text-indigo-600">Изменить</button>
+          <button data-del-client="${c.id}" class="text-sm text-rose-500">Удалить</button>
+        </div></div>`;
+    }).join('');
+    box.querySelectorAll('[data-sel-client]').forEach(btn => {
+      btn.onclick = () => { cabinetVm.selectClient(btn.dataset.selClient); renderCabClients(); };
+    });
+  }
+  renderVaultPanel();
+  renderClientDetail();
+}
+
+// ——— Сейф клиентов: статус и разблокировка паролем ———
+function renderVaultPanel() {
+  const box = $('#vault-panel');
+  if (!box) return;
+  const p = cabinetVm.psychologist;
+  if (!p) { box.innerHTML = ''; return; }
+  if (!p.keyVerifier) {
+    box.innerHTML = `<div class="mb-6 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm">
+      <div class="font-medium text-amber-900 mb-1">Сейф клиентов не настроен</div>
+      <p class="text-amber-800 mb-2">Задайте пароль — из него выводится ключ шифрования карточек клиентов (пароль не хранится).</p>
+      <div class="flex flex-wrap gap-2"><input id="vault-pass" type="password" placeholder="Пароль (мин. 6)" class="flex-1 min-w-[180px] px-3 py-2 rounded-xl border"><button id="btn-vault-init" class="px-4 py-2 rounded-full bg-amber-600 text-white text-sm font-medium">Задать и открыть</button></div>
+    </div>`;
+  } else if (!authService.isVaultUnlocked()) {
+    box.innerHTML = `<div class="mb-6 rounded-xl border p-4 text-sm">
+      <div class="font-medium mb-1">🔒 Сейф клиентов закрыт</div>
+      <div class="flex flex-wrap gap-2"><input id="vault-pass" type="password" placeholder="Пароль сейфа" class="flex-1 min-w-[180px] px-3 py-2 rounded-xl border"><button id="btn-vault-unlock" class="px-4 py-2 rounded-full bg-slate-900 text-white text-sm font-medium">Открыть</button></div>
+    </div>`;
+  } else {
+    box.innerHTML = '<div class="mb-6 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">🔓 Сейф открыт — карточки клиентов расшифрованы</div>';
     return;
   }
-  box.innerHTML = list.map(c => {
-    const n = cabinetVm.sessions.filter(s => s.clientId === c.id && s.status !== 'cancelled').length;
-    return `<div class="p-4 flex justify-between items-center border-b last:border-0">
-      <div><div class="font-medium">${c.nickname || c.name}</div>
-      <div class="text-sm text-slate-500">${c.phone || ''} · ${n} сессий</div>
-      ${c.note ? `<div class="text-xs text-slate-400 mt-0.5">${c.note}</div>` : ''}</div>
-      <div class="flex gap-2">
-        <button data-edit-client="${c.id}" class="text-sm text-indigo-600">Изменить</button>
-        <button data-del-client="${c.id}" class="text-sm text-rose-500">Удалить</button>
-      </div></div>`;
+  const init = $('#btn-vault-init');
+  if (init) init.onclick = async () => {
+    const r = await authService.initVaultPassword(p.id, $('#vault-pass')?.value);
+    showToast(r.message, !r.ok);
+    if (r.ok) {
+      supabaseSync.pushProfile(p); // key_verifier → сервер (владелец, по своей сессии)
+      renderCabClients();
+    }
+  };
+  const unl = $('#btn-vault-unlock');
+  if (unl) unl.onclick = async () => {
+    const r = await authService.unlockVault(p.id, $('#vault-pass')?.value);
+    showToast(r.message, !r.ok);
+    if (r.ok) renderCabClients();
+  };
+}
+
+// ——— Карточка клиента: сессии + записи (журнал работы) ———
+// ——— Кабинет: вкладка «Уведомления» (Telegram) ———
+function renderCabTelegram() {
+  const cfg = telegramService.config();
+  const token = $('#tg-token');
+  if (!token) return;
+  if (cfg.botToken && !token.value) token.value = cfg.botToken;
+  const label = $('#tg-chat-label');
+  if (label) label.textContent = cfg.chatId ? `Выбран чат: ${cfg.chatId}${cfg.botName ? ` (бот @${cfg.botName})` : ''}` : 'Чат не выбран';
+  $('#tg-notify-booking').checked = cfg.notifyBooking;
+  $('#tg-notify-reminders').checked = cfg.notifyReminders;
+  $('#tg-notify-payments').checked = cfg.notifyPayments;
+  renderTgClients();
+}
+
+function renderTgClients() {
+  const box = $('#tg-clients');
+  if (!box) return;
+  const cfg = telegramService.config();
+  const clients = cabinetVm.clients;
+  if (!clients.length) { box.innerHTML = '<div class="p-4 text-sm text-slate-400">Клиентов пока нет</div>'; return; }
+  box.innerHTML = clients.map(c => {
+    const invite = `https://t.me/${cfg.botName || 'ваш_бот'}?start=${c.id}`;
+    return `<div class="p-3 flex justify-between items-center gap-2 border-b last:border-0 text-sm">
+      <div><span class="font-medium">${escHtml(c.nickname || c.name)}</span>
+        ${c.telegramChat ? '<span class="text-emerald-600 text-xs"> · ✓ подключен</span>' : '<span class="text-slate-400 text-xs"> · не подключен</span>'}</div>
+      ${c.telegramChat
+        ? `<button data-tg-unlink="${c.id}" class="text-xs text-rose-500">Отключить</button>`
+        : `<button data-tg-copy-invite="${escHtml(invite)}" class="text-xs text-indigo-600">Скопировать приглашение</button>`}
+    </div>`;
   }).join('');
+  box.querySelectorAll('[data-tg-copy-invite]').forEach(btn => {
+    btn.onclick = async () => {
+      try { await navigator.clipboard.writeText(btn.dataset.tgCopyInvite); showToast('Ссылка-приглашение скопирована'); }
+      catch (_) { window.prompt('Скопируйте ссылку:', btn.dataset.tgCopyInvite); }
+    };
+  });
+  box.querySelectorAll('[data-tg-unlink]').forEach(btn => {
+    btn.onclick = async () => {
+      if (!confirm('Отключить Telegram-уведомления этому клиенту?')) return;
+      cabinetVm.setClientTelegramChat(btn.dataset.tgUnlink, '');
+      renderTgClients();
+    };
+  });
+}
+
+function bindTelegramTab() {
+  const psy = cabinetVm.psychologist;
+  if (!psy) return;
+
+  $('#btn-tg-test')?.addEventListener('click', async () => {
+    const token = $('#tg-token')?.value.trim();
+    const out = $('#tg-test-result');
+    if (!token) { out.textContent = 'Введите токен от @BotFather.'; out.className = 'text-xs mt-1 text-rose-500'; return; }
+    out.textContent = 'Проверяем…'; out.className = 'text-xs mt-1 text-slate-400';
+    try {
+      const name = await telegramService.testToken(token);
+      out.innerHTML = `✓ Бот найден: <b>@${escHtml(name)}</b>`;
+      out.className = 'text-xs mt-1 text-emerald-600';
+    } catch (e) {
+      out.textContent = `✗ ${e.message}. Проверьте токен (формат 1234567890:AA…).`;
+      out.className = 'text-xs mt-1 text-rose-500';
+    }
+  });
+
+  $('#btn-tg-find-chat')?.addEventListener('click', async () => {
+    const token = $('#tg-token')?.value.trim();
+    const box = $('#tg-chats');
+    const label = $('#tg-chat-label');
+    if (!token) { showToast('Сначала введите токен бота', true); return; }
+    box.innerHTML = '<div class="text-xs text-slate-400">Ищем сообщения…</div>';
+    try {
+      const chats = await telegramService.recentChats(token);
+      if (!chats.length) {
+        box.innerHTML = '<div class="text-xs text-slate-400">Пока нет сообщений боту. Откройте бота в Telegram и напишите /start, затем повторите.</div>';
+        return;
+      }
+      box.innerHTML = chats.slice(0, 5).map((ch, i) => `
+        <button data-i="${i}" class="w-full text-left px-3 py-2 rounded-xl border hover:bg-indigo-50 text-xs">
+          <b>${escHtml(ch.name || 'Чат ' + ch.chatId)}</b> · chat_id <code>${escHtml(ch.chatId)}</code>
+          ${ch.text ? ` · «${escHtml(ch.text.slice(0, 30))}»` : ''}
+        </button>`).join('');
+      box.querySelectorAll('button[data-i]').forEach(b => {
+        b.onclick = () => {
+          const ch = chats[+b.dataset.i];
+          label.textContent = `Выбран чат: ${ch.chatId}${ch.name ? ` (${ch.name})` : ''}`;
+          label.dataset.chatId = ch.chatId;
+        };
+      });
+    } catch (e) {
+      box.innerHTML = `<div class="text-xs text-rose-500">✗ ${escHtml(e.message)}</div>`;
+    }
+  });
+
+  $('#btn-tg-save')?.addEventListener('click', () => {
+    const token = $('#tg-token')?.value.trim() || '';
+    const chatId = ($('#tg-chat-label')?.dataset.chatId) || telegramService.config().chatId || '';
+    if (!token) { showToast('Введите токен бота', true); return; }
+    if (!chatId) { showToast('Выберите ваш чат («Найти чат»)', true); return; }
+    cabinetVm.saveTelegramSettings({
+      botToken: token,
+      chatId,
+      notifyBooking: $('#tg-notify-booking')?.checked !== false,
+      notifyReminders: $('#tg-notify-reminders')?.checked !== false,
+      notifyPayments: $('#tg-notify-payments')?.checked !== false
+    });
+    telegramService.testToken(token).then(name => {
+      cabinetVm.saveTelegramSettings({ botName: name });
+      renderTgClients();
+    }).catch(() => {});
+    showToast('Настройки Telegram сохранены');
+    renderCabTelegram();
+  });
+
+  $('#btn-tg-link-clients')?.addEventListener('click', async () => {
+    const out = $('#tg-link-result');
+    const token = $('#tg-token')?.value.trim() || telegramService.config().botToken;
+    if (!token) { showToast('Сначала настройте токен бота', true); return; }
+    out.textContent = 'Проверяем…';
+    try {
+      const r = await telegramService.linkClientChats(psy.id);
+      await cabinetVm.refreshClients();
+      out.textContent = `Новых подключений: ${r.linked}`;
+      renderTgClients();
+      renderCabClients();
+      showToast(r.linked ? `Подключено клиентов: ${r.linked}` : 'Новых подключений нет');
+    } catch (e) {
+      out.textContent = `Ошибка: ${e.message}`;
+    }
+  });
+}
+
+function renderClientTelegramBlock(c) {
+  const cfg = telegramService.config();
+  if (c.telegramChat) {
+    return '<div class="mt-3 flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 rounded-xl px-3 py-2"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> Telegram подключен — напоминания о сессиях приходят клиенту.</div>';
+  }
+  const invite = `https://t.me/${cfg.botName || 'ваш_бот'}?start=${c.id}`;
+  return `<div class="mt-3 text-xs">
+    <div class="flex flex-wrap items-center gap-2 text-slate-500">
+      <span>Telegram не подключен</span>
+      <button data-tg-invite class="px-3 py-1 rounded-full border border-indigo-300 text-indigo-700">Как подключить</button>
+      <button data-tg-copy="${esc(invite)}" class="px-3 py-1 rounded-full border border-slate-300 text-slate-600">Скопировать ссылку-приглашение</button>
+    </div>
+    <div data-tg-invite-box class="hidden mt-2 p-3 rounded-xl bg-slate-50 text-slate-600 leading-relaxed">
+      1. Настройте бота — вкладка «Уведомления».<br>
+      2. Отправьте клиенту ссылку: <code class="select-all break-all">${esc(invite)}</code><br>
+      3. Клиент нажимает <b>Start</b> у вашего бота.<br>
+      4. На вкладке «Уведомления» нажмите «Проверить подключения (/start)» — чат привяжется автоматически.
+    </div>
+  </div>`;
+}
+
+window.bindClientTelegramBlock = function (box) {
+  box.querySelectorAll('[data-tg-invite]').forEach(btn => {
+    btn.onclick = () => box.querySelector('[data-tg-invite-box]')?.classList.toggle('hidden');
+  });
+  box.querySelectorAll('[data-tg-copy]').forEach(btn => {
+    btn.onclick = async () => {
+      try { await navigator.clipboard.writeText(btn.dataset.tgCopy); showToast('Ссылка скопирована'); }
+      catch (_) { window.prompt('Скопируйте ссылку:', btn.dataset.tgCopy); }
+    };
+  });
+};
+
+function renderClientDetail() {
+  const box = $('#client-detail');
+  if (!box) return;
+  const c = cabinetVm.selectedClient;
+  if (!c) { box.innerHTML = ''; return; }
+
+  const sessions = cabinetVm.sessions.filter(s => s.clientId === c.id)
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const entries = cabinetVm.clientEntriesOf(c.id);
+
+  box.innerHTML = `
+    <div class="bg-white rounded-xl border p-6">
+      <h2 class="text-lg font-bold">${esc(c.nickname || c.name)}</h2>
+      <div class="text-sm text-slate-500">${esc(c.name || '')}${c.phone ? ' · ' + esc(c.phone) : ''}${c.contact ? ' · ' + esc(c.contact) : ''}</div>
+      ${c.note ? `<div class="text-xs text-slate-400 mt-1">${esc(c.note)}</div>` : ''}
+      ${renderClientTelegramBlock(c)}
+
+      <h3 class="font-semibold text-sm mt-5 mb-2">Сессии (${sessions.length})</h3>
+      ${sessions.length ? `<div class="divide-y border rounded-xl mb-6 max-h-64 overflow-y-auto">
+        ${sessions.map(s => {
+          const sv = cabinetVm.serviceById(s.serviceId);
+          return `<div class="p-2.5 text-sm flex justify-between gap-2">
+            <span class="font-mono text-slate-500 shrink-0">${s.date} ${s.time}</span>
+            <span class="flex-1">${sv?.name || ''}</span>
+            <span class="text-xs px-2 py-0.5 rounded-full ${statusClass(s.status)} shrink-0">${statusLabel(s.status)}</span>
+          </div>`;
+        }).join('')}
+      </div>` : '<p class="text-sm text-slate-400 mb-6">Сессий пока нет</p>'}
+
+      <h3 class="font-semibold text-sm mb-2">Записи о работе (видны только вам)</h3>
+      <div class="flex flex-wrap gap-2 items-end mb-3">
+        <div><label class="text-xs text-slate-500 block">Дата</label><input id="ce-date" type="date" value="${todayStr()}" class="px-3 py-1.5 rounded-xl border text-sm"></div>
+        <input id="ce-text" placeholder="Что происходило, наблюдения, договорённости…" class="flex-1 min-w-[220px] px-3 py-1.5 rounded-xl border text-sm">
+        <button id="btn-add-ce" class="px-4 py-1.5 rounded-full bg-indigo-600 text-white text-sm">Добавить</button>
+      </div>
+      ${entries.length ? `<div class="space-y-2 max-h-80 overflow-y-auto">
+        ${entries.map(e => `
+        <div class="rounded-xl border p-3 text-sm">
+          <div class="flex justify-between items-center">
+            <span class="text-xs text-slate-400">${formatDate(e.date)}${e.sessionId ? ' · по сессии' : ''}</span>
+            <button data-del-entry="${e.id}" class="text-xs text-rose-500">Удалить</button>
+          </div>
+          <div class="whitespace-pre-wrap mt-1">${esc(e.text)}</div>
+        </div>`).join('')}
+      </div>` : '<p class="text-sm text-slate-400">Записей пока нет</p>'}
+    </div>`;
+
+  $('#btn-add-ce')?.addEventListener('click', () => {
+    const text = $('#ce-text')?.value;
+    if (text?.trim()) {
+      cabinetVm.addClientEntry({ clientId: c.id, text, date: $('#ce-date')?.value || todayStr() });
+      renderCabClients();
+    }
+  });
+  bindClientTelegramBlock(box);
+  box.querySelectorAll('[data-del-entry]').forEach(btn => {
+    btn.onclick = () => {
+      if (confirm('Удалить запись?')) {
+        cabinetVm.removeClientEntry(btn.dataset.delEntry);
+        renderCabClients();
+      }
+    };
+  });
 }
 
 function renderCabServices() {
@@ -489,6 +1170,45 @@ function renderCabPayments() {
   }
 }
 
+// ——— Редактор списков публичного профиля (направления, образование, опыт, ссылки) ———
+const PE_FIELDS = {
+  'pe-directions': [['title', 'Название'], ['details', 'Детали (в скобках)']],
+  'pe-edu-basic': [['title', 'Название / программа'], ['institution', 'Учреждение'], ['details', 'Детали']],
+  'pe-edu-extra': [['title', 'Название'], ['institution', 'Учреждение'], ['details', 'Детали']],
+  'pe-experience': [['organisation', 'Организация'], ['details', 'Описание'], ['years', 'Лет']],
+  'pe-links': [['label', 'Подпись кнопки'], ['url', 'URL'], ['kind', 'Тип: service|donation|other']]
+};
+
+function addPeRow(id, values = {}) {
+  const box = document.getElementById(id);
+  const fields = PE_FIELDS[id];
+  if (!box || !fields) return;
+  const row = document.createElement('div');
+  row.className = 'pe-row flex gap-2 items-center';
+  row.innerHTML = fields.map(([key, label]) =>
+    `<input data-pe-key="${key}" placeholder="${esc(label)}" class="flex-1 min-w-0 px-3 py-1.5 rounded-lg border text-sm" value="${esc(values[key] ?? '')}">`
+  ).join('') + '<button type="button" data-pe-del class="text-rose-500 px-1 shrink-0" title="Удалить">✕</button>';
+  row.querySelector('[data-pe-del]').onclick = () => row.remove();
+  box.appendChild(row);
+}
+
+function renderPeList(id, items) {
+  const box = document.getElementById(id);
+  if (!box) return;
+  box.innerHTML = '';
+  (items || []).forEach(it => addPeRow(id, it));
+}
+
+function collectPeList(id) {
+  const box = document.getElementById(id);
+  if (!box) return [];
+  return [...box.querySelectorAll('.pe-row')].map(row => {
+    const obj = {};
+    row.querySelectorAll('[data-pe-key]').forEach(inp => { obj[inp.dataset.peKey] = inp.value.trim(); });
+    return obj;
+  }).filter(o => Object.values(o).some(Boolean));
+}
+
 function renderCabProfile() {
   const p = cabinetVm.psychologist;
   if (!p) return;
@@ -496,15 +1216,200 @@ function renderCabProfile() {
   $('#pf-phone') && ($('#pf-phone').value = p.phone || '');
   $('#pf-spec') && ($('#pf-spec').value = p.specialization || '');
   $('#pf-city') && ($('#pf-city').value = p.city || '');
+  $('#pf-greeting') && ($('#pf-greeting').value = p.greeting || '');
   $('#pf-about') && ($('#pf-about').value = p.about || '');
+  $('#pf-approach') && ($('#pf-approach').value = p.approach || '');
+  $('#pf-photo') && ($('#pf-photo').value = p.photoUrl || '');
+  $('#pf-public-email') && ($('#pf-public-email').value = p.publicEmail || '');
+  $('#pf-address') && ($('#pf-address').value = p.address || '');
+  $('#pf-website') && ($('#pf-website').value = p.website || '');
+  const tg = (p.socials || []).find(s => s.kind === 'telegram');
+  const ig = (p.socials || []).find(s => s.kind === 'instagram');
+  $('#pf-telegram') && ($('#pf-telegram').value = tg?.url || '');
+  $('#pf-instagram') && ($('#pf-instagram').value = ig?.url || '');
   $('#pf-email') && ($('#pf-email').textContent = p.email);
+
+  renderPeList('pe-directions', p.directions);
+  renderPeList('pe-edu-basic', p.education?.basic);
+  renderPeList('pe-edu-extra', p.education?.additional);
+  renderPeList('pe-experience', (p.experienceItems || []).map(x => ({
+    organisation: x.organisation, details: x.details, years: x.years ?? ''
+  })));
+  renderPeList('pe-links', p.paymentLinks);
+
+  const req = p.paymentRequisites || {};
+  $('#pe-req-recipient') && ($('#pe-req-recipient').value = req.recipient || '');
+  $('#pe-req-legal-address') && ($('#pe-req-legal-address').value = req.legalAddress || '');
+  $('#pe-req-unp') && ($('#pe-req-unp').value = req.unp || '');
+  $('#pe-req-account') && ($('#pe-req-account').value = req.account || '');
+  $('#pe-req-bank') && ($('#pe-req-bank').value = req.bankName || '');
+  $('#pe-req-bik') && ($('#pe-req-bik').value = req.bik || '');
+  $('#pe-req-purpose') && ($('#pe-req-purpose').value = req.purpose || '');
+  $('#pe-req-donation') && ($('#pe-req-donation').value = req.donationUrl || '');
 }
 
 function renderCabLink() {
   const p = cabinetVm.psychologist;
-  const url = `${location.origin}${location.pathname}?book=${p.slug}`;
+  const url = urlFor.bookingLink(p.slug);
   $('#pub-link') && ($('#pub-link').value = url);
   $('#pub-slug') && ($('#pub-slug').textContent = p.slug);
+}
+
+function serviceMetaLine(s) {
+  const format = s.format === 'online'
+    ? 'онлайн · ' + ((s.platforms || []).map(x => PLATFORM_TITLES[x] || x).join(', ') || 'Google Meet')
+    : 'очно';
+  return `${s.duration} мин · ${format}`;
+}
+
+/** Публичный профиль психолога на странице записи (модель сайта — без потерь) */
+// ——— Страница специалиста /psy/{slug}: SEO-лендинг (профиль без формы записи) ———
+function renderProfile() {
+  const slug = route.params.slug;
+  const p = db.findPsychologistBySlug(slug);
+  const body = $('#prof-body');
+  if (!body) return;
+  if (!p || !p.isActive) {
+    body.innerHTML = '<div class="text-center py-20 text-slate-400">Страница не найдена. <button class="text-indigo-600" onclick="navigate(\'portal\')">К каталогу</button></div>';
+    return;
+  }
+  $('#prof-header-name') && ($('#prof-header-name').textContent = p.fullName);
+  const services = db.servicesOf(p.id).filter(x => x.isActive !== false);
+
+  const dirs = p.directions || [];
+  const eduBasic = p.education?.basic || [];
+  const eduExtra = p.education?.additional || [];
+  const exp = p.experienceItems || [];
+  const socials = p.socials || [];
+  const links = p.paymentLinks || [];
+  const req = p.paymentRequisites || {};
+  const hasReq = req.recipient || req.account || req.unp || req.purpose;
+  const bookUrl = urlFor.book(p.slug);
+
+  const eduList = items => items.length
+    ? `<ul class="mt-2 space-y-1.5 text-sm text-slate-700 list-disc list-inside">${items.map(x =>
+        `<li>${esc(x.title)}${x.institution ? ` — <span class="text-slate-500">${esc(x.institution)}</span>` : ''}${x.details ? ` <span class="text-slate-500">(${esc(x.details)})</span>` : ''}</li>`).join('')}</ul>`
+    : '';
+
+  const expHtml = exp.length
+    ? `<ul class="mt-2 space-y-1.5 text-sm text-slate-700 list-disc list-inside">${exp.map(x =>
+        `<li><span class="font-medium">${esc(x.organisation || x.details)}</span>${x.details && x.organisation ? ` — ${esc(x.details)}` : ''}${x.years ? ` <span class="text-slate-500">(${esc(x.years)} ${x.isCurrent ? 'лет, по наст. время' : 'лет'})</span>` : ''}</li>`).join('')}</ul>`
+    : (p.experience ? `<p class="mt-2 text-sm text-slate-700">${esc(p.experience)}</p>` : '');
+
+  const reqHtml = hasReq ? `
+      <h3 class="font-semibold text-slate-900 mt-6">Реквизиты для оплаты</h3>
+      <div class="mt-2 text-sm text-slate-700 space-y-0.5">
+        ${req.recipient ? `<div>Получатель: ${esc(req.recipient)}</div>` : ''}
+        ${req.legalAddress ? `<div>Адрес: ${esc(req.legalAddress)}</div>` : ''}
+        ${req.unp ? `<div>УНП: ${esc(req.unp)}</div>` : ''}
+        ${req.account ? `<div>Р/с: ${esc(req.account)}</div>` : ''}
+        ${req.bankName ? `<div>Банк: ${esc(req.bankName)}</div>` : ''}
+        ${req.bik ? `<div>БИК: ${esc(req.bik)}</div>` : ''}
+        ${req.purpose ? `<div>Назначение платежа: ${esc(req.purpose)}</div>` : ''}
+      </div>` : '';
+
+  // —— Контакты и связь: телефон + мессенджеры + соцсети (как принято на сайтах специалистов) ——
+  const digits = String(p.phone || '').replace(/\D/g, '');
+  const tg = socials.find(x => x.kind === 'telegram' && x.url);
+  const ig = socials.find(x => x.kind === 'instagram' && x.url);
+  const contactBtns = [
+    p.phone ? `<a href="tel:+${esc(digits)}" class="px-4 py-2 rounded-full bg-slate-900 text-white text-sm font-medium">📞 ${esc(p.phone)}</a>` : '',
+    digits ? `<a href="https://wa.me/${esc(digits)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full bg-emerald-500 text-white text-sm font-medium">WhatsApp</a>` : '',
+    digits ? `<a href="viber://chat?number=%2B${esc(digits)}" class="px-4 py-2 rounded-full bg-violet-600 text-white text-sm font-medium">Viber</a>` : '',
+    tg ? `<a href="${esc(tg.url)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full bg-sky-500 text-white text-sm font-medium">Telegram</a>` : '',
+    p.publicEmail ? `<a href="mailto:${esc(p.publicEmail)}" class="px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium">✉️ Email</a>` : '',
+    ig ? `<a href="${esc(ig.url)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium">Instagram</a>` : '',
+    p.website ? `<a href="${esc(p.website)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium">🌐 Сайт</a>` : ''
+  ].filter(Boolean).join('');
+
+  // —— Адрес практики и схема проезда (как на сайте специалиста) ——
+  const mapQuery = [p.city, p.address].filter(Boolean).join(', ');
+  const addressHtml = (p.address || p.city) ? `
+      <h3 class="font-semibold text-slate-900 mt-6">Адрес практики и проезд</h3>
+      <p class="mt-2 text-sm text-slate-700">${esc([p.address, p.city].filter(Boolean).join(', '))}</p>
+      ${p.address ? `
+      <div class="mt-3 rounded-xl overflow-hidden border">
+        <iframe src="https://maps.google.com/maps?q=${encodeURIComponent(mapQuery)}&z=15&output=embed" width="100%" height="260" style="border:0" loading="lazy" title="Схема проезда"></iframe>
+      </div>
+      <div class="mt-2 flex flex-wrap gap-2">
+        <a href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(mapQuery)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium">🚗 Маршрут (Google Maps)</a>
+        <a href="https://yandex.ru/maps/?text=${encodeURIComponent(mapQuery)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium">🚕 Маршрут (Яндекс)</a>
+      </div>` : ''}` : '';
+
+  // пометка первоисточника (фото/данные — с официального сайта специалиста, через БД портала)
+  const srcHost = (() => { try { return new URL(p.sourceUrl).hostname; } catch { return ''; } })();
+
+  // панель для владельца (видна только ему)
+  const own = authService.isAuthenticated()
+    && authService.currentPsychologist && authService.currentPsychologist.id === p.id;
+  const banner = own ? `
+    <div class="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 flex flex-wrap items-center gap-3">
+      <span class="text-sm font-medium text-emerald-800 flex-1">✓ Это ваша публичная страница — так её видят клиенты</span>
+      <button data-cabtab="journal" class="own-page-btn px-4 py-2 rounded-full bg-emerald-600 text-white text-sm font-medium">Книга записей</button>
+      <button data-cabtab="tasks" class="own-page-btn px-4 py-2 rounded-full border border-emerald-300 text-emerald-700 text-sm font-medium bg-white">Задачи</button>
+      <button data-cabtab="notepad" class="own-page-btn px-4 py-2 rounded-full border border-emerald-300 text-emerald-700 text-sm font-medium bg-white">Блокнот</button>
+      <button data-cabtab="home" class="own-page-btn px-4 py-2 rounded-full border border-emerald-300 text-emerald-700 text-sm font-medium bg-white">Кабинет</button>
+    </div>` : '';
+
+  body.innerHTML = `${banner}
+    <div class="rounded-2xl bg-white border p-6">
+      <div class="flex flex-col sm:flex-row gap-5 items-start">
+        ${p.photoUrl
+          ? `<img src="${esc(p.photoUrl)}" alt="${esc(p.fullName)}" class="w-36 h-36 object-cover rounded-2xl shrink-0">`
+          : `<div class="w-36 h-36 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-4xl shrink-0">${esc(p.fullName.split(' ').map(x => x[0]).slice(0, 2).join(''))}</div>`}
+        <div class="flex-1">
+          <p class="text-slate-600">${esc(p.greeting || '')}</p>
+          ${p.about ? `<p class="text-sm text-slate-700 mt-2">${esc(p.about)}</p>` : ''}
+          ${p.approach ? `<p class="text-sm text-slate-700 mt-2">${esc(p.approach)}</p>` : ''}
+          <div class="mt-4 flex flex-wrap items-center gap-3">
+            <a href="${esc(bookUrl)}" data-spa-book data-slug="${esc(p.slug)}" class="px-8 py-3 rounded-full bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700">Записаться на консультацию</a>
+            <button onclick="sharePsyLink('${esc(p.slug || p.id)}')" class="inline-flex items-center gap-1.5 text-sm text-indigo-600 hover:underline">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>
+              Поделиться специалистом
+            </button>
+          </div>
+        </div>
+      </div>
+
+      ${dirs.length ? `
+      <h3 class="font-semibold text-slate-900 mt-6">С чем могу помочь</h3>
+      <ul class="mt-2 space-y-1.5 text-sm text-slate-700 list-disc list-inside">
+        ${dirs.map(d => `<li>${esc(d.title)}${d.details ? ` <span class="text-slate-500">(${esc(d.details)})</span>` : ''}</li>`).join('')}
+      </ul>` : ''}
+
+      ${services.length ? `
+      <h3 class="font-semibold text-slate-900 mt-6">Услуги и стоимость</h3>
+      <div class="mt-2 divide-y border rounded-xl overflow-hidden">
+        ${services.map(x => `
+        <div class="p-3 flex justify-between items-start gap-3 text-sm">
+          <div><div class="font-medium">${esc(x.name)}</div>
+          <div class="text-slate-500">${esc(serviceMetaLine(x))}</div>
+          ${x.description ? `<div class="text-slate-500">${esc(x.description)}</div>` : ''}</div>
+          <div class="font-semibold text-indigo-700 whitespace-nowrap">${esc(x.priceLabel())}</div>
+        </div>`).join('')}
+      </div>` : ''}
+
+      ${eduBasic.length ? `<h3 class="font-semibold text-slate-900 mt-6">Психологическое образование</h3>${eduList(eduBasic)}` : ''}
+      ${eduExtra.length ? `<h3 class="font-semibold text-slate-900 mt-6">Дополнительное образование</h3>${eduList(eduExtra)}` : ''}
+
+      ${expHtml ? `<h3 class="font-semibold text-slate-900 mt-6">Опыт</h3>${expHtml}` : ''}
+
+      ${links.length ? `
+      <h3 class="font-semibold text-slate-900 mt-6">Оплата онлайн</h3>
+      <div class="mt-2 flex flex-wrap gap-2">
+        ${links.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">${esc(l.label)}</a>`).join('')}
+      </div>` : ''}
+      ${reqHtml}
+
+      ${addressHtml}
+
+      ${contactBtns ? `<h3 class="font-semibold text-slate-900 mt-6">Связь и мессенджеры</h3>
+      <div class="mt-2 flex flex-wrap gap-2">${contactBtns}</div>` : ''}
+    </div>
+    ${srcHost ? `<p class="mt-4 text-xs text-slate-400 text-center">Профиль из БД портала · фото и данные — с официального сайта: <a href="${esc(p.sourceUrl)}" target="_blank" rel="noopener" class="underline">${esc(srcHost)}</a></p>` : ''}`;
+
+  // SEO-лендинг: canonical/OG/JSON-LD именно здесь
+  try { applyProfileSeo(p, services, urlFor.psy(p.slug)); } catch (e) { console.warn('seo', e); }
 }
 
 function renderBooking() {
@@ -523,18 +1428,30 @@ function renderBooking() {
     return;
   }
   const p = bookingVm.psychologist;
+  // компактная головка: кто, где, ссылка на профиль
   $('#book-psy-name') && ($('#book-psy-name').textContent = p.fullName);
   $('#book-psy-spec') && ($('#book-psy-spec').textContent = p.specialization);
   $('#book-psy-city') && ($('#book-psy-city').textContent = (p.city || 'Онлайн') + ' · при необходимости Google Meet');
+  const photo = $('#book-psy-photo');
+  if (photo) {
+    if (p.photoUrl) { photo.src = p.photoUrl; photo.classList.remove('hidden'); }
+    else photo.classList.add('hidden');
+  }
+  const toProfile = $('#book-to-profile');
+  if (toProfile) toProfile.href = urlFor.psy(p.slug);
+  // SEO страницы записи (лёгкое: JSON-LD остаётся на профиле)
+  try { applyBookingSeo(p, urlFor.book(p.slug)); } catch (e) { console.warn('seo', e); }
 
   const svcBox = $('#book-services');
   if (svcBox) {
     svcBox.innerHTML = bookingVm.services.map(s => `
       <label class="flex items-start gap-4 p-4 rounded-xl border-2 cursor-pointer ${bookingVm.serviceId === s.id ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200'}">
         <input type="radio" name="bs" value="${s.id}" ${bookingVm.serviceId === s.id ? 'checked' : ''} class="mt-1 accent-indigo-600">
-        <div class="flex-1"><div class="font-medium">${s.name}</div>
-        <div class="text-sm text-slate-500">${s.duration} мин · ${s.format === 'online' ? 'онлайн · Google Meet' : 'очно'}</div></div>
-        <div class="font-semibold text-indigo-700">${s.priceLabel()}</div>
+        <div class="flex-1"><div class="font-medium">${esc(s.name)}</div>
+        <div class="text-sm text-slate-500">${esc(serviceMetaLine(s))}</div>
+        ${s.description ? `<div class="text-sm text-slate-500 mt-0.5">${esc(s.description)}</div>` : ''}
+        ${s.payUrl ? `<a href="${esc(s.payUrl)}" target="_blank" rel="noopener" class="inline-block mt-1 text-sm text-indigo-600 hover:underline" onclick="event.stopPropagation()">Оплатить ↗</a>` : ''}</div>
+        <div class="font-semibold text-indigo-700">${esc(s.priceLabel())}</div>
       </label>`).join('');
     svcBox.querySelectorAll('input').forEach(inp => {
       inp.onchange = () => { bookingVm.selectService(inp.value); renderBooking(); };
@@ -543,9 +1460,10 @@ function renderBooking() {
 
   const rangeBox = $('#book-range');
   if (rangeBox) {
-    rangeBox.innerHTML = bookingVm.dateRangeOptions.map(o => `
-      <button type="button" data-range="${o.id}" class="px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap ${bookingVm.dateRange === o.id ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}">${o.label}</button>
-    `).join('');
+    rangeBox.innerHTML = bookingVm.dateRangeOptions.map(o => {
+      const free = bookingVm.freeCountInRange(o.days);
+      return `<button type="button" data-range="${o.id}" class="px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap ${bookingVm.dateRange === o.id ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}">${o.label}${free ? ` · ${free}` : ''}</button>`;
+    }).join('');
     rangeBox.querySelectorAll('button').forEach(btn => {
       btn.onclick = () => { bookingVm.setDateRange(btn.dataset.range); renderBooking(); };
     });
@@ -553,9 +1471,11 @@ function renderBooking() {
 
   const daysBox = $('#book-days');
   if (daysBox) {
-    daysBox.innerHTML = bookingVm.availableDays.map(d => `
-      <button type="button" data-day="${d}" class="px-4 py-2 rounded-full text-sm whitespace-nowrap ${bookingVm.date === d ? 'bg-indigo-600 text-white' : 'bg-white border border-slate-200'}">${formatDate(d)}</button>
-    `).join('');
+    daysBox.innerHTML = bookingVm.availableDays.map(d => {
+      const off = bookingVm.dayBlockTitle(d);
+      const label = off ? ` · ${esc(off)}` : '';
+      return `<button type="button" data-day="${d}" class="px-4 py-2 rounded-full text-sm whitespace-nowrap ${bookingVm.date === d ? 'bg-indigo-600 text-white' : 'bg-white border border-slate-200'}">${formatDate(d)}${label}</button>`;
+    }).join('');
     daysBox.querySelectorAll('button').forEach(btn => {
       btn.onclick = () => { bookingVm.selectDate(btn.dataset.day); renderBooking(); };
     });
@@ -650,10 +1570,45 @@ function renderClientReply() {
 
 function renderSuccess() {
   $('#success-text') && ($('#success-text').textContent = bookingVm.successText || 'Заявка принята');
+  // «Добавить в Google Calendar» (аналог Calendly/Booksy) — для созданной записи
+  const box = $('#success-gcal');
+  if (!box) return;
+  const s = bookingVm.createdSessionId ? db.sessions.find(x => x.id === bookingVm.createdSessionId) : null;
+  const p = bookingVm.psychologist;
+  const sv = bookingVm.selectedService;
+  if (s && p) {
+    box.href = googleAddLink({
+      title: `${sv?.name || 'Консультация'} · ${p.fullName}`,
+      date: s.date,
+      time: s.time,
+      durationMin: sv?.duration || 60,
+      location: s.meetLink || '',
+      details: p.greeting || '',
+      timezone: bookingVm.settings?.timezone || 'Europe/Minsk'
+    });
+    box.classList.remove('hidden');
+  } else {
+    box.classList.add('hidden');
+  }
 }
 
 // ——— Event bindings ———
 function bindEvents() {
+  // Реальные <a href> (индексируются) + SPA-навигация без перезагрузки
+  document.addEventListener('click', e => {
+    const bookA = e.target.closest('a[data-spa-book]');
+    if (bookA) {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      e.preventDefault();
+      navigate('booking', { slug: bookA.dataset.slug });
+      return;
+    }
+    const a = e.target.closest('a[data-spa]');
+    if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    navigate('profile', { slug: a.dataset.slug });
+  });
+
   // Portal search
   $('#portal-search')?.addEventListener('input', e => {
     portalVm.setQuery(e.target.value);
@@ -673,30 +1628,36 @@ function bindEvents() {
   });
   $('#auth-send')?.addEventListener('click', async () => {
     authVm.email = $('#auth-email')?.value || '';
+    collectAuthRegFields();
     await authVm.requestCode();
     renderAuth();
-    if (authVm.demoCode) showToast('Код: ' + authVm.demoCode);
+  });
+  $('#auth-resend')?.addEventListener('click', async () => {
+    if (authVm.resendIn > 0) return;
+    await authVm.requestCode();
+    renderAuth();
   });
   $('#auth-confirm')?.addEventListener('click', async () => {
     authVm.email = $('#auth-email')?.value || authVm.email;
     authVm.code = $('#auth-code')?.value || '';
     authVm.password = $('#auth-password')?.value || '';
-    if (authVm.mode === 'register') {
-      authVm.fullName = $('#auth-fullname')?.value || '';
-      authVm.phone = $('#auth-phone')?.value || '';
-      authVm.specialization = $('#auth-spec')?.value || 'Психолог';
-      authVm.city = $('#auth-city')?.value || '';
-    }
+    collectAuthRegFields();
     const psy = await authVm.confirmCode();
     renderAuth();
     if (psy) {
+      // кабинет — с сервера (clients/sessions/settings/blocks/tasks/notes/entries/waiting)
+      try { await cabinetApi.refresh(psy.id); } catch (e) { console.warn('pull cabinet', e); }
       await cabinetVm.refreshClients();
+      startTelegramLoops(psy.id);
       navigate('cabinet');
     }
   });
+  $('#auth-code')?.addEventListener('input', e => {
+    // только латиница/цифры, верхний регистр — код из письма вводится без ошибок
+    e.target.value = String(e.target.value).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+  });
   $('#auth-back-email')?.addEventListener('click', () => {
     authVm.step = 'email';
-    authVm.demoCode = '';
     authVm.error = '';
     authVm.notify();
     renderAuth();
@@ -749,13 +1710,137 @@ function bindEvents() {
     navigate('portal');
   });
   $('#btn-save-profile')?.addEventListener('click', () => {
+    const p = cabinetVm.psychologist;
+    const socials = [...(p?.socials || []).filter(s => !['telegram', 'instagram'].includes(s.kind))];
+    const tg = $('#pf-telegram')?.value?.trim();
+    const ig = $('#pf-instagram')?.value?.trim();
+    if (tg) socials.push({ kind: 'telegram', url: tg, title: 'telegram' });
+    if (ig) socials.push({ kind: 'instagram', url: ig, title: 'instagram' });
+
+    const eduItem = x => ({ title: x.title || '', institution: x.institution || '', details: x.details || '' });
+    const directions = collectPeList('pe-directions').map(x => ({ title: x.title || '', details: x.details || '' }));
+    const eduBasic = collectPeList('pe-edu-basic').map(eduItem);
+    const eduExtra = collectPeList('pe-edu-extra').map(eduItem);
+    const experienceItems = collectPeList('pe-experience').map(x => ({
+      organisation: x.organisation || '',
+      details: x.details || '',
+      years: x.years !== '' && x.years != null ? Number(x.years) : null,
+      isCurrent: (p?.experienceItems || []).find(e => e.organisation === x.organisation)?.isCurrent ?? false
+    }));
+    const paymentLinks = collectPeList('pe-links').map(x => ({
+      label: x.label || '', url: x.url || '', kind: x.kind || 'other'
+    }));
+
     cabinetVm.updateProfile({
       fullName: $('#pf-name')?.value,
       phone: $('#pf-phone')?.value,
       specialization: $('#pf-spec')?.value,
       city: $('#pf-city')?.value,
-      about: $('#pf-about')?.value
+      greeting: $('#pf-greeting')?.value,
+      about: $('#pf-about')?.value,
+      approach: $('#pf-approach')?.value,
+      photoUrl: $('#pf-photo')?.value,
+      publicEmail: $('#pf-public-email')?.value,
+      address: $('#pf-address')?.value,
+      website: $('#pf-website')?.value,
+      socials,
+      directions,
+      education: { basic: eduBasic, additional: eduExtra },
+      experienceItems,
+      paymentLinks,
+      paymentRequisites: {
+        ...(p?.paymentRequisites || {}),
+        recipient: $('#pe-req-recipient')?.value?.trim() || '',
+        legalAddress: $('#pe-req-legal-address')?.value?.trim() || '',
+        unp: $('#pe-req-unp')?.value?.trim() || '',
+        account: $('#pe-req-account')?.value?.trim() || '',
+        bankName: $('#pe-req-bank')?.value?.trim() || '',
+        bik: $('#pe-req-bik')?.value?.trim() || '',
+        purpose: $('#pe-req-purpose')?.value?.trim() || '',
+        donationUrl: $('#pe-req-donation')?.value?.trim() || ''
+      }
     });
+    renderCabinet();
+  });
+
+  // ——— Задачи ———
+  $('#btn-add-task')?.addEventListener('click', () => {
+    cabinetVm.addTask({
+      title: $('#task-title')?.value,
+      details: $('#task-details')?.value,
+      dueDate: $('#task-due')?.value,
+      clientId: $('#task-client')?.value || null
+    });
+    ['#task-title', '#task-details', '#task-due'].forEach(s => { const el = $(s); if (el) el.value = ''; });
+    renderCabTasks();
+  });
+
+  // ——— Блокнот ———
+  $('#btn-add-note')?.addEventListener('click', () => {
+    cabinetVm.addNote({
+      title: $('#note-title')?.value,
+      body: $('#note-body')?.value,
+      date: $('#note-date')?.value
+    });
+    ['#note-title', '#note-body', '#note-date'].forEach(s => { const el = $(s); if (el) el.value = ''; });
+    renderCabNotepad();
+  });
+
+  // ——— Панель владельца на своей странице + скролл к форме записи ———
+  document.addEventListener('click', e => {
+    const cab = e.target.closest('[data-cabtab]');
+    if (cab) {
+      e.preventDefault();
+      if (!authService.isAuthenticated()) { navigate('auth', { mode: 'login' }); return; }
+      cabinetVm.tab = cab.dataset.cabtab;
+      navigate('cabinet');
+      return;
+    }
+    const sc = e.target.closest('[data-scroll-book]');
+    if (sc) {
+      e.preventDefault();
+      document.getElementById('book-form-block')?.scrollIntoView({ behavior: 'smooth' });
+    }
+  });
+
+  // добавление строк в списки профиля
+  document.addEventListener('click', e => {
+    const add = e.target.closest('[data-pe-add]');
+    if (add) addPeRow(add.dataset.peAdd);
+  });
+
+  // ——— Занятость: блокировки + Google Calendar ———
+  $('#btn-add-block')?.addEventListener('click', () => {
+    const ok = cabinetVm.addBlock({
+      dateFrom: $('#blk-date-from')?.value,
+      dateTo: $('#blk-date-to')?.value,
+      timeFrom: $('#blk-time-from')?.value,
+      timeTo: $('#blk-time-to')?.value,
+      kind: $('#blk-kind')?.value,
+      title: $('#blk-title')?.value,
+      note: $('#blk-note')?.value
+    });
+    if (ok) {
+      ['#blk-date-from', '#blk-date-to', '#blk-time-from', '#blk-time-to', '#blk-title', '#blk-note']
+        .forEach(sel => { const el = $(sel); if (el) el.value = ''; });
+    }
+    renderCabinet();
+  });
+
+  $('#btn-save-gcal')?.addEventListener('click', () => {
+    cabinetVm.saveCalendarSettings({
+      googleCalendarIcalUrl: $('#set-gcal-url')?.value,
+      googleSyncBusy: $('#set-gcal-sync')?.checked
+    });
+    renderCabinet();
+  });
+
+  $('#btn-sync-gcal')?.addEventListener('click', async () => {
+    cabinetVm.saveCalendarSettings({
+      googleCalendarIcalUrl: $('#set-gcal-url')?.value,
+      googleSyncBusy: $('#set-gcal-sync')?.checked
+    });
+    await cabinetVm.syncGoogleCalendar();
     renderCabinet();
   });
   $('#btn-copy-link')?.addEventListener('click', () => {
@@ -1041,37 +2126,72 @@ function openServiceModal() {
 }
 
 // ——— Boot ———
+// —— Источник данных каталога: 'server' | 'demo' | 'none' (строго серверный режим) ——
+portalVm.source = 'loading';
+portalVm.serverError = '';
+
+/** Жёстко серверная загрузка каталога. Никаких локальных подмен:
+ *  ошибка/пусто → честный экран с причиной (см. renderPortal). */
+async function loadServerCatalog() {
+  portalVm.source = 'loading';
+  portalVm.serverError = '';
+  renderPortal();
+  if (!isSupabaseConfigured()) {
+    db.psychologists = [];
+    db.services = [];
+    db.settings = [];
+    portalVm.source = 'none';
+    portalVm.serverError = 'SUPABASE_URL / SUPABASE_ANON_KEY не заданы (js/services/supabaseConfig.js)';
+    renderPortal();
+    return false;
+  }
+  try {
+    const result = await supabaseSync.pullAll();
+    if (!result.ok) throw new Error(result.message || 'Сервер не вернул данные');
+    portalVm.source = 'server';
+    showToast('Каталог загружен с сервера');
+    console.info('[Supabase] server catalog loaded:', result.message);
+    renderPortal();
+    return true;
+  } catch (e) {
+    // не показываем локальный seed как «настоящий» — только честная ошибка
+    db.psychologists = [];
+    db.services = [];
+    db.settings = [];
+    db.scheduleBlocks = [];
+    portalVm.source = 'none';
+    portalVm.serverError = String(e.message || e);
+    console.error('[Supabase] catalog load failed:', e);
+    renderPortal();
+    return false;
+  }
+}
+
+window.retryServerData = () => { loadServerCatalog(); };
+/** Демо — только по явному клику, с жёлтой плашкой «ДЕМО» */
+window.enableDemoData = () => {
+  db.resetToSeed();
+  portalVm.source = 'demo';
+  portalVm.serverError = '';
+  showToast('Включены демонстрационные данные (не из БД)');
+  renderPortal();
+};
+
 function boot() {
   bindEvents();
   (async () => {
-    if (!isSupabaseConfigured()) {
-      db.psychologists = [];
-      db.services = [];
-      showToast('Серверная БД не настроена — каталог не загружен', true);
-    } else {
-      try {
-        const result = await supabaseSync.pullAll();
-        if (!result.ok) throw new Error(result.message || 'Не удалось загрузить каталог с сервера');
-        console.info('[Supabase] server catalog loaded', result.message);
-      } catch (e) {
-        // Fail closed: не показываем устаревший локальный seed как будто это серверные данные.
-        db.psychologists = [];
-        db.services = [];
-        console.error('[Supabase] initial catalog load failed', e);
-        showToast('Не удалось загрузить каталог с сервера', true);
-      }
+    // стартовый маршрут — из URL (индексируемые ссылки /psy/{slug}, /book/{slug} + легаси)
+    bookingVm.onAvailability = () => { if (route.name === 'booking') renderBooking(); };
+    route = routeFromUrl();
+    if (route.name === 'cabinet' && !authService.isAuthenticated()) {
+      route = { name: 'auth', params: { mode: 'login' } };
     }
-
-    const params = new URLSearchParams(location.search);
-    const book = params.get('book');
-    if (book) {
-      navigate('booking', { slug: book });
-    } else if (authService.isAuthenticated() && params.get('cabinet') === '1') {
-      navigate('cabinet');
-    } else {
-      navigate('portal');
-    }
+    navigate(route.name, route.params, { push: false });
+    await loadServerCatalog();
   })();
 }
 
 boot();
+
+// экспорт для смоук-тестов (verify_app / auth-flow)
+export { portalVm, authVm, cabinetVm, bookingVm };

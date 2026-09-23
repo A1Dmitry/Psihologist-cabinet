@@ -4,7 +4,8 @@
  */
 import {
   Psychologist, EmailCode, Service, Client, Session, WaitingItem, SessionSettings,
-  Payment, BookingAttempt, ClientRisk, PaymentPolicy, SessionReminder
+  Payment, BookingAttempt, ClientRisk, PaymentPolicy, SessionReminder, ScheduleBlock,
+  Task, PsyNote, ClientEntry
 } from '../models/entities.js';
 
 const STORAGE_KEY = 'psy_portal_cf_v5';
@@ -73,6 +74,7 @@ export class DbContext {
     this.bookingAttempts = [];
     this.clientRisks = [];
     this.reminders = [];
+    this.scheduleBlocks = [];
     this.currentPsychologistId = null;
     this._load();
   }
@@ -91,6 +93,10 @@ export class DbContext {
       bookingAttempts: this.bookingAttempts,
       clientRisks: this.clientRisks,
       reminders: this.reminders,
+      scheduleBlocks: this.scheduleBlocks,
+      tasks: this.tasks,
+      notes: this.notes,
+      clientEntries: this.clientEntries,
       currentPsychologistId: this.currentPsychologistId
     };
   }
@@ -118,6 +124,7 @@ export class DbContext {
       this.bookingAttempts = (data.bookingAttempts || []).map(x => new BookingAttempt(x));
       this.clientRisks = (data.clientRisks || []).map(x => new ClientRisk(x));
       this.reminders = (data.reminders || []).map(x => new SessionReminder(x));
+      this.scheduleBlocks = (data.scheduleBlocks || []).map(x => new ScheduleBlock(x));
       this.currentPsychologistId = data.currentPsychologistId || null;
       if (!this.psychologists.length) this._seed();
     } catch {
@@ -149,20 +156,84 @@ export class DbContext {
       { fullName: 'Мария Вакер', city: 'Гродно', specialization: 'Психолог; экзистенциальный подход', about: 'Публичная анкета: практикующий психолог, индивидуальное и парное консультирование, очный и онлайн-форматы.', website: 'https://www.b17.ru/vaker_mariya/', sourceUrl: 'https://www.b17.ru/vaker_mariya/', experience: 'Практика с 2012 года по описанию профиля' },
       { fullName: 'Павел Гаврилик', city: 'Гродно', specialization: 'Психолог для пар и индивидуальных клиентов', about: 'Публичная анкета: диалог в отношениях, тревога и самооценка; очный и онлайн-форматы.', website: 'https://www.b17.ru/haurylik_pavel/', sourceUrl: 'https://www.b17.ru/haurylik_pavel/', experience: '2000+ часов практики по описанию профиля' },
       { fullName: 'Александр Кох', city: 'Гродно', specialization: 'Психолог, системный семейный психолог', about: 'Публичная анкета: системная семейная психотерапия; автор книги «Разговор со Страхом».', website: 'https://www.b17.ru/koh/', sourceUrl: 'https://www.b17.ru/koh/', experience: '7 лет на B17' },
-      { fullName: 'Наталия Михайловская', city: 'Гродно', phone: '+375 (29) 780-45-45', specialization: 'Гештальт-терапевт, кризисный и семейный психолог', about: 'Работа с отношениями, кризисами, тревогой, самооценкой, личными границами, эмоциональным выгоранием и семейными запросами. Использует гештальт-подход, системную семейную терапию, НЛП/ИНП и МАК.', website: 'http://nataliamikhailouskaya.by/', sourceUrl: 'https://www.b17.ru/mikhailouskayanataliy/', address: 'г. Гродно, ул. Свердлова, 16', experience: '10 лет работы в областном клиническом центре и 10 лет частной практики по данным официального сайта' }
-    ].map((p, index) => new Psychologist({
+      { fullName: 'Наталия Михайловская', city: 'Гродно', phone: '+375 (29) 780-45-45',
+        publicEmail: 'mikhailouskayanataliya@gmail.com',
+        specialization: 'Гештальт-терапевт, кризисный и семейный психолог',
+        greeting: 'Добро пожаловать. Меня зовут Наталия Михайловская.',
+        about: 'Работа с отношениями, кризисами, тревогой, самооценкой, личными границами, эмоциональным выгоранием и семейными запросами. Использует гештальт-подход, системную семейную терапию, НЛП/ИНП и МАК.',
+        approach: 'В своей работе я использую методы и концепции из различных направлений психотерапии, подбирая их под психические особенности клиента.',
+        photoUrl: 'https://optim.tildacdn.biz/tild3136-3339-4362-b337-613561643332/-/format/webp/IMG_6796.JPG.webp',
+        website: 'https://nataliamikhailouskaya.by/', sourceUrl: 'https://nataliamikhailouskaya.by/',
+        address: 'г. Гродно, ул. Свердлова, 16', experience: '10 лет работы в областном клиническом центре и 10 лет частной практики по данным официального сайта',
+        // «Направления моей работы» / «С чем могу помочь»
+        directions: [
+          { title: 'Взаимоотношения', details: 'созависимые, кризисы, сложности в построении отношений: супружеских, партнёрских, детско-родительских; переживания измены, болезненные расставания и разводы' },
+          { title: 'Страхи, повышенная тревожность', details: '' },
+          { title: 'Неуверенность в себе, низкая самооценка, поиск себя', details: '' },
+          { title: 'Переживания злости, обиды, стыда, чувство вины', details: '' },
+          { title: 'Личные границы', details: '' },
+          { title: 'Стресс, упадок сил, эмоциональное выгорание', details: '' }
+        ],
+        education: {
+          basic: [
+            { title: 'Гродненский государственный университет им. Я. Купалы, факультет психологии (5-ти летнее обучение)', institution: 'Гродненский государственный университет им. Я. Купалы', details: 'факультет психологии; 5-ти летнее обучение' },
+            { title: 'Московский Гештальт Институт (МГИ)', institution: 'Московский Гештальт Институт (МГИ)', details: '' }
+          ],
+          additional: [
+            { title: 'Специалист в области кризисов и травм', institution: '', details: '' },
+            { title: 'Специалист в области семейной системной психотерапии', institution: '', details: '' },
+            { title: 'Психотерапия секса и сексуальных отношений', institution: '', details: '' },
+            { title: 'Сертифицированный НЛП-практик', institution: '', details: '' },
+            { title: 'Специалист по использованию метафорических ассоциативных карт', institution: '', details: '' }
+          ]
+        },
+        experienceItems: [
+          { organisation: 'Областной клинический центр «Психиатрия-наркология»', details: 'В данный момент работаю в областном клиническом центре «Психиатрия-наркология» 10 лет', years: 10, isCurrent: true },
+          { organisation: 'Частная практика', details: 'Также консультирую на протяжении 10 лет в рамках частной практики', years: 10, isCurrent: true }
+        ],
+        socials: [
+          { kind: 'telegram', url: 'https://t.me/psyholog_natali', title: 'telegram' },
+          { kind: 'instagram', url: 'https://www.instagram.com/psyholog__natali', title: 'instagram' }
+        ],
+        paymentLinks: [
+          { label: 'Очная/онлайн консультации', url: 'https://api.bepaid.by/products/prd_4b68b00019808a21/pay', kind: 'service' },
+          { label: 'Семейная консультация', url: 'https://api.bepaid.by/products/prd_eec3c942ea52cfed/pay', kind: 'service' },
+          { label: 'Свободный платёж', url: 'https://nataliamikhailouskaya.by/donation', kind: 'donation' }
+        ],
+        paymentRequisites: {
+          recipient: 'ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ МИХАЙЛОВСКАЯ НАТАЛИЯ МИХАЙЛОВНА',
+          legalAddress: 'РБ, Г. ГРОДНО, УЛ. ПРОЛЕТАРСКАЯ, Д. 54 ОФ. 65',
+          unp: '591945736',
+          account: 'BY67ALFA30132A03540010270000',
+          bankName: 'ЗАО «Альфа-Банк»',
+          bik: 'ALFABY2X',
+          purpose: 'оплата за консультацию по охране здоровья или консультация',
+          donationUrl: 'https://nataliamikhailouskaya.by/donation'
+        },
+        services: [
+          { name: 'Очная консультация', price: 80, currency: 'BYN', duration: 60, format: 'offline', description: 'в г. Гродно (Беларусь)', payUrl: 'https://api.bepaid.by/products/prd_4b68b00019808a21/pay', sortOrder: 1 },
+          { name: 'Супружеское (семейное) консультирование', price: 110, currency: 'BYN', duration: 90, format: 'offline', description: 'личный приём в г. Гродно', payUrl: 'https://api.bepaid.by/products/prd_eec3c942ea52cfed/pay', sortOrder: 2 },
+          { name: 'Онлайн-консультация', price: 3000, currency: 'RUB', duration: 60, format: 'online', description: 'в Skype, WhatsApp, Viber, Telegram, Zoom', platforms: ['skype', 'whatsapp', 'viber', 'telegram', 'zoom'], payUrl: 'https://api.bepaid.by/products/prd_4b68b00019808a21/pay', sortOrder: 3 }
+        ]
+      }
+    ];
+
+    this.psychologists = catalog.map((p, index) => new Psychologist({
       ...p,
       id: `psy_catalog_${String(index + 1).padStart(2, '0')}`,
       email: `catalog+${Psychologist.makeSlug(p.fullName)}-${index + 1}@example.invalid`,
       slug: Psychologist.makeSlug(p.fullName) + '-' + (index + 1)
     }));
 
-    this.psychologists = catalog;
-    this.services = catalog.flatMap(p => [
-      new Service({ id: uid('svc'), psychologistId: p.id, name: 'Очная консультация', price: 0, currency: 'BYN', duration: 60, format: 'offline' }),
-      new Service({ id: uid('svc'), psychologistId: p.id, name: 'Онлайн-консультация', price: 0, currency: 'BYN', duration: 60, format: 'online' })
-    ]);
-    this.settings = catalog.map(p => new SessionSettings({ psychologistId: p.id }));
+    this.services = catalog.flatMap((p, index) => (p.services || [
+      { name: 'Очная консультация', price: 0, currency: 'BYN', duration: 60, format: 'offline' },
+      { name: 'Онлайн-консультация', price: 0, currency: 'BYN', duration: 60, format: 'online' }
+    ]).map(s => new Service({
+      ...s,
+      id: s.id || uid('svc'),
+      psychologistId: this.psychologists[index].id
+    })));
+    this.settings = this.psychologists.map(p => new SessionSettings({ psychologistId: p.id }));
     this.clients = [];
     this.sessions = [];
     this.payments = [];
@@ -170,6 +241,10 @@ export class DbContext {
     this.bookingAttempts = [];
     this.clientRisks = [];
     this.reminders = [];
+    this.scheduleBlocks = [];
+    this.tasks = [];
+    this.notes = [];
+    this.clientEntries = [];
     this.emailCodes = [];
     this.currentPsychologistId = null;
     this.saveChanges();
@@ -188,6 +263,10 @@ export class DbContext {
     this.bookingAttempts = [];
     this.clientRisks = [];
     this.reminders = [];
+    this.scheduleBlocks = [];
+    this.tasks = [];
+    this.notes = [];
+    this.clientEntries = [];
     this.currentPsychologistId = null;
     this._seed();
   }
@@ -325,6 +404,100 @@ export class DbContext {
 
   removeWaiting(id) {
     this.waitingItems = this.waitingItems.filter(w => w.id !== id);
+    this.saveChanges();
+  }
+
+  // ——— Блокировки занятости (выходные, занятость) ———
+  blocksOf(psychologistId) {
+    return this.scheduleBlocks
+      .filter(b => b.psychologistId === psychologistId)
+      .sort((a, b) => (a.dateFrom || '').localeCompare(b.dateFrom || ''));
+  }
+
+  addScheduleBlock(data) {
+    const b = new ScheduleBlock({ ...data, id: data.id || uid('blk') });
+    this.scheduleBlocks.push(b);
+    this.saveChanges();
+    return b;
+  }
+
+  removeScheduleBlock(id) {
+    this.scheduleBlocks = this.scheduleBlocks.filter(b => b.id !== id);
+    this.saveChanges();
+  }
+
+  /** Занят ли слот блокировкой (выходной/занят/отпуск…) */
+  isSlotBlocked(psychologistId, date, time) {
+    return this.scheduleBlocks.some(b => b.psychologistId === psychologistId && b.covers(date, time));
+  }
+
+  // ——— Задачи (кабинет) ———
+  tasksOf(psychologistId) {
+    return this.tasks
+      .filter(t => t.psychologistId === psychologistId)
+      .sort((a, b) => (a.done - b.done) || (a.dueDate || '9999').localeCompare(b.dueDate || '9999'));
+  }
+
+  addTask(data) {
+    const t = new Task({ ...data, id: data.id || uid('task') });
+    this.tasks.push(t);
+    this.saveChanges();
+    return t;
+  }
+
+  toggleTask(id) {
+    const t = this.tasks.find(x => x.id === id);
+    if (t) { t.done = !t.done; this.saveChanges(); }
+    return t;
+  }
+
+  removeTask(id) {
+    this.tasks = this.tasks.filter(t => t.id !== id);
+    this.saveChanges();
+  }
+
+  // ——— Блокнот (планировщик) ———
+  notesOf(psychologistId) {
+    return this.notes
+      .filter(n => n.psychologistId === psychologistId)
+      .sort((a, b) => (b.pinned - a.pinned) || (b.date || '0').localeCompare(a.date || '0')
+        || (b.createdAt || '').localeCompare(a.createdAt || ''));
+  }
+
+  addNote(data) {
+    const n = new PsyNote({ ...data, id: data.id || uid('note') });
+    this.notes.push(n);
+    this.saveChanges();
+    return n;
+  }
+
+  toggleNotePin(id) {
+    const n = this.notes.find(x => x.id === id);
+    if (n) { n.pinned = !n.pinned; this.saveChanges(); }
+    return n;
+  }
+
+  removeNote(id) {
+    this.notes = this.notes.filter(n => n.id !== id);
+    this.saveChanges();
+  }
+
+  // ——— Записи о клиентах (журнал работы) ———
+  entriesOf(clientId) {
+    return this.clientEntries
+      .filter(e => e.clientId === clientId)
+      .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
+  }
+
+  addClientEntry(data) {
+    const e = new ClientEntry({ ...data, id: data.id || uid('entry') });
+    this.clientEntries.push(e);
+    this.saveChanges();
+    return e;
+  }
+
+  removeClientEntry(id) {
+    this.clientEntries = this.clientEntries.filter(e => e.id !== id);
     this.saveChanges();
   }
 }
