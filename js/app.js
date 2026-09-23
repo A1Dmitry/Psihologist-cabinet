@@ -1107,16 +1107,36 @@ function renderProfile() {
         ${req.purpose ? `<div>Назначение платежа: ${esc(req.purpose)}</div>` : ''}
       </div>` : '';
 
-  const contacts = [
-    p.phone ? `<div>Тел: <a class="text-indigo-600 hover:underline" href="tel:${esc(String(p.phone).replace(/[^\d+]/g, ''))}">${esc(p.phone)}</a></div>` : '',
-    p.address ? `<div>${esc(p.address)}</div>` : '',
-    p.publicEmail ? `<div><a class="text-indigo-600 hover:underline" href="mailto:${esc(p.publicEmail)}">${esc(p.publicEmail)}</a></div>` : '',
-    p.website ? `<div><a class="text-indigo-600 hover:underline" target="_blank" rel="noopener" href="${esc(p.website)}">${esc(p.website)}</a></div>` : '',
-    ...socials.map(x => {
-      const label = SOCIAL_TITLES[x.kind] || x.title || x.kind;
-      return `<div><a class="text-indigo-600 hover:underline" target="_blank" rel="noopener" href="${esc(x.url)}">${esc(label)}</a></div>`;
-    })
-  ].join('');
+  // —— Контакты и связь: телефон + мессенджеры + соцсети (как принято на сайтах специалистов) ——
+  const digits = String(p.phone || '').replace(/\D/g, '');
+  const tg = socials.find(x => x.kind === 'telegram' && x.url);
+  const ig = socials.find(x => x.kind === 'instagram' && x.url);
+  const contactBtns = [
+    p.phone ? `<a href="tel:+${esc(digits)}" class="px-4 py-2 rounded-full bg-slate-900 text-white text-sm font-medium">📞 ${esc(p.phone)}</a>` : '',
+    digits ? `<a href="https://wa.me/${esc(digits)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full bg-emerald-500 text-white text-sm font-medium">WhatsApp</a>` : '',
+    digits ? `<a href="viber://chat?number=%2B${esc(digits)}" class="px-4 py-2 rounded-full bg-violet-600 text-white text-sm font-medium">Viber</a>` : '',
+    tg ? `<a href="${esc(tg.url)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full bg-sky-500 text-white text-sm font-medium">Telegram</a>` : '',
+    p.publicEmail ? `<a href="mailto:${esc(p.publicEmail)}" class="px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium">✉️ Email</a>` : '',
+    ig ? `<a href="${esc(ig.url)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium">Instagram</a>` : '',
+    p.website ? `<a href="${esc(p.website)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium">🌐 Сайт</a>` : ''
+  ].filter(Boolean).join('');
+
+  // —— Адрес практики и схема проезда (как на сайте специалиста) ——
+  const mapQuery = [p.city, p.address].filter(Boolean).join(', ');
+  const addressHtml = (p.address || p.city) ? `
+      <h3 class="font-semibold text-slate-900 mt-6">Адрес практики и проезд</h3>
+      <p class="mt-2 text-sm text-slate-700">${esc([p.address, p.city].filter(Boolean).join(', '))}</p>
+      ${p.address ? `
+      <div class="mt-3 rounded-xl overflow-hidden border">
+        <iframe src="https://maps.google.com/maps?q=${encodeURIComponent(mapQuery)}&z=15&output=embed" width="100%" height="260" style="border:0" loading="lazy" title="Схема проезда"></iframe>
+      </div>
+      <div class="mt-2 flex flex-wrap gap-2">
+        <a href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(mapQuery)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium">🚗 Маршрут (Google Maps)</a>
+        <a href="https://yandex.ru/maps/?text=${encodeURIComponent(mapQuery)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium">🚕 Маршрут (Яндекс)</a>
+      </div>` : ''}` : '';
+
+  // пометка первоисточника (фото/данные — с официального сайта специалиста, через БД портала)
+  const srcHost = (() => { try { return new URL(p.sourceUrl).hostname; } catch { return ''; } })();
 
   // панель для владельца (видна только ему)
   const own = authService.isAuthenticated()
@@ -1133,7 +1153,9 @@ function renderProfile() {
   body.innerHTML = `${banner}
     <div class="rounded-2xl bg-white border p-6">
       <div class="flex flex-col sm:flex-row gap-5 items-start">
-        ${p.photoUrl ? `<img src="${esc(p.photoUrl)}" alt="${esc(p.fullName)}" class="w-36 h-36 object-cover rounded-2xl shrink-0">` : ''}
+        ${p.photoUrl
+          ? `<img src="${esc(p.photoUrl)}" alt="${esc(p.fullName)}" class="w-36 h-36 object-cover rounded-2xl shrink-0">`
+          : `<div class="w-36 h-36 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-4xl shrink-0">${esc(p.fullName.split(' ').map(x => x[0]).slice(0, 2).join(''))}</div>`}
         <div class="flex-1">
           <p class="text-slate-600">${esc(p.greeting || '')}</p>
           ${p.about ? `<p class="text-sm text-slate-700 mt-2">${esc(p.about)}</p>` : ''}
@@ -1172,8 +1194,12 @@ function renderProfile() {
       </div>` : ''}
       ${reqHtml}
 
-      ${contacts ? `<h3 class="font-semibold text-slate-900 mt-6">Контакты</h3><div class="mt-2 text-sm text-slate-700 space-y-0.5">${contacts}</div>` : ''}
-    </div>`;
+      ${addressHtml}
+
+      ${contactBtns ? `<h3 class="font-semibold text-slate-900 mt-6">Связь и мессенджеры</h3>
+      <div class="mt-2 flex flex-wrap gap-2">${contactBtns}</div>` : ''}
+    </div>
+    ${srcHost ? `<p class="mt-4 text-xs text-slate-400 text-center">Профиль из БД портала · фото и данные — с официального сайта: <a href="${esc(p.sourceUrl)}" target="_blank" rel="noopener" class="underline">${esc(srcHost)}</a></p>` : ''}`;
 
   // SEO-лендинг: canonical/OG/JSON-LD именно здесь
   try { applyProfileSeo(p, services, urlFor.psy(p.slug)); } catch (e) { console.warn('seo', e); }
