@@ -56,6 +56,7 @@ async function request(path, options = {}) {
 
 export const supabaseApi = {
   configured: isSupabaseConfigured,
+  request, // для cabinetApi (RLS-запросы владельца)
 
   // ——— Публичный каталог / профиль ———
   /** Строго серверные данные. Слои: view новой схемы → таблица с расширенными
@@ -136,7 +137,8 @@ export const supabaseApi = {
     const res = await fetch(`${SUPABASE_URL}/auth/v1/otp`, {
       method: 'POST',
       headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: String(email).toLowerCase().trim() })
+      // create_user: true — email может быть в таблице psychologists, но не в auth.users
+      body: JSON.stringify({ email: String(email).toLowerCase().trim(), create_user: true })
     });
     if (!res.ok) {
       const body = await res.text();
@@ -147,20 +149,27 @@ export const supabaseApi = {
     return true;
   },
 
-  /** Проверить код из письма → сессия (access_token). */
+  /** Проверить код из письма → сессия (access_token).
+   *  GoTrue шлёт разный type: magiclink (существующий), signup (созданный) —
+   *  пробуем по очереди, пока сервер не примет. */
   async verifyEmailOtp(email, token) {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/verify`, {
-      method: 'POST',
-      headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: String(email).toLowerCase().trim(), token: String(token).trim(), type: 'email' })
-    });
-    if (!res.ok) {
+    const e = String(email).toLowerCase().trim();
+    const types = ['magiclink', 'signup', 'recovery'];
+    let lastMsg = '';
+    for (const type of types) {
+      const res = await fetch(`${SUPABASE_URL}/auth/v1/verify`, {
+        method: 'POST',
+        headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: e, token: String(token).trim(), type })
+      });
+      if (res.ok) return res.json();
       const body = await res.text();
       let msg = body;
       try { msg = JSON.parse(body).msg || JSON.parse(body).error_description || body; } catch (_) {}
-      throw new Error(msg || `HTTP ${res.status}`);
+      lastMsg = msg || `HTTP ${res.status}`;
+      if (/rate|часто/i.test(lastMsg)) break; // при rate-limit перебор бессмыслен
     }
-    return res.json();
+    throw new Error(lastMsg);
   },
 
   /** Привязать/создать профиль психолога по подтверждённому email (security definer). */
@@ -177,6 +186,21 @@ export const supabaseApi = {
     return Array.isArray(rows) ? rows[0] : rows;
   },
 
+  /** Есть ли пользовательская сессия (после OTP-входа) — для записи в кабинет. */
+  hasSession() {
+    return !!userToken;
+  },
+
+  /** Upsert своих настроек кабинета (RLS owner_all). */
+  async upsertSettings(psychologistId, patch) {
+    const rows = await request(`session_settings?on_conflict=psychologist_id`, {
+      method: 'POST',
+      headers: { Prefer: 'return=representation,resolution=merge-duplicates' },
+      body: JSON.stringify({ psychologist_id: psychologistId, ...patch })
+    });
+    return Array.isArray(rows) ? rows[0] : rows;
+  },
+
   /** Свой профиль по id (RLS: только владелец). */
   async fetchOwnPsychologist(id) {
     const rows = await request(`psychologists?id=eq.${encodeURIComponent(id)}&select=*&limit=1`);
@@ -186,5 +210,42 @@ export const supabaseApi = {
   async getSettings(psychologistId) {
     const rows = await request(`public_settings?psychologist_id=eq.${psychologistId}&select=*&limit=1`);
     return rows?.[0] || null;
+  },
+
+  /**
+   * Диагностика БД: что применено, а что нет (для панели «Проверить сервер»).
+   * Не отправляет писем и не меняет данные.
+   */
+  async serverDiagnostics() {
+    const out = [];
+    const check = async (name, hint, fn) => {
+      try {
+        const detail = await fn();
+        out.push({ name, ok: true, detail: detail || 'OK' });
+      } catch (e) {
+        out.push({ name, ok: false, detail: String(e.message || e).slice(0, 200), hint });
+      }
+    };
+    await check('REST доступен', 'Проверьте SUPABASE_URL и anon key', async () => {
+      await request('public_profiles?select=id&limit=1');
+      return null;
+    });
+    await check('View public_profiles (schema.sql применён)', 'Выполните supabase/schema.sql', async () => {
+      const r = await request('public_profiles?select=id,slug&limit=1');
+      return `записей: ${(r || []).length}`;
+    });
+    await check('Новые колонки профиля (greeting…)', 'Выполните supabase/schema.sql (alter table …)', async () => {
+      await request('psychologists?select=greeting,profession&limit=1');
+      return null;
+    });
+    await check('RPC create_booking (запись клиентов)', 'Выполните supabase/schema.sql (функция create_booking)', async () => {
+      await request('rpc/create_booking', { method: 'POST', body: JSON.stringify({}) });
+      return null;
+    });
+    await check('RPC claim_psychologist_profile (вход по коду)', 'Выполните supabase/schema.sql (функция claim_psychologist_profile)', async () => {
+      await request('rpc/claim_psychologist_profile', { method: 'POST', body: JSON.stringify({}) });
+      return null;
+    });
+    return out;
   }
 };

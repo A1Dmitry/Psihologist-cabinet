@@ -7,6 +7,7 @@ import { clientVaultService } from '../services/clientVaultService.js';
 import { cryptoService } from '../services/cryptoService.js';
 import { supabaseSync } from '../services/supabaseSync.js';
 import { fetchGoogleBusyBlocks } from '../services/calendarService.js';
+import { cabinetApi } from '../services/cabinetApi.js';
 import { ScheduleBlockKind } from '../models/entities.js';
 
 function todayStr() {
@@ -191,8 +192,11 @@ export class CabinetViewModel extends BaseViewModel {
         return true;
       }
       db.updateSession(form.id, payload);
+      const updated = this.sessions.find(x => x.id === form.id);
+      if (updated) cabinetApi.pushSessionPatch(form.id, sessPatchOf(updated));
     } else {
       const s = db.addSession(payload);
+      cabinetApi.pushSession(this.psyId, s);
       reminderService.scheduleForSession(s.id);
     }
     this.showToast('Сессия сохранена');
@@ -211,6 +215,7 @@ export class CabinetViewModel extends BaseViewModel {
     s.changeConsentStatus = 'forced';
     s.note = (s.note ? s.note + '\n' : '') + (reason ? `Перенос (без согласия): ${reason}` : 'Перенос без согласия клиента');
     db.saveChanges();
+    cabinetApi.pushSessionPatch(sessionId, sessPatchOf(s));
     reminderService.scheduleForSession(sessionId);
     this.showToast('Время изменено без согласия клиента');
     this.notify();
@@ -219,6 +224,7 @@ export class CabinetViewModel extends BaseViewModel {
 
   deleteSession(id) {
     db.removeSession(id);
+    cabinetApi.pushSessionDelete(id);
     this.showToast('Сессия удалена');
     this.notify();
   }
@@ -263,6 +269,7 @@ export class CabinetViewModel extends BaseViewModel {
       return;
     }
     db.removeClient(id);
+    cabinetApi.pushClientDelete(id);
     this.refreshClients();
     this.showToast('Клиент удалён');
     this.notify();
@@ -270,7 +277,7 @@ export class CabinetViewModel extends BaseViewModel {
 
   addService(form) {
     if (!this.psyId || !form.name?.trim()) return false;
-    db.addService({
+    const created = db.addService({
       psychologistId: this.psyId,
       name: form.name.trim(),
       price: form.price,
@@ -278,6 +285,7 @@ export class CabinetViewModel extends BaseViewModel {
       duration: form.duration || 60,
       format: form.format || 'offline'
     });
+    cabinetApi.pushService(this.psyId, created);
     this.showToast('Услуга добавлена');
     this.notify();
     return true;
@@ -290,6 +298,7 @@ export class CabinetViewModel extends BaseViewModel {
       this.notify();
       return;
     }
+    cabinetApi.pushServiceDelete(id);
     this.showToast('Услуга удалена');
     this.notify();
   }
@@ -306,13 +315,16 @@ export class CabinetViewModel extends BaseViewModel {
         note: w.note || ''
       });
     }
+    cabinetApi.pushClient(this.psyId, client);
     db.removeWaiting(id);
+    cabinetApi.pushWaitingDelete(id);
     this.notify();
     return client;
   }
 
   removeWaiting(id) {
     db.removeWaiting(id);
+    cabinetApi.pushWaitingDelete(id);
     this.notify();
   }
 
@@ -324,6 +336,8 @@ export class CabinetViewModel extends BaseViewModel {
       this.notify();
       return false;
     }
+    const s2 = this.sessions.find(x => x.id === sessionId);
+    if (s2) cabinetApi.pushSessionPatch(sessionId, sessPatchOf(s2));
     this.showToast(res.message);
     reminderService.scheduleForSession(sessionId);
     this.notify();
@@ -377,6 +391,7 @@ export class CabinetViewModel extends BaseViewModel {
         : Number(form.reminderSecondHoursBefore)
     });
     db.saveChanges();
+    cabinetApi.pushSettings(this.psyId, st);
     this.showToast('Настройки оплаты и защиты сохранены');
     this.notify();
   }
@@ -417,7 +432,7 @@ export class CabinetViewModel extends BaseViewModel {
 
   addBlock(form) {
     if (!this.psyId || !form.dateFrom) return false;
-    db.addScheduleBlock({
+    const created = db.addScheduleBlock({
       psychologistId: this.psyId,
       dateFrom: form.dateFrom,
       dateTo: form.dateTo || form.dateFrom,
@@ -428,6 +443,7 @@ export class CabinetViewModel extends BaseViewModel {
       note: form.note || '',
       source: 'manual'
     });
+    cabinetApi.pushBlock(this.psyId, created);
     this.showToast('Занятость заблокирована');
     this.notify();
     return true;
@@ -435,6 +451,7 @@ export class CabinetViewModel extends BaseViewModel {
 
   removeBlock(id) {
     db.removeScheduleBlock(id);
+    cabinetApi.pushBlockDelete(id);
     this.showToast('Блокировка снята');
     this.notify();
   }
@@ -445,6 +462,7 @@ export class CabinetViewModel extends BaseViewModel {
     st.googleCalendarIcalUrl = (googleCalendarIcalUrl || '').trim();
     st.googleSyncBusy = !!googleSyncBusy;
     db.saveChanges();
+    cabinetApi.pushSettings(this.psyId, st);
     this.showToast('Настройки календаря сохранены');
     this.notify();
   }
@@ -501,6 +519,7 @@ export class CabinetViewModel extends BaseViewModel {
     if (!s) return;
     s.status = 'confirmed';
     db.saveChanges();
+    cabinetApi.pushSessionPatch(id, { status: 'confirmed' });
     this.showToast('Запись подтверждена');
     this.notify();
   }
@@ -513,17 +532,20 @@ export class CabinetViewModel extends BaseViewModel {
 
   addTask({ title, details, dueDate, clientId }) {
     if (!title?.trim()) return;
-    db.addTask({ psychologistId: this.psyId, title: title.trim(), details: (details || '').trim(), dueDate: dueDate || '', clientId: clientId || null });
+    const t = db.addTask({ psychologistId: this.psyId, title: title.trim(), details: (details || '').trim(), dueDate: dueDate || '', clientId: clientId || null });
+    cabinetApi.pushTask(this.psyId, t);
     this.notify();
   }
 
   toggleTask(id) {
-    db.toggleTask(id);
+    const t = db.toggleTask(id);
+    if (t) cabinetApi.pushTaskPatch(id, { done: t.done });
     this.notify();
   }
 
   removeTask(id) {
     db.removeTask(id);
+    cabinetApi.pushTaskDelete(id);
     this.notify();
   }
 
@@ -535,17 +557,20 @@ export class CabinetViewModel extends BaseViewModel {
 
   addNote({ title, body, date }) {
     if (!title?.trim() && !body?.trim()) return;
-    db.addNote({ psychologistId: this.psyId, title: (title || '').trim(), body: (body || '').trim(), date: date || '' });
+    const n = db.addNote({ psychologistId: this.psyId, title: (title || '').trim(), body: (body || '').trim(), date: date || '' });
+    cabinetApi.pushNote(this.psyId, n);
     this.notify();
   }
 
   toggleNotePin(id) {
-    db.toggleNotePin(id);
+    const n = db.toggleNotePin(id);
+    if (n) cabinetApi.pushNotePatch(id, { pinned: n.pinned });
     this.notify();
   }
 
   removeNote(id) {
     db.removeNote(id);
+    cabinetApi.pushNoteDelete(id);
     this.notify();
   }
 
@@ -566,13 +591,29 @@ export class CabinetViewModel extends BaseViewModel {
 
   addClientEntry({ clientId, text, date, sessionId }) {
     if (!clientId || !text?.trim()) return;
-    db.addClientEntry({ psychologistId: this.psyId, clientId, sessionId: sessionId || null, date: date || todayStr(), text: text.trim() });
+    const e = db.addClientEntry({ psychologistId: this.psyId, clientId, sessionId: sessionId || null, date: date || todayStr(), text: text.trim() });
+    cabinetApi.pushEntry(this.psyId, e);
     this.showToast('Запись добавлена');
     this.notify();
   }
 
   removeClientEntry(id) {
     db.removeClientEntry(id);
+    cabinetApi.pushEntryDelete(id);
     this.notify();
   }
+}
+
+/** Патч сессии для сервера (snake_case) из локальной сущности */
+function sessPatchOf(x) {
+  return {
+    session_date: x.date, session_time: x.time, status: x.status, note: x.note || '',
+    video_platform: x.videoPlatform || '', meet_link: x.meetLink || '',
+    payment_policy: x.paymentPolicy || 'none', payment_status: x.paymentStatus || 'unpaid',
+    amount_due: x.amountDue || 0, amount_paid: x.amountPaid || 0, currency: x.currency || 'BYN',
+    hold_expires_at: x.holdExpiresAt, requires_payment: !!x.requiresPayment,
+    client_response: x.clientResponse, client_responded_at: x.clientRespondedAt,
+    pending_change: x.pendingChange, previous_slot: x.previousSlot,
+    change_consent_status: x.changeConsentStatus
+  };
 }

@@ -97,6 +97,10 @@
           <button data-auth-mode="login" class="flex-1 py-2 rounded-full text-sm font-medium bg-indigo-600 text-white">Вход</button>
           <button data-auth-mode="register" class="flex-1 py-2 rounded-full text-sm font-medium bg-slate-100">Регистрация</button>
         </div>
+        <details class="mb-4" onclick="runServerDiagnostics('auth-diag')">
+          <summary class="text-xs text-slate-400 cursor-pointer select-none">Диагностика сервера (если код не приходит)</summary>
+          <div id="auth-diag" class="mt-2"></div>
+        </details>
         <h1 id="auth-title" class="text-2xl font-bold mb-1">Вход в кабинет</h1>
         <p id="auth-subtitle" class="text-sm text-slate-500 mb-6">Войдите по коду, отправленному на email</p>
 
@@ -642,6 +646,6 @@
     </div>
   </div>
 
-  <script type="module" src="%BASE%js/app.js?v=20260923e"></script>
+  <script type="module" src="%BASE%js/app.js?v=20260923f"></script>
 </body>
 </html>

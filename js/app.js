@@ -11,6 +11,8 @@ import { paymentService } from './services/paymentService.js';
 import { PaymentPolicy } from './models/entities.js';
 import { reminderService } from './services/reminderService.js';
 import { supabaseSync } from './services/supabaseSync.js';
+import { cabinetApi } from './services/cabinetApi.js';
+import { supabaseApi } from './services/supabaseApi.js';
 import { isSupabaseConfigured } from './services/supabaseConfig.js';
 import { applyProfileSeo, applyPortalSeo, applyBookingSeo } from './services/seoService.js';
 import { googleAddLink } from './services/calendarService.js';
@@ -232,6 +234,26 @@ function render() {
   });
 }
 
+/** Диагностика сервера: что применено в БД, что нет (показывается в UI) */
+window.runServerDiagnostics = async containerId => {
+  const box = document.getElementById(containerId);
+  if (!box) return;
+  box.innerHTML = '<div class="text-sm text-slate-400">Проверяем…</div>';
+  const rows = await supabaseApi.serverDiagnostics();
+  box.innerHTML = `<div class="bg-white rounded-xl border p-4 text-sm space-y-2">
+    <div class="font-medium">Состояние сервера БД</div>
+    ${rows.map(r => `
+      <div class="flex gap-2 items-start">
+        <span>${r.ok ? '✅' : '❌'}</span>
+        <div>
+          <div class="${r.ok ? 'text-slate-700' : 'text-slate-900 font-medium'}">${esc(r.name)}</div>
+          ${r.ok ? (r.detail ? `<div class="text-xs text-slate-400">${esc(r.detail)}</div>` : '')
+                 : `<div class="text-xs text-rose-500">${esc(r.detail)}</div><div class="text-xs text-slate-500">→ ${esc(r.hint)}</div>`}
+        </div>
+      </div>`).join('')}
+  </div>`;
+};
+
 /** Бейдж источника данных в шапке каталога */
 function renderSourceBadge() {
   const el = $('#portal-src-badge');
@@ -292,8 +314,10 @@ function renderPortal() {
         </div>
         <div class="flex flex-wrap gap-3 justify-center">
           <button onclick="retryServerData()" class="px-6 py-2.5 rounded-full bg-indigo-600 text-white text-sm font-medium">Повторить</button>
+          <button onclick="runServerDiagnostics('portal-diag')" class="px-6 py-2.5 rounded-full border border-indigo-300 text-indigo-700 text-sm font-medium">Проверить сервер</button>
           <button onclick="enableDemoData()" class="px-6 py-2.5 rounded-full border border-slate-300 text-slate-600 text-sm font-medium">Показать демо-данные</button>
         </div>
+        <div id="portal-diag" class="mt-5 text-left"></div>
       </div>`;
     return;
   }
@@ -619,6 +643,7 @@ function renderCabJournal() {
       if (s && confirm('Отметить неявку клиента?')) {
         s.status = 'no_show';
         db.saveChanges();
+        cabinetApi.pushSessionPatch(s.id, { status: 'no_show' });
         renderCabJournal();
       }
     };
@@ -1386,6 +1411,8 @@ function bindEvents() {
     const psy = await authVm.confirmCode();
     renderAuth();
     if (psy) {
+      // кабинет — с сервера (clients/sessions/settings/blocks/tasks/notes/entries/waiting)
+      try { await cabinetApi.refresh(psy.id); } catch (e) { console.warn('pull cabinet', e); }
       await cabinetVm.refreshClients();
       navigate('cabinet');
     }
