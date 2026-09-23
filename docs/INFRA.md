@@ -18,9 +18,9 @@
 | # | Элемент | Статус | Комментарий |
 |---|---------|--------|-------------|
 | 1 | Проект Supabase | ✅ подтверждён декларативно | ref `phiavtroybgwyjdhqqkh`; anon key выпущен 2026-09-21 (см. `iat` в JWT) — проект свежесозданный. Дашборд-проверку выполняет владелец (у агента песочницы нет сети до supabase.co и access-токена) |
-| 2 | `supabase/schema.sql` в проде | ⏳ **критично: переприменить** | идемпотентен, применять целиком в SQL Editor. До 2026-09-23 файл **не применялся целиком**: `revoke`/`grant execute` для `create_booking` описывали старую арность → PostgreSQL обрывал выполнение на 42883, поэтому `claim_psychologist_profile` и `client_error_logs` в проде не существовали (это и есть причина неработающей регистрации). 2026-09-23 исправлено + добавлены `sessions.client_timezone` / `client_utc_offset_min` / `duration_min` (SR-001/108), интервальная занятость + advisory lock в `create_booking` (SR-002), `public_booked_slots.duration_min` (SR-003). Проверено на PostgreSQL 18.4: `node tests/db-contract.mjs` → 36/36 PASS. **Внимание: миграция удаляет колонку `sessions.timezone_offset` и меняет арность RPC** — подробности в `docs/FULL-AUDIT-REPORT.md` |
+| 2 | `supabase/schema.sql` в проде | ⏳ **критично: переприменить** | идемпотентен, применять целиком в SQL Editor. До 2026-09-23 файл **не применялся целиком**: `revoke`/`grant execute` для `create_booking` описывали старую арность → PostgreSQL обрывал выполнение на 42883, поэтому `claim_psychologist_profile` и `client_error_logs` в проде не существовали (это и есть причина неработающей регистрации). 2026-09-23 исправлено + добавлены `sessions.client_timezone` / `client_utc_offset_min` / `duration_min` (SR-001/108), интервальная занятость + advisory lock в `create_booking` (SR-002), `public_booked_slots.duration_min` (SR-003), `auth_login_codes.issued_token_hash` / `issues` / `consumed_at` (SR-004 — атомарное погашение кода входа, нужно Edge Function `auth-code`). Проверено на PostgreSQL 18.4: `node tests/db-contract.mjs` → 36/36 PASS. **Внимание: миграция удаляет колонку `sessions.timezone_offset` и меняет арность RPC** — подробности в `docs/FULL-AUDIT-REPORT.md` |
 | 3 | `supabase/seed.sql` в проде | ✅ решение: накатывать | это реальный референс-профиль Наталии Михайловской, не фиктивное демо. См. «Ловушка первого входа» ниже |
-| 4 | Edge Function `auth-code` | ⏳ задеплоить | см. «Деплой функций». **verify_jwt=false обязателен** (config.toml уже в репо) |
+| 4 | Edge Function `auth-code` | ⏳ задеплоить | см. «Деплой функций». **verify_jwt=false обязателен** (config.toml уже в репо). 2026-09-23 (issue #14): функция переработана — код гасится **после** создания сессии, появились actions `recover` и `redeem`; для атомарного погашения нужны колонки SR-004 (п.2). Без них функция работает в legacy-режиме (ответ `legacy_schema: true`, восстановление сессии недоступно) |
 | 5 | Edge Function `telegram-notify` | ⏳ задеплоить | то же |
 | 6 | Секрет `RESEND_API_KEY` | ⛔ блокер на владельце | нужен аккаунт Resend + **верифицированный домен** (иначе письма уходят только владельцу аккаунта Resend — блокирует T-15) |
 | 7 | Секрет `MAIL_FROM` | ⏳ после домена | напр. `PsyПортал <login@ваш-домен>`; без домена — `onboarding@resend.dev` (только на email владельца Resend) |
@@ -33,6 +33,9 @@
 ## Развёртывание продакшена с нуля (порядок действий владельца)
 
 1. **Supabase → SQL Editor:** выполнить целиком `supabase/schema.sql`, затем `supabase/seed.sql`.
+   Порядок важен: сначала схема, потом деплой функций (п.5) — функции `auth-code`
+   нужны колонки SR-004 из схемы. Если функция задеплоена раньше, она не сломается,
+   но будет отвечать в legacy-режиме (`legacy_schema: true`) до переприменения схемы.
 2. **Ловушка первого входа** ⚠️: в seed email записи — технический
    `catalog+наталья-михайловская-19@example.invalid`. Привязка кабинета при входе
    идёт по email (`claim_psychologist_profile`). Поэтому **до первого входа**
@@ -81,6 +84,14 @@
 6. **Открыть сайт** → нажать «Диагностика сервера» на странице входа — все пункты
    должны быть зелёными; бейдж «Данные: сервер». Проверить «Получить код» —
    письмо приходит на подставленный email, вход открывает кабинет.
+   Пункты диагностики, относящиеся к входу:
+   - «Edge Function auth-code» — функция задеплоена и отвечает (не 404);
+   - «Схема auth_login_codes (SR-004: атомарность кода входа)» — в БД есть
+     колонки `issued_token_hash` / `issues` / `consumed_at`. Красный пункт
+     означает, что `schema.sql` не переприменён: вход работает, но в
+     legacy-режиме (код гасится до создания сессии, восстановление сессии
+     после обрыва сети недоступно). Проверка «холостая»: письмо не отправляется,
+     данные не меняются.
 7. **(Опционально) мгновенные Telegram-уведомления:** в `js/services/supabaseConfig.js`
    заполнить `NOTIFY_WEBHOOK_URL = 'https://phiavtroybgwyjdhqqkh.supabase.co/functions/v1/telegram-notify'`.
    Без него уведомления уходят из открытого кабинета (outbox-режим) — не блокер.

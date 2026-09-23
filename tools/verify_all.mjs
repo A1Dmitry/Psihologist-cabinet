@@ -26,6 +26,7 @@ const SUITES = [
   ['SQL-контракт schema.sql на настоящем PostgreSQL', 'node', ['tests/db-contract.mjs']],
   ['Кабинет: серии, условия, мини-кабинет, пояса', 'node', ['tools/verify_cabinet.mjs']],
   ['Авторизация: каналы кода, сессия, write-through', 'node', ['verify_auth.mjs']],
+  ['UI входа: ожидание кода переживает перезагрузку', 'node', ['tests/auth-ui-pending.mjs']],
   ['Карточка специалиста из строк БД', 'node', ['verify_profile.mjs']],
   ['Telegram-уведомления', 'node', ['verify_telegram.mjs']],
   ['Роутер (Hash History)', 'node', ['test_routing.mjs']],

@@ -18,7 +18,10 @@
  *   • профиль не создаётся до подтверждения личности через Supabase Auth;
  *   • повторный вход тем же email возвращает тот же профиль (без дубля);
  *   • основной канал (Edge Function auth-code) и запасной (Supabase OTP) идут
- *     через один и тот же контракт: решение о канале принимается один раз.
+ *     через один и тот же контракт: решение о канале принимается один раз и
+ *     СОХРАНЯЕТСЯ (issue #14, п.3): после перезагрузки страницы код проверяется
+ *     только тем транспортом, которым он был выслан. Перебор каналов удалён —
+ *     он жёг код на «чужом» сервере и мог выдать сессию не тем транспортом.
  *
  * Безопасность: коды, access_token и пароль сейфа не логируются.
  */
@@ -32,6 +35,7 @@ import {
   userIdFromToken
 } from '../services/supabaseApi.js';
 import { mapPsy } from '../services/psyMapper.js';
+import { safeStorage } from '../core/safeStorage.js';
 
 /** Канал доставки кода: 'fn' — Edge Function auth-code, 'otp' — почта Supabase Auth. */
 export const VerificationChannel = { FN: 'fn', OTP: 'otp' };
@@ -39,8 +43,18 @@ export const VerificationChannel = { FN: 'fn', OTP: 'otp' };
 /** Формат кода из письма: 6–8 букв и цифр. */
 const CODE_PATTERN = /^[A-Z0-9]{6,8}$/;
 
+/**
+ * Ожидающее подтверждение: email + выбранный канал + окно жизни кода.
+ * Живёт в safeStorage, поэтому переживает перезагрузку страницы (issue #14, п.3).
+ * Секретов здесь нет: только email, имя канала и две отметки времени.
+ */
+const PENDING_KEY = 'psy_pending_verification_v1';
+
+/** Окно ввода кода — то же, что на сервере (TTL кода в auth-code / Supabase OTP). */
+const VERIFICATION_WINDOW_MS = 2 * 60e3;
+
 const state = {
-  channel: null,   // как был выслан ТЕКУЩИЙ код
+  channel: null,   // зеркало канала из сохранённого pending-состояния
   session: null    // { access_token, refresh_token, expires_at }
 };
 
@@ -99,6 +113,68 @@ export function friendlyAuthError(ex) {
 }
 
 /* ============================================================================
+ * Pending-состояние подтверждения (канал переживает reload)
+ * ========================================================================== */
+
+function storePendingVerification(email, channel) {
+  const requestedAt = Date.now();
+  const pending = {
+    email,
+    channel,
+    requestedAt,
+    expiresAt: requestedAt + VERIFICATION_WINDOW_MS
+  };
+  safeStorage.setJSON(PENDING_KEY, pending);
+  state.channel = channel;
+  return pending;
+}
+
+/**
+ * Прочитать сохранённое ожидание кода. Истёкшее окно — не «состояние»: сервер
+ * такой код всё равно отвергнет, поэтому оно сразу выбрасывается, а вызывающий
+ * получает явный сигнал «нужен новый код».
+ */
+export function readPendingVerification() {
+  const p = safeStorage.getJSON(PENDING_KEY, null);
+  if (!p || !p.email || !p.channel) return null;
+  if (!Number.isFinite(p.expiresAt) || p.expiresAt <= Date.now()) {
+    safeStorage.remove(PENDING_KEY);
+    state.channel = null;
+    return null;
+  }
+  return p;
+}
+
+export function clearPendingVerification() {
+  safeStorage.remove(PENDING_KEY);
+  state.channel = null;
+}
+
+/**
+ * Прочитать ожидание БЕЗ проверки срока — нужно только UI, чтобы отличить
+ * «код никогда не запрашивали» от «код запрашивали, но окно ввода истекло»
+ * и сказать об этом пользователю. Для проверки кода не используется.
+ */
+export function peekPendingVerification() {
+  const p = safeStorage.getJSON(PENDING_KEY, null);
+  return p?.email && p?.channel ? p : null;
+}
+
+/**
+ * Для UI: живое ожидание + остаток окна ввода в миллисекундах.
+ * Истёкшая запись возвращается как null, но ИЗ ХРАНИЛИЩА НЕ УДАЛЯЕТСЯ:
+ * UI должен уметь показать «окно истекло, запросите новый код», а для этого
+ * запись читается через peekPendingVerification(). Удаляет её тот, кто
+ * принимает решение (readPendingVerification / clearPendingVerification).
+ */
+export function pendingVerification() {
+  const p = peekPendingVerification();
+  if (!p) return null;
+  if (!Number.isFinite(p.expiresAt) || p.expiresAt <= Date.now()) return null;
+  return { ...p, remainingMs: p.expiresAt - Date.now() };
+}
+
+/* ============================================================================
  * Контракт use case
  * ========================================================================== */
 
@@ -110,6 +186,9 @@ export function friendlyAuthError(ex) {
  * функции под CORS-ошибку preflight) — запасной канал встроенной почты
  * Supabase Auth. Любой другой отказ основного канала (задеплоена, но ответила
  * ошибкой: 429/500/502…) — честная ошибка, без тихого переключения.
+ *
+ * Выбранный канал сохраняется (storePendingVerification) — это единственный
+ * источник правды для шага 2, в том числе после перезагрузки страницы.
  */
 export async function requestVerification(email) {
   const e = normalizeEmail(email);
@@ -134,10 +213,12 @@ export async function requestVerification(email) {
     }
   }
 
-  state.channel = channel;
+  const pending = storePendingVerification(e, channel);
   return {
     ok: true,
     channel,
+    requestedAt: pending.requestedAt,
+    expiresAt: pending.expiresAt,
     message: channel === VerificationChannel.FN
       ? `Код отправлен на ${e}. Он действует 2 минуты.`
       : `Код отправлен на ${e} (запасной канал Supabase). Проверьте письмо и «Спам», окно ввода — 2 минуты.`
@@ -148,31 +229,54 @@ export async function requestVerification(email) {
  * Шаг 2. Проверить код и получить аутентифицированную сессию Supabase.
  * Возвращает сессию, но НЕ создаёт профиль: создание — только после
  * ensureAuthenticatedSession + claimOrCreatePsychologist.
+ *
+ * Транспорт берётся ТОЛЬКО из сохранённого pending-состояния. Если оно
+ * потеряно (другой браузер, очистка хранилища) или окно истекло — честная
+ * ошибка «запросите новый код»: код одноразовый, и пробовать его на втором
+ * транспорте значит сжечь его на первом и выдать неопределённый результат.
  */
 export async function verifyVerification(email, code) {
   const e = normalizeEmail(email);
   const err = validateEmail(e) || validateCode(code);
   if (err) return { ok: false, message: err };
 
+  const pending = readPendingVerification();
+  if (!pending) {
+    return {
+      ok: false,
+      message: 'Состояние подтверждения кода потеряно или окно ввода истекло. Запросите новый код.'
+    };
+  }
+  if (pending.email !== e) {
+    return {
+      ok: false,
+      message: `Код отправлен на ${pending.email}. Вернитесь к этому email или запросите новый код.`
+    };
+  }
+
+  const normalized = normalizeCode(code);
   let session;
+  let codeId = null;
   try {
-    if (state.channel === VerificationChannel.OTP) {
-      session = await supabaseApi.verifyEmailOtp(e, normalizeCode(code));
-    } else if (state.channel === VerificationChannel.FN) {
-      session = await supabaseApi.verifyLoginCode(e, normalizeCode(code));
+    if (pending.channel === VerificationChannel.OTP) {
+      session = await supabaseApi.verifyEmailOtp(e, normalized);
     } else {
-      // Канал неизвестен (например, страница перезагружена между шагами).
-      // Это единственная допустимая ветка перебора — она не дублирует логику,
-      // а лишь выбирает транспорт, после чего путь общий.
-      session = await supabaseApi.verifyLoginCode(e, normalizeCode(code))
-        .catch(() => supabaseApi.verifyEmailOtp(e, normalizeCode(code)));
+      const verified = await supabaseApi.verifyLoginCode(e, normalized);
+      session = verified?.session;
+      codeId = verified?.codeId || null;
     }
   } catch (ex) {
+    // Код не погашен (или сервер честно сказал «неверный/истёк») — окно ввода
+    // оставляем, чтобы пользователь мог исправить опечатку.
     return { ok: false, message: friendlyAuthError(ex) };
   }
 
   if (!session?.access_token) return { ok: false, message: 'Код не принят сервером' };
-  return { ok: true, session };
+
+  // Сессия получена: ожидание больше не нужно (и повторное его использование
+  // невозможно — код на сервере погашен).
+  clearPendingVerification();
+  return { ok: true, session, codeId };
 }
 
 /**
@@ -305,8 +409,15 @@ export async function restoreAuthenticatedState() {
     return { authenticated: false, reason: 'profile-unavailable', message: String(ex?.message || ex) };
   }
   if (!row) {
-    clearPersistedSession();
-    return { authenticated: false, reason: 'no-profile' };
+    // Сессия валидна, а профиля нет: например, вход прошёл, а привязка
+    // (claim_psychologist_profile) не удалась. Сессию НЕ выбрасываем — иначе
+    // пользователь вынужден заново получать одноразовый код из письма.
+    // Кабинет при этом не открывается: currentPsychologist остаётся пустым.
+    return {
+      authenticated: false,
+      reason: 'no-profile',
+      message: 'Вход подтверждён, но кабинет не привязан к аккаунту. Повторите привязку профиля.'
+    };
   }
 
   applyPsychologistToLocalState(row);
@@ -316,7 +427,7 @@ export async function restoreAuthenticatedState() {
 /** Выйти: гасим сессию и локальное состояние. */
 export function signOut() {
   state.session = null;
-  state.channel = null;
+  clearPendingVerification();
   clearPersistedSession();
   db.clearCurrentPsychologist();
 }
@@ -352,13 +463,14 @@ export function currentSession() {
   return state.session;
 }
 
+/** Канал, которым выслан текущий код (из сохранённого ожидания, не из памяти). */
 export function currentChannel() {
-  return state.channel;
+  return readPendingVerification()?.channel || null;
 }
 
 /** Сброс состояния канала (нужно тестам между сценариями). */
 export function resetVerificationChannel() {
-  state.channel = null;
+  clearPendingVerification();
 }
 
 export const registration = {
@@ -379,5 +491,9 @@ export const registration = {
   signOut,
   currentSession,
   currentChannel,
+  pendingVerification,
+  peekPendingVerification,
+  readPendingVerification,
+  clearPendingVerification,
   resetVerificationChannel
 };

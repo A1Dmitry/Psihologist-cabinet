@@ -44,6 +44,38 @@ export class AuthViewModel extends BaseViewModel {
     };
   }
 
+  /**
+   * Восстановить шаг ввода кода после перезагрузки страницы (issue #14, п.3).
+   *
+   * Канал доставки сохраняется вместе с ожиданием, поэтому после reload код
+   * проверяется тем же транспортом, которым он был выслан; при истёкшем окне
+   * пользователь явно видит, что нужен новый код (тихого переключения канала
+   * больше нет). Вызывается из renderAuth() ровно один раз на загрузку.
+   */
+  resumePendingVerification() {
+    if (this._resumed) return false;
+    this._resumed = true;
+
+    const record = registration.peekPendingVerification();
+    if (!record) return false;
+
+    const remainingMs = record.expiresAt - Date.now();
+    if (remainingMs > 0) {
+      this.email = record.email;
+      this.step = 'code';
+      this._startWindow(Math.ceil(remainingMs / 1000));
+      return true;
+    }
+
+    // Ожидание есть, но окно ввода истекло: пользователь должен это увидеть,
+    // а не молча оказаться на пустой форме (код на сервере уже не примут).
+    this.email = record.email;
+    this.step = 'email';
+    this.error = 'Окно ввода кода истекло. Запросите новый код.';
+    registration.clearPendingVerification();
+    return true;
+  }
+
   /** Подсказка о незаполненных обязательных полях (валидация — из use case). */
   get profileError() {
     return registration.validateProfile(this.profile, { required: this.mode === 'register' });
@@ -57,9 +89,9 @@ export class AuthViewModel extends BaseViewModel {
     this.notify();
   }
 
-  _startWindow() {
+  _startWindow(seconds = 120) {
     clearInterval(this._win);
-    this.resendIn = 120; // 2 минуты на ввод кода
+    this.resendIn = Math.max(0, seconds); // 2 минуты на ввод кода
     this._win = setInterval(() => {
       this.resendIn = Math.max(0, this.resendIn - 1);
       if (this.resendIn === 0) clearInterval(this._win);

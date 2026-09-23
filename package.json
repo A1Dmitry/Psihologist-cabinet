@@ -7,6 +7,7 @@
     "verify": "node tools/verify_all.mjs",
     "verify:db": "node tests/db-contract.mjs",
     "verify:registration": "node tests/registration-flow.mjs",
+    "verify:authui": "node tests/auth-ui-pending.mjs",
     "verify:authcode": "node tests/auth-code-edge.mjs",
     "verify:timezone": "node tests/timezone-domain.mjs",
     "verify:mapper": "node tests/session-mapper.mjs",

@@ -280,6 +280,20 @@ create table if not exists auth_login_codes (
 create index if not exists auth_login_codes_email_idx on auth_login_codes (email);
 alter table auth_login_codes enable row level security;
 
+-- SR-004 (issue #14, п.4): атомарность погашения кода.
+-- Раньше Edge Function ставила used_at ДО создания сессии в Supabase Auth:
+-- временный отказ Auth сжигал верный код, и регистрация терялась безвозвратно.
+-- Теперь состояние кода описывается тремя отметками:
+--   issued_token_hash — null: код не выпущен; uuid-«захват»: сессию выпускает
+--                       ровно один запрос (условный UPDATE = атомарный захват);
+--                       SHA-256(hashed_token): токен выпущен, браузер его ещё
+--                       не обменял (в пределах TTL возможен перевыпуск);
+--   issues            — сколько раз по этому коду выпускалась сессия (лимит 3);
+--   consumed_at       — браузер получил JWT: перевыпуск закрыт навсегда.
+alter table auth_login_codes add column if not exists issued_token_hash text;
+alter table auth_login_codes add column if not exists issues            integer not null default 1;
+alter table auth_login_codes add column if not exists consumed_at       timestamptz;
+
 -- ——— Платёж / чек ———
 create table if not exists payments (
   id              text primary key default ('pay_' || extract(epoch from now())::bigint::text || '_' || substr(md5(random()::text), 1, 6)),

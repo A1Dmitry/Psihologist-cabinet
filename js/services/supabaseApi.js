@@ -263,16 +263,12 @@ export const supabaseApi = {
     return true;
   },
 
-  /** Проверить код → hashed_token → сессия (access_token) для браузера. */
-  async verifyLoginCode(email, code) {
-    const { hashed_token } = await this._authCodeFn('verify', {
-      email: String(email).toLowerCase().trim(),
-      code: String(code).trim().toUpperCase()
-    });
+  /** Обмен hashed_token (из auth-code) на сессию браузера в GoTrue. */
+  async _sessionFromHashedToken(hashedToken) {
     const res = await fetch(`${SUPABASE_URL}/auth/v1/verify`, {
       method: 'POST',
       headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'magiclink', token_hash: hashed_token })
+      body: JSON.stringify({ type: 'magiclink', token_hash: hashedToken })
     });
     if (!res.ok) {
       const body = await res.text();
@@ -281,6 +277,67 @@ export const supabaseApi = {
       throw new Error(msg || `HTTP ${res.status}`);
     }
     return res.json();
+  },
+
+  /**
+   * Перевыпустить сессию по уже подтверждённому коду (action=recover).
+   *
+   * Зачем: код погашен на сервере, но ответ с hashed_token мог не дойти до
+   * браузера (обрыв сети, перезагрузка между шагами) либо GoTrue отказал
+   * в момент обмена. Без восстановления пользователь терял регистрацию —
+   * код-то уже одноразовый. capability здесь — code_id (uuid, выдаётся только
+   * тому, кто код подтвердил), плюс окно TTL и лимит перевыпусков на сервере.
+   */
+  async reissueLoginSession(email, codeId) {
+    const { hashed_token } = await this._authCodeFn('recover', {
+      email: String(email).toLowerCase().trim(),
+      code_id: codeId
+    });
+    const session = await this._sessionFromHashedToken(hashed_token);
+    return { session, hashedToken: hashed_token };
+  },
+
+  /**
+   * Сообщить серверу, что браузер получил сессию (action=redeem).
+   * После этого сервер закрывает перевыпуск токена: один код = одна сессия.
+   * Отказ не критичен (сессия уже есть), поэтому вызывающий гасит ошибку сам.
+   */
+  async redeemLoginCode(email, codeId, hashedToken) {
+    return this._authCodeFn('redeem', {
+      email: String(email).toLowerCase().trim(),
+      code_id: codeId,
+      hashed_token: hashedToken
+    });
+  },
+
+  /**
+   * Проверить код → hashed_token → сессия (access_token) для браузера.
+   * Возвращает { session, codeId }: codeId нужен для восстановления, если
+   * обмен hashed_token на сессию не удался (см. reissueLoginSession).
+   */
+  async verifyLoginCode(email, code) {
+    const e = String(email).toLowerCase().trim();
+    const verified = await this._authCodeFn('verify', { email: e, code: String(code).trim().toUpperCase() });
+    const codeId = verified.code_id || null;
+
+    /** Сессия получена — закрываем возможность перевыпуска токена на сервере. */
+    const redeem = async (hashedToken) => {
+      if (codeId && hashedToken) await this.redeemLoginCode(e, codeId, hashedToken).catch(() => {});
+    };
+
+    try {
+      const session = await this._sessionFromHashedToken(verified.hashed_token);
+      await redeem(verified.hashed_token);
+      return { session, codeId };
+    } catch (ex) {
+      if (!codeId) throw ex; // старая схема без code_id: восстанавливать нечем
+      const reissued = await this.reissueLoginSession(e, codeId).catch(() => null);
+      if (reissued?.session?.access_token) {
+        await redeem(reissued.hashedToken);
+        return { session: reissued.session, codeId };
+      }
+      throw ex;
+    }
   },
 
   /**
@@ -402,6 +459,23 @@ export const supabaseApi = {
       if (r.status === 404) throw new Error('не задеплоена (HTTP 404)');
       // задеплоенная функция на пустой body отвечает 400 «Неизвестное действие» — это норма
       return `отвечает (HTTP ${r.status})`;
+    });
+    // SR-004: без этих колонок функция не может атомарно гасить код и не умеет
+    // восстанавливать сессию. Проверяется «холостым» recover: письмо не шлётся,
+    // данные не меняются, а ответ функции прямо говорит, чего не хватает.
+    await check('Схема auth_login_codes (SR-004: атомарность кода входа)', 'Перепримените supabase/schema.sql в SQL Editor (п.2 docs/INFRA.md)', async () => {
+      const r = await fetch(`${SUPABASE_URL}/functions/v1/auth-code`, {
+        method: 'POST',
+        headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'recover', email: 'schema-probe@example.invalid', code_id: 'schema-probe' })
+      });
+      if (r.status === 404) throw new Error('функция auth-code не задеплоена (HTTP 404)');
+      const data = await r.json().catch(() => ({}));
+      if (data?.ok === false && /issued_token_hash|schema\.sql/i.test(String(data.error || ''))) {
+        throw new Error(String(data.error).slice(0, 200));
+      }
+      // 400 «Подтверждение не найдено» — норма: схема на месте, кода такого нет
+      return `колонки SR-004 на месте (HTTP ${r.status})`;
     });
     return out;
   }
