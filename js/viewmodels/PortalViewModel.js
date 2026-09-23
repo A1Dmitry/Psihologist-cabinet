@@ -31,7 +31,15 @@ export class PortalViewModel extends BaseViewModel {
           p.specialization,
           p.about,
           p.city,
-          p.experience
+          p.experience,
+          p.greeting,
+          p.approach,
+          // направления работы / запросы клиента
+          ...(p.directions || []).flatMap(d => [d.title, d.details]),
+          // образование и опыт
+          ...(p.education?.basic || []).map(x => x.title),
+          ...(p.education?.additional || []).map(x => x.title),
+          ...(p.experienceItems || []).map(x => `${x.organisation} ${x.details}`)
         ].join(' '));
         return terms.every(term => searchable.includes(term));
       });

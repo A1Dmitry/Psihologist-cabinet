@@ -21,10 +21,50 @@ function mapPsy(row) {
     address: row.address || '',
     experience: row.experience || '',
     slug: row.slug || '',
+    // —— расширенный публичный профиль ——
+    greeting: row.greeting || '',
+    approach: row.approach || '',
+    photoUrl: row.photo_url || '',
+    publicEmail: row.public_email || '',
+    directions: row.directions || [],
+    education: row.education || null,
+    experienceItems: row.experience_items || [],
+    socials: row.socials || [],
+    paymentLinks: row.payment_links || [],
+    paymentRequisites: row.payment_requisites || null,
     isActive: row.is_active !== false,
     keyVerifier: row.key_verifier || null,
     createdAt: row.created_at
   });
+}
+
+/** Обратное преобразование: Psychologist → строка таблицы psychologists (без потерь) */
+function toPsyRow(psy) {
+  return {
+    email: psy.email,
+    full_name: psy.fullName,
+    phone: psy.phone || '',
+    specialization: psy.specialization || 'Психолог',
+    city: psy.city || '',
+    about: psy.about || '',
+    website: psy.website || '',
+    source_url: psy.sourceUrl || '',
+    address: psy.address || '',
+    experience: psy.experience || '',
+    slug: psy.slug,
+    greeting: psy.greeting || '',
+    approach: psy.approach || '',
+    photo_url: psy.photoUrl || '',
+    public_email: psy.publicEmail || '',
+    directions: psy.directions || [],
+    education: psy.education || { basic: [], additional: [] },
+    experience_items: psy.experienceItems || [],
+    socials: psy.socials || [],
+    payment_links: psy.paymentLinks || [],
+    payment_requisites: psy.paymentRequisites || {},
+    is_active: psy.isActive !== false,
+    key_verifier: psy.keyVerifier || null
+  };
 }
 
 function mapService(row) {
@@ -39,6 +79,9 @@ function mapService(row) {
     price: Number(row.price) || 0,
     currency: row.currency || 'BYN',
     format: row.format || 'offline',
+    platforms: row.platforms || [],
+    payUrl: row.pay_url || '',
+    sortOrder: row.sort_order || 0,
     isActive: row.is_active !== false
   });
 }
@@ -86,6 +129,22 @@ export const supabaseSync = {
   enabled() {
     return isSupabaseConfigured();
   },
+
+  /** Отправить профиль психолога (включая расширенные поля) на сервер */
+  async pushProfile(psychologist) {
+    if (!this.enabled()) return { ok: false, localOnly: true };
+    if (!psychologist?.id) return { ok: false, message: 'Профиль не выбран' };
+    // key_verifier не перезаписываем из публичного контекста
+    const row = { ...toPsyRow(psychologist) };
+    delete row.key_verifier;
+    try {
+      await supabaseApi.updatePsychologist(psychologist.id, row);
+      return { ok: true, message: 'Профиль синхронизирован с сервером' };
+    } catch (e) {
+      return { ok: false, message: String(e.message || e) };
+    }
+  },
+
 
   /**
    * Загрузить каталог + данные всех психологов в локальный db

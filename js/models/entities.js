@@ -35,7 +35,10 @@ export const PaymentStatus = {
   FAILED: 'failed'
 };
 
-/** Психолог — владелец кабинета */
+/** Психолог — владелец кабинета.
+ *  Модель расширена по публичному профилю с сайта (см. docs/DATA-MODEL.md):
+ *  «Обо мне», направления работы, образование, опыт, контакты/соцсети, оплата.
+ */
 export class Psychologist {
   constructor({
     id = null,
@@ -50,6 +53,24 @@ export class Psychologist {
       address = '',
       experience = '',
       slug = '',
+    // —— «Обо мне» (публичный профиль) ——
+    greeting = '',
+    approach = '',
+    photoUrl = '',
+    publicEmail = '',
+    // —— Направления работы / запросы клиента («С чем могу помочь») ——
+    // [{ title, details }] — details в скобках после title (как на сайте)
+    directions = [],
+    // —— Образование: { basic: [{title, institution, details}], additional: [...] } ——
+    education = null,
+    // —— Опыт работы: [{ organisation, details, years, isCurrent }] ——
+    experienceItems = [],
+    // —— Контакты/соцсети: [{ kind: telegram|instagram|skype|..., url, title }] ——
+    socials = [],
+    // —— Платёжные ссылки (bePaid и пр.): [{ label, url, kind: service|donation|other }] ——
+    paymentLinks = [],
+    // —— Банковские реквизиты для платежа по реквизитам ——
+    paymentRequisites = null,
     isActive = true,
     /** { salt, iv, data } — verifier ключа из пароля; пароль не хранится */
     keyVerifier = null,
@@ -67,6 +88,46 @@ export class Psychologist {
     this.address = address;
     this.experience = experience;
     this.slug = slug || Psychologist.makeSlug(fullName || email);
+
+    this.greeting = greeting || '';
+    this.approach = approach || '';
+    this.photoUrl = photoUrl || '';
+    this.publicEmail = String(publicEmail || '').toLowerCase().trim();
+    this.directions = normList(directions, d => ({
+      title: str(d?.title),
+      details: str(d?.details)
+    }));
+    this.education = {
+      basic: normList(education?.basic, educationItem),
+      additional: normList(education?.additional, educationItem)
+    };
+    this.experienceItems = normList(experienceItems, x => ({
+      organisation: str(x?.organisation),
+      details: str(x?.details),
+      years: x?.years != null && x.years !== '' ? Number(x.years) : null,
+      isCurrent: !!x?.isCurrent
+    }));
+    this.socials = normList(socials, s => ({
+      kind: str(s?.kind) || 'other',
+      url: str(s?.url),
+      title: str(s?.title)
+    }));
+    this.paymentLinks = normList(paymentLinks, l => ({
+      label: str(l?.label),
+      url: str(l?.url),
+      kind: str(l?.kind) || 'other'
+    }));
+    this.paymentRequisites = {
+      recipient: str(paymentRequisites?.recipient),
+      legalAddress: str(paymentRequisites?.legalAddress),
+      unp: str(paymentRequisites?.unp),
+      account: str(paymentRequisites?.account),
+      bankName: str(paymentRequisites?.bankName),
+      bik: str(paymentRequisites?.bik),
+      purpose: str(paymentRequisites?.purpose),
+      donationUrl: str(paymentRequisites?.donationUrl)
+    };
+
     this.isActive = isActive;
     this.keyVerifier = keyVerifier;
     this.createdAt = createdAt || new Date().toISOString();
@@ -79,6 +140,22 @@ export class Psychologist {
       .replace(/^-|-$/g, '')
       .slice(0, 48) || 'psy';
   }
+}
+
+function str(v) {
+  return v == null ? '' : String(v);
+}
+
+function normList(value, mapItem) {
+  return Array.isArray(value) ? value.filter(Boolean).map(mapItem) : [];
+}
+
+function educationItem(x) {
+  return {
+    title: str(x?.title),
+    institution: str(x?.institution),
+    details: str(x?.details)
+  };
 }
 
 /** Код подтверждения email (регистрация / вход / верификация клиента) */
@@ -106,16 +183,24 @@ export class EmailCode {
   }
 }
 
-/** Услуга психолога */
+/** Услуга психолога (блок «Услуги» публичного профиля) */
 export class Service {
   constructor({
     id = null,
     psychologistId = null,
     name = '',
+    title = '', // алиас name (Supabase-колонка title)
     price = 0,
     currency = 'BYN',
     duration = 60,
+    durationMin = null, // алиас duration (Supabase-колонка duration_min)
     format = 'offline',
+    description = '',
+    /** каналы для онлайн-консультации: ['skype','whatsapp','viber','telegram','zoom'] */
+    platforms = null,
+    /** внешняя платёжная ссылка (bePaid product URL и т.п.) */
+    payUrl = '',
+    sortOrder = 0,
     isActive = true,
     /** переопределение политики оплаты для услуги (null = из настроек кабинета) */
     paymentPolicy = null,
@@ -124,11 +209,15 @@ export class Service {
   } = {}) {
     this.id = id;
     this.psychologistId = psychologistId;
-    this.name = name;
+    this.name = name || title;
     this.price = Number(price) || 0;
     this.currency = currency;
-    this.duration = Number(duration) || 60;
+    this.duration = Number(durationMin ?? duration) || 60;
     this.format = format;
+    this.description = description || '';
+    this.platforms = Array.isArray(platforms) ? platforms.map(String) : [];
+    this.payUrl = payUrl || '';
+    this.sortOrder = Number(sortOrder) || 0;
     this.isActive = isActive;
     this.paymentPolicy = paymentPolicy;
     this.depositPercent = depositPercent;
@@ -136,7 +225,7 @@ export class Service {
   }
 
   priceLabel() {
-    return this.currency === 'RUB' ? `${this.price} ₽` : `${this.price} бел. руб.`;
+    return this.currency === 'RUB' ? `${this.price} рос. руб.` : `${this.price} бел. руб.`;
   }
 }
 

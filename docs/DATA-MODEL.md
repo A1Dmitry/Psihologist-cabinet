@@ -1,0 +1,131 @@
+# Модель данных: сайт nataliamikhailouskaya.by ↔ Psihologist-cabinet
+
+Источник: публичные страницы [nataliamikhailouskaya.by](https://nataliamikhailouskaya.by/)
+(«Обо мне», «С чем могу помочь», «Направления моей работы», образование, опыт, «Услуги»,
+«Оплатить», «Контакты») и [/donation](https://nataliamikhailouskaya.by/donation) (реквизиты).
+
+Целевая модель приложения — `js/models/entities.js` (Code First),
+БД — PostgreSQL/Supabase (`supabase/schema.sql`), маппинг — `js/services/supabaseSync.js`.
+
+---
+
+## 1. Модель данных сайта (извлечена)
+
+| Сущность сайта | Что содержит |
+|---|---|
+| **Профиль («Обо мне»)** | приветствие, ФИО, специализация («гештальт-терапевт, кризисный и семейный психолог»), подход в работе, фото |
+| **Запросы / направления работы** («С чем могу помочь», «Направления моей работы») | упорядоченный список тем с детализацией в скобках (6 пунктов: взаимоотношения, страхи/тревожность, самооценка, эмоции, границы, выгорание) |
+| **Образование** | 2 группы: психологическое (2 записи), дополнительное (5 записей) |
+| **Опыт работы** | 2 записи: организация, срок (лет), текущее место |
+| **Услуги** | 3 услуги: название, цена, валюта (BYN/RUB), длительность (60/90/60 мин), формат (очно/онлайн), примечание (город / каналы), платёжная ссылка |
+| **Оплата** | 3 платёжные ссылки (2× bePaid product, «свободный платёж») + банковские реквизиты ИП (получатель, юр. адрес, УНП, р/с, банк, БИК, назначение платежа) + страница /donation |
+| **Контакты** | телефон, публичный email, адрес приёма, соцсети (telegram, instagram); онлайн-каналы (Skype, WhatsApp, Viber, Telegram, Zoom) |
+
+Конкретные значения (эталон для seed) — `supabase/seed.sql` и `_seed()` в `js/core/dbContext.js`.
+
+---
+
+## 2. Сверка с моделью проекта (было → стало)
+
+| Поле модели сайта | Было в `Psychologist` | Стало |
+|---|---|---|
+| ФИО | ✅ `fullName` | ✅ |
+| Специализация | ✅ `specialization` | ✅ |
+| Город | ✅ `city` | ✅ |
+| О себе (текст) | ✅ `about` (смешивал всё подряд) | ✅ `about` + отдельные поля ниже |
+| Приветствие | ❌ терялось | ✅ `greeting` |
+| Подход в работе | ❌ терялось | ✅ `approach` |
+| Фото | ❌ терялось | ✅ `photoUrl` |
+| Публичный email | ⚠️ `email` = учётка входа | ✅ `publicEmail` (вход — отдельно) |
+| Телефон | ✅ `phone` | ✅ |
+| Адрес приёма | ✅ `address` | ✅ |
+| Сайт / источник | ✅ `website`, `sourceUrl` | ✅ |
+| Направления работы (запросы) | ❌ терялось | ✅ `directions[]` `{title, details}` |
+| Образование (2 группы) | ❌ терялось | ✅ `education.basic[]` / `education.additional[]` `{title, institution, details}` |
+| Опыт (структурированный) | ⚠️ только текст `experience` | ✅ `experienceItems[]` `{organisation, details, years, isCurrent}` (текст `experience` сохранён как краткое резюме) |
+| Соцсети/мессенджеры | ❌ терялось | ✅ `socials[]` `{kind, url, title}` |
+| Платёжные ссылки | ❌ терялось | ✅ `paymentLinks[]` `{label, url, kind}` |
+| Банковские реквизиты | ❌ терялось | ✅ `paymentRequisites` `{recipient, legalAddress, unp, account, bankName, bik, purpose, donationUrl}` |
+| Услуги: цена/длительность/формат | ✅ `Service` | ✅ |
+| Услуги: примечание («в г. Гродно…», «в Skype, …») | ❌ терялось (и терялось при sync!) | ✅ `Service.description` |
+| Услуги: каналы онлайн | ❌ терялось | ✅ `Service.platforms[]` |
+| Услуги: ссылка оплаты | ❌ терялось | ✅ `Service.payUrl` |
+| Услуги: порядок | ❌ терялось при sync (sort_order) | ✅ `Service.sortOrder` |
+
+Итог: после расширения **вся** модель сайта помещается в модель приложения и в БД без потерь.
+
+---
+
+## 3. Структура расширенной модели (`Psychologist`)
+
+```text
+Psychologist
+├─ учётка: id, email (вход), keyVerifier, isActive, createdAt, slug
+├─ профиль: fullName, phone, publicEmail, specialization, city,
+│           greeting, about, approach, photoUrl,
+│           website, sourceUrl, address, experience (резюме)
+├─ directions[]        — «С чем могу помочь» / «Направления работы»
+├─ education           — { basic[], additional[] }
+├─ experienceItems[]   — «Опыт» (структурированно)
+├─ socials[]           — telegram/instagram/… контакты
+├─ paymentLinks[]      — кнопки «Оплатить» (bePaid, /donation)
+└─ paymentRequisites   — реквизиты ИП со страницы /donation
+
+Service (услуга)
+├─ name, price, currency, duration, format
+├─ description   — примечание строки услуги
+├─ platforms[]   — skype/whatsapp/viber/telegram/zoom (online)
+├─ payUrl        — внешняя платёжная ссылка
+└─ sortOrder, paymentPolicy, depositPercent, depositAmount, isActive
+```
+
+---
+
+## 4. Маппинг в БД (PostgreSQL/Supabase)
+
+Таблица `psychologists` (`supabase/schema.sql`):
+
+| Поле модели | Колонка | Тип |
+|---|---|---|
+| greeting | `greeting` | text |
+| approach | `approach` | text |
+| photoUrl | `photo_url` | text |
+| publicEmail | `public_email` | text |
+| directions | `directions` | jsonb `[{title, details}]` |
+| education | `education` | jsonb `{basic:[…], additional:[…]}` |
+| experienceItems | `experience_items` | jsonb `[{organisation, details, years, isCurrent}]` |
+| socials | `socials` | jsonb `[{kind, url, title}]` |
+| paymentLinks | `payment_links` | jsonb `[{label, url, kind}]` |
+| paymentRequisites | `payment_requisites` | jsonb `{recipient, legalAddress, unp, account, bankName, bik, purpose, donationUrl}` |
+
+Таблица `services`:
+
+| Поле модели | Колонка | Тип |
+|---|---|---|
+| name | `title` | text |
+| description | `description` | text |
+| duration | `duration_min` | integer |
+| platforms | `platforms` | jsonb |
+| payUrl | `pay_url` | text |
+| sortOrder | `sort_order` | integer |
+
+Формат jsonb сохраняет структуру списков (без «сплющивания» в строки) — данные читаются
+и пишутся без потерь (`mapPsy`/`toPsyRow` в `js/services/supabaseSync.js`).
+Локальная копия — localStorage (`js/core/dbContext.js`, вложенные массивы в агрегате
+`Psychologist`; типы строк в конструкторе нормализуются, старые записи мигрируют без ключа).
+
+### Существующие таблицы (дополнены колонками под модель)
+
+`clients`, `sessions`, `session_settings`, `payments`, `email_codes`, `waiting_items`,
+`booking_attempts`, `client_risks`, `session_reminders` — см. `supabase/schema.sql`
+(DDL идемпотентный: `create table if not exists` + `add column if not exists`).
+
+---
+
+## 5. Замечания по синхронизации (зафиксировано, вне задачи)
+
+* `mapClient`/`mapSession` не переносят часть служебных полей (`encryptedPii`,
+  `previousSlot`, `changeConsentStatus`, `holdExpiresAt`, `requiresPayment`).
+  Колонки в схеме уже предусмотрены; маппинг можно расширить аналогично `mapPsy`.
+* Логин-`email` каталожных записей — технический маркер `example.invalid`
+  (учётки не создаются). Реальный контактный email хранится в `publicEmail`.

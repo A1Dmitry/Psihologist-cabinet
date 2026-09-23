@@ -282,12 +282,20 @@
           <div id="tab-profile" class="cab-tab hidden">
             <h1 class="text-2xl font-bold mb-4">Профиль</h1>
             <div class="bg-white rounded-xl border p-6 max-w-lg space-y-3">
-              <p class="text-sm text-slate-500">Email: <span id="pf-email"></span></p>
+              <p class="text-sm text-slate-500">Email (вход): <span id="pf-email"></span></p>
               <div><label class="text-sm font-medium">ФИО</label><input id="pf-name" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
               <div><label class="text-sm font-medium">Телефон</label><input id="pf-phone" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
               <div><label class="text-sm font-medium">Специализация</label><input id="pf-spec" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
               <div><label class="text-sm font-medium">Город</label><input id="pf-city" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+              <div><label class="text-sm font-medium">Приветствие</label><input id="pf-greeting" placeholder="Добро пожаловать…" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
               <div><label class="text-sm font-medium">О себе</label><textarea id="pf-about" rows="3" class="w-full mt-1 px-3 py-2 rounded-xl border resize-none"></textarea></div>
+              <div><label class="text-sm font-medium">Подход в работе</label><textarea id="pf-approach" rows="2" class="w-full mt-1 px-3 py-2 rounded-xl border resize-none"></textarea></div>
+              <div><label class="text-sm font-medium">Фото (URL)</label><input id="pf-photo" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+              <div><label class="text-sm font-medium">Контактный email</label><input id="pf-public-email" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+              <div><label class="text-sm font-medium">Адрес приёма</label><input id="pf-address" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+              <div><label class="text-sm font-medium">Сайт</label><input id="pf-website" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+              <div><label class="text-sm font-medium">Telegram (ссылка)</label><input id="pf-telegram" placeholder="https://t.me/…" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+              <div><label class="text-sm font-medium">Instagram (ссылка)</label><input id="pf-instagram" placeholder="https://www.instagram.com/…" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
               <button id="btn-save-profile" class="px-6 py-2.5 rounded-full bg-indigo-600 text-white text-sm font-medium">Сохранить</button>
             </div>
           </div>
@@ -311,6 +319,7 @@
         <p class="text-sm text-indigo-700" id="book-psy-spec"></p>
         <p class="text-xs text-slate-500 mt-1" id="book-psy-city"></p>
       </div>
+      <div id="book-about" class="mb-8"></div>
       <div id="book-error" class="hidden mb-4 text-sm text-rose-600 bg-rose-50 px-3 py-2 rounded-lg"></div>
       <div id="book-payment-info" class="mb-6"></div>
       <div id="book-pay-actions" class="hidden mb-8"></div>

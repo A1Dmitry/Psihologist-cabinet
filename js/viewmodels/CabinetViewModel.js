@@ -5,6 +5,7 @@ import { fraudProtectionService } from '../services/fraudProtectionService.js';
 import { reminderService } from '../services/reminderService.js';
 import { clientVaultService } from '../services/clientVaultService.js';
 import { cryptoService } from '../services/cryptoService.js';
+import { supabaseSync } from '../services/supabaseSync.js';
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
@@ -385,6 +386,10 @@ export class CabinetViewModel extends BaseViewModel {
     if (!p) return;
     Object.assign(p, patch);
     db.saveChanges();
+    // фоновая синхронизация расширенного профиля с серверной БД
+    supabaseSync.pushProfile(p).then(res => {
+      if (!res.ok && !res.localOnly) console.warn('[Supabase] профиль не синхронизирован:', res.message);
+    }).catch(() => { /* offline — остаёмся в localStorage */ });
     this.showToast('Профиль обновлён');
     this.notify();
   }

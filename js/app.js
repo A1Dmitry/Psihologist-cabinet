@@ -58,6 +58,21 @@ function platformLabel(p) {
   return ({ google_meet: 'Google Meet', zoom: 'Zoom', telegram: 'Telegram', whatsapp: 'WhatsApp', other: 'Видео' })[p] || '';
 }
 
+function esc(v) {
+  return String(v ?? '')
+    .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+}
+
+const PLATFORM_TITLES = {
+  skype: 'Skype', whatsapp: 'WhatsApp', viber: 'Viber', telegram: 'Telegram', zoom: 'Zoom'
+};
+
+const SOCIAL_TITLES = {
+  telegram: 'Telegram', instagram: 'Instagram', skype: 'Skype',
+  whatsapp: 'WhatsApp', viber: 'Viber', vk: 'VK', other: 'Ссылка'
+};
+
 function showToast(msg, isError) {
   const el = $('#toast');
   if (!el) return;
@@ -176,8 +191,10 @@ function renderPortal() {
     return `
       <article class="bg-white rounded-2xl border border-slate-100 p-6 hover:shadow-lg transition flex flex-col">
         <div class="flex items-start gap-4 mb-4">
-          <div class="w-14 h-14 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-lg shrink-0">
-            ${p.fullName.split(' ').map(x => x[0]).slice(0, 2).join('')}
+          <div class="w-14 h-14 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-lg shrink-0 overflow-hidden">
+            ${p.photoUrl
+              ? `<img src="${esc(p.photoUrl)}" alt="${esc(p.fullName)}" class="w-full h-full object-cover">`
+              : esc(p.fullName.split(' ').map(x => x[0]).slice(0, 2).join(''))}
           </div>
           <div class="min-w-0">
             <h3 class="font-bold text-slate-900 text-lg leading-tight">${p.fullName}</h3>
@@ -496,7 +513,17 @@ function renderCabProfile() {
   $('#pf-phone') && ($('#pf-phone').value = p.phone || '');
   $('#pf-spec') && ($('#pf-spec').value = p.specialization || '');
   $('#pf-city') && ($('#pf-city').value = p.city || '');
+  $('#pf-greeting') && ($('#pf-greeting').value = p.greeting || '');
   $('#pf-about') && ($('#pf-about').value = p.about || '');
+  $('#pf-approach') && ($('#pf-approach').value = p.approach || '');
+  $('#pf-photo') && ($('#pf-photo').value = p.photoUrl || '');
+  $('#pf-public-email') && ($('#pf-public-email').value = p.publicEmail || '');
+  $('#pf-address') && ($('#pf-address').value = p.address || '');
+  $('#pf-website') && ($('#pf-website').value = p.website || '');
+  const tg = (p.socials || []).find(s => s.kind === 'telegram');
+  const ig = (p.socials || []).find(s => s.kind === 'instagram');
+  $('#pf-telegram') && ($('#pf-telegram').value = tg?.url || '');
+  $('#pf-instagram') && ($('#pf-instagram').value = ig?.url || '');
   $('#pf-email') && ($('#pf-email').textContent = p.email);
 }
 
@@ -505,6 +532,88 @@ function renderCabLink() {
   const url = `${location.origin}${location.pathname}?book=${p.slug}`;
   $('#pub-link') && ($('#pub-link').value = url);
   $('#pub-slug') && ($('#pub-slug').textContent = p.slug);
+}
+
+function serviceMetaLine(s) {
+  const format = s.format === 'online'
+    ? 'онлайн · ' + ((s.platforms || []).map(x => PLATFORM_TITLES[x] || x).join(', ') || 'Google Meet')
+    : 'очно';
+  return `${s.duration} мин · ${format}`;
+}
+
+/** Публичный профиль психолога на странице записи (модель сайта — без потерь) */
+function renderBookAbout(p) {
+  const box = $('#book-about');
+  if (!box) return;
+  const dirs = p.directions || [];
+  const eduBasic = p.education?.basic || [];
+  const eduExtra = p.education?.additional || [];
+  const exp = p.experienceItems || [];
+  const socials = p.socials || [];
+  const links = p.paymentLinks || [];
+  const req = p.paymentRequisites || {};
+  const hasReq = req.recipient || req.account || req.unp || req.purpose;
+
+  const eduList = items => items.length
+    ? `<ul class="mt-1 space-y-1 text-sm text-slate-700 list-disc list-inside">${items.map(x => `<li>${esc(x.title)}</li>`).join('')}</ul>`
+    : '';
+
+  const expHtml = exp.length
+    ? `<ul class="mt-1 space-y-1 text-sm text-slate-700 list-disc list-inside">${exp.map(x =>
+        `<li>${esc(x.details || x.organisation)}${x.years ? ` (${esc(x.years)} лет)` : ''}</li>`).join('')}</ul>`
+    : (p.experience ? `<p class="mt-1 text-sm text-slate-700">${esc(p.experience)}</p>` : '');
+
+  const reqHtml = hasReq ? `
+      <h3 class="font-semibold text-slate-900 mt-5">Реквизиты для оплаты</h3>
+      <div class="mt-1 text-sm text-slate-700 space-y-0.5">
+        ${req.recipient ? `<div>Получатель: ${esc(req.recipient)}</div>` : ''}
+        ${req.legalAddress ? `<div>Адрес: ${esc(req.legalAddress)}</div>` : ''}
+        ${req.unp ? `<div>УНП: ${esc(req.unp)}</div>` : ''}
+        ${req.account ? `<div>Р/с: ${esc(req.account)}</div>` : ''}
+        ${req.bankName ? `<div>Банк: ${esc(req.bankName)}</div>` : ''}
+        ${req.bik ? `<div>БИК: ${esc(req.bik)}</div>` : ''}
+        ${req.purpose ? `<div>Назначение платежа: ${esc(req.purpose)}</div>` : ''}
+      </div>` : '';
+
+  const contacts = [
+    p.address ? `<div>${esc(p.address)}</div>` : '',
+    p.publicEmail ? `<div><a class="text-indigo-600 hover:underline" href="mailto:${esc(p.publicEmail)}">${esc(p.publicEmail)}</a></div>` : '',
+    p.website ? `<div><a class="text-indigo-600 hover:underline" target="_blank" rel="noopener" href="${esc(p.website)}">${esc(p.website)}</a></div>` : '',
+    ...socials.map(s => {
+      const label = SOCIAL_TITLES[s.kind] || s.title || s.kind;
+      return `<div><a class="text-indigo-600 hover:underline" target="_blank" rel="noopener" href="${esc(s.url)}">${esc(label)}</a></div>`;
+    })
+  ].join('');
+
+  const html = `
+    <div class="rounded-2xl bg-white border p-6 space-y-1">
+      ${p.photoUrl ? `<img src="${esc(p.photoUrl)}" alt="${esc(p.fullName)}" class="w-32 h-32 object-cover rounded-2xl mb-3">` : ''}
+      ${p.greeting ? `<p class="text-sm text-slate-500 italic">${esc(p.greeting)}</p>` : ''}
+      ${p.about ? `<p class="text-sm text-slate-700">${esc(p.about)}</p>` : ''}
+      ${p.approach ? `<p class="text-sm text-slate-700">${esc(p.approach)}</p>` : ''}
+
+      ${dirs.length ? `
+      <h3 class="font-semibold text-slate-900 mt-5">С чем могу помочь</h3>
+      <ul class="mt-1 space-y-1 text-sm text-slate-700 list-disc list-inside">
+        ${dirs.map(d => `<li>${esc(d.title)}${d.details ? ` <span class="text-slate-500">(${esc(d.details)})</span>` : ''}</li>`).join('')}
+      </ul>` : ''}
+
+      ${eduBasic.length ? `<h3 class="font-semibold text-slate-900 mt-5">Психологическое образование</h3>${eduList(eduBasic)}` : ''}
+      ${eduExtra.length ? `<h3 class="font-semibold text-slate-900 mt-5">Дополнительное образование</h3>${eduList(eduExtra)}` : ''}
+
+      ${expHtml ? `<h3 class="font-semibold text-slate-900 mt-5">Опыт</h3>${expHtml}` : ''}
+
+      ${links.length ? `
+      <h3 class="font-semibold text-slate-900 mt-5">Оплата</h3>
+      <div class="mt-2 flex flex-wrap gap-2">
+        ${links.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">${esc(l.label)}</a>`).join('')}
+      </div>` : ''}
+      ${reqHtml}
+
+      ${contacts ? `<h3 class="font-semibold text-slate-900 mt-5">Контакты</h3><div class="mt-1 text-sm text-slate-700 space-y-0.5">${contacts}</div>` : ''}
+    </div>`;
+  box.innerHTML = html.trim() === '' ? '' : html;
+  box.classList.toggle('hidden', !box.innerHTML);
 }
 
 function renderBooking() {
@@ -526,15 +635,18 @@ function renderBooking() {
   $('#book-psy-name') && ($('#book-psy-name').textContent = p.fullName);
   $('#book-psy-spec') && ($('#book-psy-spec').textContent = p.specialization);
   $('#book-psy-city') && ($('#book-psy-city').textContent = (p.city || 'Онлайн') + ' · при необходимости Google Meet');
+  renderBookAbout(p);
 
   const svcBox = $('#book-services');
   if (svcBox) {
     svcBox.innerHTML = bookingVm.services.map(s => `
       <label class="flex items-start gap-4 p-4 rounded-xl border-2 cursor-pointer ${bookingVm.serviceId === s.id ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200'}">
         <input type="radio" name="bs" value="${s.id}" ${bookingVm.serviceId === s.id ? 'checked' : ''} class="mt-1 accent-indigo-600">
-        <div class="flex-1"><div class="font-medium">${s.name}</div>
-        <div class="text-sm text-slate-500">${s.duration} мин · ${s.format === 'online' ? 'онлайн · Google Meet' : 'очно'}</div></div>
-        <div class="font-semibold text-indigo-700">${s.priceLabel()}</div>
+        <div class="flex-1"><div class="font-medium">${esc(s.name)}</div>
+        <div class="text-sm text-slate-500">${esc(serviceMetaLine(s))}</div>
+        ${s.description ? `<div class="text-sm text-slate-500 mt-0.5">${esc(s.description)}</div>` : ''}
+        ${s.payUrl ? `<a href="${esc(s.payUrl)}" target="_blank" rel="noopener" class="inline-block mt-1 text-sm text-indigo-600 hover:underline" onclick="event.stopPropagation()">Оплатить ↗</a>` : ''}</div>
+        <div class="font-semibold text-indigo-700">${esc(s.priceLabel())}</div>
       </label>`).join('');
     svcBox.querySelectorAll('input').forEach(inp => {
       inp.onchange = () => { bookingVm.selectService(inp.value); renderBooking(); };
@@ -749,12 +861,25 @@ function bindEvents() {
     navigate('portal');
   });
   $('#btn-save-profile')?.addEventListener('click', () => {
+    const p = cabinetVm.psychologist;
+    const socials = [...(p?.socials || []).filter(s => !['telegram', 'instagram'].includes(s.kind))];
+    const tg = $('#pf-telegram')?.value?.trim();
+    const ig = $('#pf-instagram')?.value?.trim();
+    if (tg) socials.push({ kind: 'telegram', url: tg, title: 'telegram' });
+    if (ig) socials.push({ kind: 'instagram', url: ig, title: 'instagram' });
     cabinetVm.updateProfile({
       fullName: $('#pf-name')?.value,
       phone: $('#pf-phone')?.value,
       specialization: $('#pf-spec')?.value,
       city: $('#pf-city')?.value,
-      about: $('#pf-about')?.value
+      greeting: $('#pf-greeting')?.value,
+      about: $('#pf-about')?.value,
+      approach: $('#pf-approach')?.value,
+      photoUrl: $('#pf-photo')?.value,
+      publicEmail: $('#pf-public-email')?.value,
+      address: $('#pf-address')?.value,
+      website: $('#pf-website')?.value,
+      socials
     });
     renderCabinet();
   });
@@ -1054,11 +1179,11 @@ function boot() {
         if (!result.ok) throw new Error(result.message || 'Не удалось загрузить каталог с сервера');
         console.info('[Supabase] server catalog loaded', result.message);
       } catch (e) {
-        // Fail closed: не показываем устаревший локальный seed как будто это серверные данные.
-        db.psychologists = [];
-        db.services = [];
+        // Сервер пуст/недоступен: если локального каталога нет — показываем seed-каталог
+        // с явной пометкой «локальный демо» (это не серверные данные).
         console.error('[Supabase] initial catalog load failed', e);
-        showToast('Не удалось загрузить каталог с сервера', true);
+        if (!db.psychologists.length) db._seed();
+        showToast('Каталог с сервера не загружен — показан локальный демо-каталог', true);
       }
     }
 

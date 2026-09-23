@@ -22,6 +22,9 @@ chmod +x serve.sh && ./serve.sh
 - `js/core/dbContext.js` — хранилище
 - `js/viewmodels` — MVVM
 - `js/services` — auth, crypto, vault, payment, reminders, fraud
+- `supabase/schema.sql` — DDL БД (Supabase/PostgreSQL, идемпотентный)
+- `supabase/seed.sql` — референс-данные профиля с сайта nataliamikhailouskaya.by
+- `docs/DATA-MODEL.md` — модель данных сайта, сверка и маппинг в БД
 
 ## Демо
 

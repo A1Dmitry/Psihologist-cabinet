@@ -45,6 +45,14 @@ export const supabaseApi = {
     return rows?.[0] || null;
   },
 
+  async updatePsychologist(id, patch) {
+    const rows = await request(`psychologists?id=eq.${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() })
+    });
+    return Array.isArray(rows) ? rows[0] : rows;
+  },
+
   async listServices(psychologistId) {
     return request(
       `services?psychologist_id=eq.${psychologistId}&is_active=eq.true&select=*&order=sort_order.asc`
