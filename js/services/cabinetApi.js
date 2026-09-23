@@ -109,11 +109,20 @@ export const cabinetApi = {
     const have = new Set(db.clients.map(c => c.id));
     (r.clients || []).forEach(row => {
       if (have.has(row.id)) return;
-      db.clients.push(new Client({
+      const client = new Client({
         id: row.id, psychologistId: row.psychologist_id, name: row.name || '',
         nickname: row.nickname || '', phone: row.phone || '', contact: row.contact || '',
         note: row.note || '', telegramChat: row.telegram_chat || '', createdAt: row.created_at
-      }));
+      });
+      // индивидуальные условия (SR-102): серверные значения — fallback для сейфа
+      const cond = {};
+      if (row.price_override != null) cond.priceOverride = Number(row.price_override);
+      if (row.currency) cond.currency = row.currency;
+      if (row.payment_method) cond.paymentMethod = row.payment_method;
+      if (row.meet_link) cond.meetLink = row.meet_link;
+      if (row.payment_url) cond.paymentUrl = row.payment_url;
+      client._conditionsServer = cond;
+      db.clients.push(client);
     });
     db.sessions = db.sessions.filter(x => x.psychologistId !== psyId)
       .concat((r.sessions || []).map(mapSession));
@@ -220,6 +229,26 @@ export const cabinetApi = {
 
   pushClientDelete(serverId) {
     push('client:delete', () => supabaseApi.request(`clients?id=eq.${serverId}`, { method: 'DELETE' }));
+  },
+
+  /**
+   * Индивидуальные условия клиента (T-09/T-10, Агент 3).
+   * Колонки clients.price_override/currency/payment_method/meet_link/payment_url —
+   * заявка SR-102. До её применения PATCH тихо не проходит, а условия остаются
+   * в зашифрованном сейфе кабинета (clientVaultService) — фича работает локально.
+   * Приватный текст (имя/телефон/заметки) сюда НЕ попадает.
+   */
+  pushClientConditions(serverId, conditions = {}) {
+    const row = {};
+    if ('priceOverride' in conditions) row.price_override = conditions.priceOverride;
+    if ('currency' in conditions) row.currency = conditions.currency;
+    if ('paymentMethod' in conditions) row.payment_method = conditions.paymentMethod;
+    if ('meetLink' in conditions) row.meet_link = conditions.meetLink;
+    if ('paymentUrl' in conditions) row.payment_url = conditions.paymentUrl;
+    if (!Object.keys(row).length) return;
+    push('client:conditions', () => supabaseApi.request(`clients?id=eq.${serverId}`, {
+      method: 'PATCH', body: JSON.stringify(row)
+    }));
   },
 
   // ——— Сессии ———
@@ -372,5 +401,12 @@ export const cabinetApi = {
   // ——— Ожидание ———
   pushWaitingDelete(id) {
     push('waiting:delete', () => supabaseApi.request(`waiting_items?id=eq.${id}`, { method: 'DELETE' }));
+  },
+
+  /** Пожелание из листа ожидания: день/время/«постоянное время» (T-24, заявка SR-106) */
+  pushWaitingPatch(id, patch = {}) {
+    push('waiting:patch', () => supabaseApi.request(`waiting_items?id=eq.${id}`, {
+      method: 'PATCH', body: JSON.stringify(patch)
+    }));
   }
 };

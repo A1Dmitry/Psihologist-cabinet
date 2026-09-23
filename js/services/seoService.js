@@ -8,6 +8,21 @@
  */
 import { Professions } from '../models/entities.js';
 
+/**
+ * Optional single-point override for a future custom domain. Keep empty in the
+ * repository: production then uses the current GitHub Pages origin (or the
+ * origin serving the app), without baking a domain into profile data.
+ */
+export const SEO_BASE_URL = '';
+
+export function seoUrl(path) {
+  const value = String(path || '');
+  if (/^https?:\/\//i.test(value)) return value;
+  const origin = SEO_BASE_URL || (typeof location !== 'undefined' ? location.origin : '');
+  if (!origin) return value;
+  try { return new URL(value || '/', origin).href; } catch (_) { return value; }
+}
+
 function upsertMeta(selector, create) {
   let el = document.head.querySelector(selector);
   if (!el) {
@@ -53,11 +68,11 @@ export function setMeta({ title, description, url, image, ogType = 'website', ro
   });
   set('meta[property="og:title"]', 'property', 'og:title', title, () => document.createElement('meta'));
   set('meta[property="og:description"]', 'property', 'og:description', description, () => document.createElement('meta'));
-  set('meta[property="og:url"]', 'property', 'og:url', url, () => document.createElement('meta'));
+  set('meta[property="og:url"]', 'property', 'og:url', resolvedUrl, () => document.createElement('meta'));
   set('meta[property="og:type"]', 'property', 'og:type', ogType, () => document.createElement('meta'));
-  set('meta[property="og:image"]', 'property', 'og:image', image, () => document.createElement('meta'));
-  set('meta[name="twitter:card"]', 'name', 'twitter:card', image ? 'summary_large_image' : 'summary', () => document.createElement('meta'));
-  if (url) setCanonical(url);
+  set('meta[property="og:image"]', 'property', 'og:image', resolvedImage, () => document.createElement('meta'));
+  set('meta[name="twitter:card"]', 'name', 'twitter:card', resolvedImage ? 'summary_large_image' : 'summary', () => document.createElement('meta'));
+  if (resolvedUrl) setCanonical(resolvedUrl);
 }
 
 export function setJsonLd(data) {
@@ -209,7 +224,7 @@ export function applyProfileSeo(psy, services, pageUrl, { bookUrl } = {}) {
   setMeta({
     title,
     description,
-    url: pageUrl,
+    url: canonicalUrl,
     image: psy.photoUrl || '',
     ogType: 'profile'
   });
@@ -218,20 +233,21 @@ export function applyProfileSeo(psy, services, pageUrl, { bookUrl } = {}) {
 
 /** SEO главной (каталог) */
 export function applyPortalSeo(baseUrl) {
+  const canonicalUrl = seoUrl(baseUrl);
   setMeta({
     title: 'ПсихоПортал — кабинеты психологов · запись на консультацию',
     description: 'Каталог психологов: публичный профиль, услуги и цены, онлайн-запись на консультацию. Минск, Гродно и вся Беларусь.',
-    url: baseUrl,
+    url: canonicalUrl,
     ogType: 'website'
   });
   setJsonLd({
     '@context': 'https://schema.org',
     '@type': 'WebSite',
     name: 'ПсихоПортал',
-    url: baseUrl,
+    url: canonicalUrl,
     potentialAction: {
       '@type': 'SearchAction',
-      target: `${baseUrl}?q={search_term_string}`,
+      target: `${canonicalUrl}?q={search_term_string}`,
       'query-input': 'required name=search_term_string'
     }
   });

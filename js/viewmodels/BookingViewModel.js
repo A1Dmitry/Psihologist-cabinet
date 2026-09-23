@@ -57,13 +57,82 @@ function formatTimeRange(start, end) {
   return `${start}–${end}`;
 }
 
-/** Покрывает ли блокировка занятости слот (формат ScheduleBlock / public_schedule_blocks) */
-function blockCovers(b, date, time) {
-  const from = b.dateFrom || '';
-  const to = b.dateTo || b.dateFrom || '';
-  if (!from || date < from || date > to) return false;
-  if (!b.timeFrom && !b.timeTo) return true;
-  return time >= (b.timeFrom || '00:00') && time < (b.timeTo || '23:59');
+/**
+ * Public schedule values are wall-clock values in the psychologist's timezone.
+ * Keep all availability calculations in that timezone; only presentation and the
+ * value sent to the booking API are converted to the client's timezone.
+ */
+function timeToMinutes(value) {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(String(value || ''));
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 24 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+function minutesToTime(value) {
+  const minutes = Math.max(0, Number(value) || 0);
+  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+}
+
+function datePartsInTimeZone(date, timezone) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      calendar: 'iso8601',
+      numberingSystem: 'latn',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
+    }).formatToParts(date);
+    const values = Object.fromEntries(parts.filter(x => x.type !== 'literal').map(x => [x.type, x.value]));
+    return {
+      date: `${values.year}-${values.month}-${values.day}`,
+      time: `${values.hour}:${values.minute}`,
+      hour: Number(values.hour),
+      minute: Number(values.minute),
+      second: Number(values.second)
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Convert a local wall-clock date/time in an IANA timezone to an instant. */
+function zonedTimeToDate(date, time, timezone) {
+  const [year, month, day] = String(date).split('-').map(Number);
+  const [hour, minute] = String(time || '00:00').split(':').map(Number);
+  if (![year, month, day, hour, minute].every(Number.isFinite)) return null;
+  const wallAsUtc = Date.UTC(year, month - 1, day, hour, minute, 0);
+  // Iterating once handles DST transitions without depending on the browser's
+  // own timezone (which is often UTC in a server/preview environment).
+  let instant = new Date(wallAsUtc);
+  for (let i = 0; i < 2; i++) {
+    const local = datePartsInTimeZone(instant, timezone);
+    if (!local) return null;
+    const localAsUtc = Date.UTC(
+      Number(local.date.slice(0, 4)), Number(local.date.slice(5, 7)) - 1,
+      Number(local.date.slice(8, 10)), local.hour, local.minute, 0
+    );
+    instant = new Date(wallAsUtc - (localAsUtc - instant.getTime()));
+  }
+  return instant;
+}
+
+function detectClientTimezone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch (_) {
+    return 'UTC';
+  }
+}
+
+function timezoneOffsetMinutes(date, timezone) {
+  const local = datePartsInTimeZone(date, timezone);
+  if (!local) return 0;
+  const [year, month, day] = local.date.split('-').map(Number);
+  const localAsUtc = Date.UTC(year, month - 1, day, local.hour, local.minute, local.second);
+  return Math.round((localAsUtc - date.getTime()) / 60000);
 }
 
 function todayStr() {
@@ -73,6 +142,29 @@ function addDays(n) {
   const d = new Date();
   d.setDate(d.getDate() + n);
   return d.toISOString().slice(0, 10);
+}
+
+/** Покрывает ли блокировку весь день/точку времени (legacy helper). */
+function blockCovers(b, date, time) {
+  const from = b.dateFrom || '';
+  const to = b.dateTo || b.dateFrom || '';
+  if (!from || date < from || date > to) return false;
+  if (!b.timeFrom && !b.timeTo) return true;
+  const start = timeToMinutes(time);
+  const fromMin = timeToMinutes(b.timeFrom || '00:00');
+  const toMin = timeToMinutes(b.timeTo || '24:00') ?? 1440;
+  return start != null && fromMin != null && start >= fromMin && start < toMin;
+}
+
+/** Does a schedule block intersect [start, end) in the psychologist's day? */
+function blockOverlaps(b, date, start, end) {
+  const from = b.dateFrom || '';
+  const to = b.dateTo || b.dateFrom || '';
+  if (!from || date < from || date > to) return false;
+  if (!b.timeFrom && !b.timeTo) return true;
+  const fromMin = timeToMinutes(b.timeFrom || '00:00') ?? 0;
+  const toMin = timeToMinutes(b.timeTo || '24:00') ?? 1440;
+  return start < toMin && end > fromMin;
 }
 
 /**
@@ -108,6 +200,11 @@ export class BookingViewModel extends BaseViewModel {
     this.awaitingPayment = false;
     /** today | tomorrow | week | biweek | month */
     this.dateRange = 'week';
+    /** Шаги публичной записи: 1 — услуга, 2 — время, 3 — контакт. */
+    this.wizardStep = 1;
+    this.clientTimezone = detectClientTimezone();
+    this.slotPsychDate = null;
+    this.slotPsychTime = null;
     /** публичная доступность (free/busy) с сервера */
     this.remoteBusy = {};   // { 'YYYY-MM-DD': Set<'HH:MM'> }
     this.remoteBlocks = []; // [{dateFrom, dateTo, timeFrom, timeTo, kind, title}]
@@ -140,6 +237,7 @@ export class BookingViewModel extends BaseViewModel {
       this._refreshPaymentInfo();
       this.refreshAvailability();
     }
+    this._syncWizardUi();
     this.notify();
     return !!this.psychologist;
   }
@@ -200,6 +298,8 @@ export class BookingViewModel extends BaseViewModel {
     this.paymentInfo = null;
     this.honeypot = '';
     this.time = null;
+    this.slotPsychDate = null;
+    this.slotPsychTime = null;
     this.date = todayStr();
     this.step = BookingSteps.SERVICE;
     this.maxStepReached = BookingSteps.SERVICE;
@@ -533,6 +633,107 @@ export class BookingViewModel extends BaseViewModel {
     ];
   }
 
+  get psychologistTimezone() {
+    return this.settings?.timezone || 'Europe/Minsk';
+  }
+
+  get timezoneLabel() {
+    return `Время в вашем поясе (${this.clientTimezone}). Часовой пояс специалиста: ${this.psychologistTimezone}.`;
+  }
+
+  get selectedClientDate() {
+    const date = this.slotPsychDate || this.date;
+    const time = this.slotPsychTime || this.time;
+    const instant = date && time ? zonedTimeToDate(date, time, this.psychologistTimezone) : null;
+    return instant ? (datePartsInTimeZone(instant, this.clientTimezone)?.date || date) : date;
+  }
+
+  get selectedClientSlotText() {
+    const date = this.slotPsychDate || this.date;
+    const time = this.slotPsychTime || this.time;
+    if (!time) return '';
+    const instant = date ? zonedTimeToDate(date, time, this.psychologistTimezone) : null;
+    const local = instant ? datePartsInTimeZone(instant, this.clientTimezone) : null;
+    return `${local?.date || this.selectedClientDate} в ${local?.time || this.time}`;
+  }
+
+  /** Current offset for the selected appointment, useful for SR-001/API payloads. */
+  get clientTimezoneOffsetMin() {
+    const date = this.slotPsychDate || this.date;
+    const time = this.slotPsychTime || this.time;
+    const instant = date && time ? zonedTimeToDate(date, time, this.psychologistTimezone) : new Date();
+    return instant ? timezoneOffsetMinutes(instant, this.clientTimezone) : 0;
+  }
+
+  _setWizardError(message) {
+    this.error = message;
+    if (typeof document !== 'undefined') {
+      const el = document.getElementById('book-error');
+      if (el) {
+        el.textContent = message || '';
+        el.classList.toggle('hidden', !message);
+      }
+    }
+  }
+
+  _syncWizardUi() {
+    if (typeof document === 'undefined') return;
+    document.querySelectorAll('[data-book-step-panel]').forEach(panel => {
+      panel.classList.toggle('hidden', Number(panel.dataset.bookStepPanel) !== this.wizardStep);
+    });
+    document.querySelectorAll('[data-book-step]').forEach(button => {
+      const step = Number(button.dataset.bookStep);
+      const active = step === this.wizardStep;
+      button.classList.toggle('bg-indigo-600', active);
+      button.classList.toggle('text-white', active);
+      button.classList.toggle('bg-slate-100', !active);
+      button.classList.toggle('text-slate-500', !active);
+      button.setAttribute('aria-current', active ? 'step' : 'false');
+    });
+    const timezone = document.getElementById('book-timezone-note');
+    if (timezone) timezone.textContent = this.timezoneLabel;
+  }
+
+  _scrollToWizardPanel(step) {
+    if (typeof document === 'undefined') return;
+    const panel = document.querySelector(`[data-book-step-panel="${step}"]`);
+    panel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  goWizardStep(step, { scroll = true } = {}) {
+    const target = Number(step);
+    if (![1, 2, 3].includes(target)) return false;
+    if (target >= 2 && !this.selectedService) {
+      this._setWizardError('Сначала выберите услугу');
+      return false;
+    }
+    if (target >= 3 && !this.time) {
+      this._setWizardError('Сначала выберите свободное время');
+      return false;
+    }
+    this.error = '';
+    this.wizardStep = target;
+    this._syncWizardUi();
+    if (scroll) this._scrollToWizardPanel(target);
+    return true;
+  }
+
+  nextWizardStep() {
+    if (this.wizardStep === 1 && !this.selectedService) {
+      this._setWizardError('Выберите услугу, чтобы увидеть свободные окна');
+      return false;
+    }
+    if (this.wizardStep === 2 && !this.time) {
+      this._setWizardError('Выберите свободный день и время');
+      return false;
+    }
+    return this.goWizardStep(Math.min(3, this.wizardStep + 1));
+  }
+
+  previousWizardStep() {
+    return this.goWizardStep(Math.max(1, this.wizardStep - 1));
+  }
+
   get availableDays() {
     const opt = this.dateRangeOptions.find(o => o.id === this.dateRange) || this.dateRangeOptions[2];
     const workDays = this.settings?.workDays || [1, 2, 3, 4, 5]; // ISO: 1=Пн … 7=Вс
@@ -547,6 +748,8 @@ export class BookingViewModel extends BaseViewModel {
     if (!days.includes(this.date)) {
       this.date = days[0];
       this.time = null;
+      this.slotPsychDate = null;
+      this.slotPsychTime = null;
     }
     this.notify();
   }
@@ -559,19 +762,27 @@ export class BookingViewModel extends BaseViewModel {
     return b ? (b.title || 'Закрыто') : null;
   }
 
-  /** Занятые слоты на дату: сессии/холды/переносы + удалённый free/busy */
-  _busySetFor(date) {
-    const busy = new Set(this.remoteBusy[date] || []);
+  /** Занятые интервалы на дату: сессии/холды/переносы + удалённый free/busy. */
+  _busyIntervalsFor(date) {
+    const intervals = [];
+    const fallbackDuration = Number(this.settings?.slotStepMin) || 60;
+    const add = (time, duration = fallbackDuration) => {
+      const start = timeToMinutes(time);
+      if (start != null) intervals.push([start, start + Math.max(1, Number(duration) || fallbackDuration)]);
+    };
+
+    (this.remoteBusy[date] || []).forEach(time => add(time));
     db.sessions.forEach(s => {
       if (s.psychologistId !== this.psychologist?.id) return;
       if (['cancelled', 'expired', 'no_show'].includes(s.status)) return;
       if (s.status === 'held' && s.holdExpiresAt && new Date(s.holdExpiresAt) < new Date()) return;
-      if (s.date === date) busy.add(s.time);
+      const duration = db.services.find(service => service.id === s.serviceId)?.duration || fallbackDuration;
+      if (s.date === date) add(s.time, duration);
       if (s.pendingChange && s.changeConsentStatus === 'pending' && s.pendingChange.date === date) {
-        busy.add(s.pendingChange.time);
+        add(s.pendingChange.time, duration);
       }
     });
-    return busy;
+    return intervals;
   }
 
   _refreshPaymentInfo() {
@@ -585,13 +796,22 @@ export class BookingViewModel extends BaseViewModel {
   selectService(id) {
     this.serviceId = id;
     this.time = null;
+    this.slotPsychDate = null;
+    this.slotPsychTime = null;
     this._refreshPaymentInfo();
+    this.error = '';
+    // T-04: selecting a service immediately reveals its availability.
+    this.wizardStep = 2;
+    this._syncWizardUi();
     this.notify();
+    this._scrollToWizardPanel(2);
   }
 
   selectDate(date) {
     this.date = date;
     this.time = null;
+    this.slotPsychDate = null;
+    this.slotPsychTime = null;
     this.notify();
   }
 
@@ -682,6 +902,15 @@ export class BookingViewModel extends BaseViewModel {
     }
     if (!this.serviceId) { this.error = 'Выберите услугу'; this.notify(); return false; }
     if (!this.time) { this.error = 'Выберите время'; this.notify(); return false; }
+    const selectedPsychDate = this.slotPsychDate || this.date;
+    const selectedPsychTime = this.slotPsychTime || this.time;
+    const selectedSlot = this._slotRowsForDate(selectedPsychDate)
+      .find(slot => slot.psychTime === selectedPsychTime);
+    if (!selectedSlot || selectedSlot.busy) {
+      this.error = 'Это время уже недоступно или не помещается в рабочее окно. Выберите другое.';
+      this.notify();
+      return false;
+    }
     if (!this.consent) {
       this.error = 'Нужно согласие на обработку данных';
       this.notify();
@@ -747,8 +976,11 @@ export class BookingViewModel extends BaseViewModel {
       psychologistId: this.psychologist.id,
       clientId: client.id,
       serviceId: this.serviceId,
-      date: this.date,
-      time: this.time,
+      // The database currently keeps the psychologist's wall-clock slot. The
+      // requested client timezone fields are tracked in SR-001; until the
+      // migration is applied, submit the converted psychologist-local value.
+      date: selectedPsychDate,
+      time: selectedPsychTime,
       status: payFields.status,
       note: noteLines.join('\n'),
       videoPlatform: isOnline ? (this.settings?.defaultVideoPlatform || 'google_meet') : '',

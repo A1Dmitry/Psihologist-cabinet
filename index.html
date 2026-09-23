@@ -250,8 +250,11 @@
               <button onclick="document.getElementById('btn-add-session').click()" class="px-4 py-2 rounded-full bg-indigo-600 text-white text-sm">+ Сессия</button>
             </div>
             <div id="sch-range" class="flex flex-wrap gap-2 mb-3"></div>
+            <div id="cab3-schedule-zone" class="mb-3"></div>
             <div id="sch-days" class="flex gap-2 overflow-x-auto mb-4 pb-1"></div>
             <div id="sch-list" class="bg-white rounded-xl border"></div>
+            <!-- Регулярные сессии (T-05…T-07) — рисует js/views/cabinetUi.js -->
+            <div id="cab3-series" class="mt-6"></div>
           </div>
           <div id="tab-blocks" class="cab-tab hidden">
             <h1 class="text-2xl font-bold mb-2">Занятость: выходные и блокировки</h1>
@@ -302,11 +305,15 @@
             <div id="vault-panel"></div>
             <div id="clients-list" class="bg-white rounded-xl border"></div>
             <div id="client-detail" class="mt-6"></div>
+            <!-- Индивидуальные условия, ссылка клиента, материалы, платежи (T-09…T-14) -->
+            <div id="cab3-client-extra"></div>
           </div>
           <div id="tab-journal" class="cab-tab hidden">
             <h1 class="text-2xl font-bold mb-2">Книга записей</h1>
             <p class="text-sm text-slate-500 mb-4">Все записи клиентов: подтверждение, перенос, заметки о сессии, неявка, календарь.</p>
             <div id="journal-filters" class="flex flex-wrap gap-2 mb-4"></div>
+            <!-- Запросы клиентов (T-12/T-24) -->
+            <div id="cab3-journal-requests"></div>
             <div id="journal-list" class="bg-white rounded-xl border"></div>
           </div>
           <div id="tab-telegram" class="cab-tab hidden">
@@ -386,16 +393,23 @@
             <div id="services-list" class="space-y-3"></div>
           </div>
           <div id="tab-waiting" class="cab-tab hidden">
-            <h1 class="text-2xl font-bold mb-4">Лист ожидания</h1>
+            <h1 class="text-2xl font-bold mb-2">Лист ожидания</h1>
+            <p class="text-sm text-slate-500 mb-4">Заявки из записи и запросы клиентов из их мини-кабинета: кто на какой день, кто хочет постоянное время.</p>
+            <!-- Очередь по дням и запросы (T-08/T-24) -->
+            <div id="cab3-requests" class="mb-6"></div>
+            <h2 class="text-sm font-semibold text-slate-600 mb-2">Заявки без уточнённого времени</h2>
             <div id="waiting-list" class="bg-white rounded-xl border"></div>
           </div>
           <div id="tab-stats" class="cab-tab hidden">
-            <h1 class="text-2xl font-bold mb-4">Статистика (7 дней)</h1>
+            <h1 class="text-2xl font-bold mb-2">Статистика</h1>
+            <p class="text-sm text-slate-500 mb-4">Загрузка и доход: встречи, свободные часы, ожидаемый и полученный доход по валютам.</p>
             <div class="grid sm:grid-cols-3 gap-4">
               <div class="bg-white rounded-xl border p-5 text-center"><div class="text-3xl font-bold" id="stat-week-count">0</div><div class="text-sm text-slate-500">сессий</div></div>
               <div class="bg-white rounded-xl border p-5 text-center"><div class="text-2xl font-bold" id="stat-week-sum">0</div><div class="text-sm text-slate-500">доход</div></div>
               <div class="bg-white rounded-xl border p-5 text-center"><div class="text-3xl font-bold" id="stat-clients">0</div><div class="text-sm text-slate-500">клиентов</div></div>
             </div>
+            <!-- Расширенная аналитика (T-20) -->
+            <div id="cab3-stats"></div>
           </div>
           <div id="tab-reminders" class="cab-tab hidden">
             <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -618,10 +632,18 @@
     </div>
   </div>
 
-  <!-- ========== CLIENT REPLY ========== -->
+  <!-- ========== CLIENT CABINET / REPLY (секретная ссылка клиента) ========== -->
   <div id="page-client-reply" class="page hidden">
-    <div class="min-h-screen flex items-center justify-center px-4 py-12">
-      <div class="w-full max-w-md bg-white rounded-2xl border shadow-sm p-8 text-center">
+    <header class="sticky top-0 z-40 bg-white border-b">
+      <div class="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
+        <span class="font-semibold text-sm">ПсихоПортал · кабинет клиента</span>
+        <button onclick="navigate('portal')" class="text-sm text-slate-500 hover:text-indigo-600">На портал</button>
+      </div>
+    </header>
+    <main class="max-w-2xl mx-auto px-4 py-8">
+      <!-- Мини-кабинет клиента: встречи, «Подключиться», материалы (T-12/T-13) -->
+      <div id="cc-root"></div>
+      <div id="cc-reply-wrap" class="w-full max-w-md mx-auto bg-white rounded-2xl border shadow-sm p-8 text-center">
         <h1 class="text-xl font-bold mb-2">Ответ на напоминание</h1>
         <p id="reply-message" class="text-sm text-slate-600 mb-6">—</p>
         <div id="reply-actions" class="flex flex-col gap-3">
@@ -629,9 +651,8 @@
           <button id="btn-reply-no" class="w-full py-3 rounded-full border border-rose-300 text-rose-700 font-medium">Отказаться / отменить</button>
         </div>
         <p id="reply-done" class="hidden text-emerald-700 font-medium mt-4"></p>
-        <button onclick="navigate('portal')" class="mt-6 text-sm text-slate-400 hover:text-indigo-600">На портал</button>
       </div>
-    </div>
+    </main>
   </div>
 
   <!-- ========== SUCCESS ========== -->
