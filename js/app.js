@@ -1756,11 +1756,3 @@ function boot() {
 }
 
 boot();
-d()) {
-      route = { name: 'auth', params: { mode: 'login' } };
-    }
-    navigate(route.name, route.params, { push: false });
-  })();
-}
-
-boot();
