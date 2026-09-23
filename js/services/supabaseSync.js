@@ -13,6 +13,7 @@ import { Service, SessionSettings, ScheduleBlock } from '../models/entities.js';
 import { supabaseApi } from './supabaseApi.js';
 import { isSupabaseConfigured } from './supabaseConfig.js';
 import { mapPsy } from './psyMapper.js';
+import { DEFAULT_DURATION_MIN, resolveDurationMinutes } from '../domain/duration.js';
 
 /** Обратное преобразование: Psychologist → строка таблицы psychologists (без потерь) */
 function toPsyRow(psy) {
@@ -46,7 +47,7 @@ function toPsyRow(psy) {
 
 function mapService(row) {
   const title = row.title ?? row.name ?? '';
-  const duration = row.duration_min ?? row.duration ?? 60;
+  const duration = resolveDurationMinutes({ durationMin: row.duration_min ?? row.duration });
   return new Service({
     id: row.id,
     psychologistId: row.psychologist_id,
@@ -117,8 +118,18 @@ export const supabaseSync = {
 
     // Серверный каталог полностью заменяет локальный seed-каталог.
     // Это не merge: локальные демо-записи не должны попадать в публичный список.
+    // Исключение — профиль текущего владельца: его id нужен для кабинета и
+    // RLS-запросов, а в публичном каталоге свежезарегистрированный специалист
+    // может появиться не сразу (кэш view). Потерять его здесь = потерять вход
+    // после перезагрузки страницы.
     const prevSettings = new Map(db.settings.map(s => [s.psychologistId, s]));
+    const owned = db.currentPsychologistId
+      ? db.psychologists.find(p => p.id === db.currentPsychologistId)
+      : null;
     db.psychologists = rows.map(mapPsy);
+    if (owned && !db.psychologists.some(p => p.id === owned.id)) {
+      db.psychologists.push(owned);
+    }
     db.services = [];
     db.clients = [];
     db.sessions = [];
@@ -151,7 +162,7 @@ export const supabaseSync = {
             slotTimes: st.slot_times || null,
             slotStart: st.slot_start || '10:00',
             slotEnd: st.slot_end || '18:00',
-            slotStepMin: st.slot_step_min || 60,
+            slotStepMin: st.slot_step_min || DEFAULT_DURATION_MIN,
             defaultVideoPlatform: st.default_video_platform || 'google_meet',
             paymentPolicy: st.payment_policy || 'none',
             depositPercent: Number(st.deposit_percent) || 30,
@@ -193,8 +204,12 @@ export const supabaseSync = {
       p_amount_due: session.amountDue || 0,
       p_amount_paid: session.amountPaid || 0,
       p_currency: session.currency || 'BYN',
-      // T-03: разница пояса клиента с поясом психолога на дату сессии
-      p_timezone_offset: session.timezoneOffset || '',
+      // T-03 / SR-001: канонический контракт пояса клиента —
+      // IANA-пояс + снимок смещения (offset не используется вместо пояса)
+      p_client_timezone: session.clientTimezone || '',
+      p_client_utc_offset_min: session.clientUtcOffsetMin ?? null,
+      // снимок длительности услуги на момент записи
+      p_duration_min: session.durationMin ?? DEFAULT_DURATION_MIN,
       // T-25: факт согласия на обработку ПДн
       p_consent: !!client.consent,
       p_consent_at: client.consentAt || null
@@ -211,8 +226,14 @@ export const supabaseSync = {
     if (localSes && created.session_id) {
       localSes.id = created.session_id;
       localSes.clientId = created.client_id;
+      if (created.duration_min) localSes.durationMin = Number(created.duration_min);
     }
     db.saveChanges();
-    return { ok: true, clientId: created.client_id, sessionId: created.session_id };
+    return {
+      ok: true,
+      clientId: created.client_id,
+      sessionId: created.session_id,
+      durationMin: created.duration_min ?? null
+    };
   }
 };

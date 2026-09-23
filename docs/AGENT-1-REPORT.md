@@ -134,3 +134,52 @@ access-токена владельца у агента нет) — **финал�
 1. Перенос в `mikhailouskayanataliya-collab/...` нужен? (см. `docs/archive/repo-transfer/`)
 2. Resend: есть ли домен, который верифицируем для почты? (блокер T-15)
 3. Кастомный домен для Pages — планируется? Если да — до SEO-разгона Агента 2.
+
+---
+
+## Дополнение — AUDIT-REG-DRY-001 (2026-09-23)
+
+АУДИТОР: САМ
+
+Полный отчёт: `docs/FULL-AUDIT-REPORT.md` (12 разделов, терминальный статус
+ЧАСТИЧНО ЗАВЕРШЁННЫЙ). План и журнал: `docs/PLAN-AUDIT-REG-DRY-001.md`.
+
+Факты (без оценок):
+
+1. **Корневая причина неработающей регистрации найдена и устранена в коде.**
+   `supabase/schema.sql` не применялся в проде целиком: блоки `revoke`/`grant
+   execute on function public.create_booking(…)` описывали арность, отличную от
+   объявленной (15 `text` вместо 14 + `text`), PostgreSQL прерывал выполнение
+   ошибкой `42883 undefined_function`, и всё ниже по файлу —
+   `claim_psychologist_profile` и `client_error_logs` — не создавалось.
+   Подтверждено прогоном `schema.sql` на реальном PostgreSQL 18.4 (до правки —
+   ошибка, после — применяется целиком). Гранты перегенерированы.
+2. **Регистрация переписана как канонический use case** — `js/domain/registration.js`
+   (`requestVerification`, `verifyVerification`, `ensureAuthenticatedSession`,
+   `claimOrCreatePsychologist`, `loadOwnedProfile`, `restoreAuthenticatedState`).
+   `AuthViewModel` — только UI-состояние. Поле `about` добавлено в форму
+   (`#auth-about`), раньше его не существовало, хотя требовалось по контракту.
+3. **Дубликаты бизнес-логики сведены к одной реализации:** `js/services/timezoneService.js`
+   (единственный модуль часовых поясов и календарной арифметики),
+   `js/domain/duration.js` (`DEFAULT_DURATION_MIN`, `resolveDurationMinutes`),
+   `js/services/sessionMapper.js` (единственное преобразование строка↔домен сессии),
+   `js/core/safeStorage.js` (единственная обёртка над storage).
+4. **Целостность записи:** `create_booking` считает занятость интервалом и работает
+   под `pg_advisory_xact_lock` по (психолог, дата) — проверка и INSERT в одной
+   транзакции. `BookingViewModel.submit()` показывает успех только после ответа
+   сервера и откатывает локальную запись при отказе.
+5. **Тесты (все зелёные в этой сессии):** `tests/db-contract.mjs` 36/36 на реальном
+   PostgreSQL 18.4, `tests/registration-flow.mjs` 44/44 (включая перезагрузку в
+   отдельном процессе и повторный вход тем же email без дубля психолога),
+   `tests/timezone-domain.mjs` 46/46 (в т.ч. граница DST и перелёт даты),
+   `tests/session-mapper.mjs` 22/22,
+   `tests/auth-code-edge.mjs` 39/39 (исполняется настоящий исходник
+   `supabase/functions/auth-code/index.ts` — одноразовость, TTL 120 с, кулдаун 30 с,
+   лимит 5 попыток, хеш вместо кода, код и `hashed_token` не в логах),
+   `tests/booking-wizard.mjs`, `verify_auth.mjs` 25, `verify_profile.mjs` 29,
+   `verify_telegram.mjs` 57, `test_routing.mjs` 36, `tools/verify_cabinet.mjs` 107/0,
+   `verify_app.mjs`, `verify_pages.py` 11 маршрутов. Сводный прогон — `npm run verify`
+   (`tools/verify_all.mjs`, 12/12 наборов).
+6. **Не проверено:** прод-деплой `schema.sql`, деплой Edge Function `auth-code`,
+   секрет `RESEND_API_KEY`. Песочница не имеет сети до `supabase.co` (HTTP 000),
+   поэтому сквозная проверка регистрации на проде не проводилась.

@@ -1,3 +1,4 @@
+import { DEFAULT_DURATION_MIN } from '../domain/duration.js';
 /**
  * Code First — модели данных портала психологов
  * Оплата: предоплата / аванс / 100% по чеку
@@ -241,7 +242,7 @@ export class Service {
     this.name = name || title;
     this.price = Number(price) || 0;
     this.currency = currency;
-    this.duration = Number(durationMin ?? duration) || 60;
+    this.duration = Number(durationMin ?? duration) || DEFAULT_DURATION_MIN;
     this.format = format;
     this.description = description || '';
     this.platforms = Array.isArray(platforms) ? platforms.map(String) : [];
@@ -331,8 +332,19 @@ export class Session {
     pendingChange = null, // { date, time, reason, proposedAt } | null
     previousSlot = null, // { date, time } до переноса
     changeConsentStatus = null, // pending | confirmed | declined
-    /** T-03: часовой пояс клиента (разница с поясом психолога, '+02:00' / '-01:30'; '' = совпадает) */
-    timezoneOffset = '',
+    /**
+     * T-03 / SR-001 / SR-108 — канонический контракт часового пояса клиента:
+     *   clientTimezone     — IANA-пояс клиента ('Europe/Berlin'); '' = пояс кабинета.
+     *                        Пояс первичен: только он корректен при переходе на DST.
+     *   clientUtcOffsetMin — снимок смещения в минутах на момент записи (история,
+     *                        НЕ замена пояса).
+     * Раньше здесь было поле timezoneOffset ('+02:00') — альтернативное имя того же
+     * бизнес-поля в несовместимом формате; удалено (см. docs/FULL-AUDIT-REPORT.md).
+     */
+    clientTimezone = '',
+    clientUtcOffsetMin = null,
+    /** Снимок длительности услуги на момент записи (мин). */
+    durationMin = null,
     createdAt = null
   } = {}) {
     this.id = id;
@@ -358,7 +370,9 @@ export class Session {
     this.pendingChange = pendingChange;
     this.previousSlot = previousSlot;
     this.changeConsentStatus = changeConsentStatus;
-    this.timezoneOffset = timezoneOffset || '';
+    this.clientTimezone = clientTimezone || '';
+    this.clientUtcOffsetMin = clientUtcOffsetMin ?? null;
+    this.durationMin = durationMin ?? null;
     this.createdAt = createdAt || new Date().toISOString();
   }
 
@@ -478,7 +492,7 @@ export class SessionSettings {
     this.slotTimes = slotTimes || ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
     this.slotStart = slotStart || '10:00';
     this.slotEnd = slotEnd || '18:00';
-    this.slotStepMin = Number(slotStepMin) || 60;
+    this.slotStepMin = Number(slotStepMin) || DEFAULT_DURATION_MIN;
     this.paymentPolicy = paymentPolicy;
     this.depositPercent = Number(depositPercent) || 30;
     this.depositAmount = depositAmount != null ? Number(depositAmount) : null;

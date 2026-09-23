@@ -1,10 +1,14 @@
 import { BaseViewModel } from './BaseViewModel.js';
 import { authService } from '../services/authService.js';
+import { registration } from '../domain/registration.js';
 
 /**
- * ViewModel: вход/регистрация по коду из письма (Supabase Auth OTP).
- * «Получить код» → окно ожидания ввода 2 минуты (таймер повторной отправки) →
- * код совпал → email подтверждён → кабинет открыт.
+ * ViewModel входа/регистрации: ТОЛЬКО UI-состояние, оркестрация и представление.
+ *
+ * Ни валидации, ни правил каналов, ни привязки профиля здесь нет — всё это
+ * живёт в каноническом use case `js/domain/registration.js` (требование
+ * AUDIT-REG-DRY-001). ViewModel умеет: хранить поля формы, крутить таймер
+ * повторной отправки, вызывать use case и показывать его результат/ошибку.
  */
 export class AuthViewModel extends BaseViewModel {
   constructor() {
@@ -29,6 +33,22 @@ export class AuthViewModel extends BaseViewModel {
     return `Повторная отправка через ${m}:${s}`;
   }
 
+  /** Поля профиля, которые уходят в use case. */
+  get profile() {
+    return {
+      fullName: this.fullName,
+      phone: this.phone,
+      specialization: this.specialization,
+      city: this.city,
+      about: this.about
+    };
+  }
+
+  /** Подсказка о незаполненных обязательных полях (валидация — из use case). */
+  get profileError() {
+    return registration.validateProfile(this.profile, { required: this.mode === 'register' });
+  }
+
   setMode(mode) {
     this.mode = mode === 'register' ? 'register' : 'login';
     this.step = 'email';
@@ -51,7 +71,7 @@ export class AuthViewModel extends BaseViewModel {
     this.error = '';
     this.busy = true;
     try {
-      const res = await authService.requestCode(this.email);
+      const res = await registration.requestVerification(this.email);
       if (!res.ok) {
         this.error = res.message;
         return false;
@@ -61,9 +81,7 @@ export class AuthViewModel extends BaseViewModel {
       this.showToast(res.message);
       return true;
     } catch (ex) {
-      this.error = /rate|часто/i.test(String(ex?.message))
-        ? 'Слишком часто. Подождите минуту и попробуйте снова.'
-        : `Не удалось отправить код: ${ex?.message || ex}`;
+      this.error = registration.friendlyAuthError(ex);
       return false;
     } finally {
       this.busy = false;
@@ -74,14 +92,7 @@ export class AuthViewModel extends BaseViewModel {
     this.error = '';
     this.busy = true;
     try {
-      const res = await authService.verifyCode(this.email, this.code, {
-        fullName: this.fullName,
-        phone: this.phone,
-        specialization: this.specialization,
-        city: this.city,
-        about: this.about,
-        password: this.password
-      });
+      const res = await authService.verifyCode(this.email, this.code, this.profile);
       if (!res.ok) {
         this.error = res.message;
         return null;
@@ -93,6 +104,11 @@ export class AuthViewModel extends BaseViewModel {
     } finally {
       this.busy = false;
     }
+  }
+
+  /** Восстановить вход после перезагрузки страницы (вызывается из boot). */
+  async restore() {
+    return registration.restoreAuthenticatedState();
   }
 
   logout() {

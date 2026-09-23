@@ -7,6 +7,7 @@ import {
   Payment, BookingAttempt, ClientRisk, PaymentPolicy, SessionReminder, ScheduleBlock,
   Task, PsyNote, ClientEntry
 } from '../models/entities.js';
+import { safeStorage } from './safeStorage.js';
 
 const STORAGE_KEY = 'psy_portal_cf_v5';
 
@@ -14,55 +15,12 @@ function uid(prefix = 'id') {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** Безопасное хранилище (sandbox-safe) */
-class StorageProvider {
-  constructor() {
-    this.memory = Object.create(null);
-    this._ls = null;
-  }
-
-  getLS() {
-    if (this._ls !== null) return this._ls || null;
-    try {
-      const ls = window.localStorage;
-      ls.setItem('__t', '1');
-      ls.removeItem('__t');
-      this._ls = ls;
-      return ls;
-    } catch {
-      this._ls = false;
-      return null;
-    }
-  }
-
-  get(key) {
-    const ls = this.getLS();
-    if (ls) {
-      try { return ls.getItem(key); } catch { /* */ }
-    }
-    return this.memory[key] ?? null;
-  }
-
-  set(key, value) {
-    const ls = this.getLS();
-    if (ls) {
-      try { ls.setItem(key, value); return; } catch { /* */ }
-    }
-    this.memory[key] = value;
-  }
-
-  remove(key) {
-    const ls = this.getLS();
-    if (ls) {
-      try { ls.removeItem(key); } catch { /* */ }
-    }
-    delete this.memory[key];
-  }
-}
+/** Безопасное хранилище (sandbox-safe) — единственная реализация в js/core/safeStorage.js */
+const storageProvider = safeStorage;
 
 export class DbContext {
   constructor() {
-    this.storage = new StorageProvider();
+    this.storage = storageProvider;
     this.psychologists = [];
     this.emailCodes = [];
     this.services = [];

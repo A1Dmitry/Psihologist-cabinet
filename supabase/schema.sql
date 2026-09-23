@@ -135,8 +135,26 @@ create table if not exists sessions (
 );
 
 alter table sessions add column if not exists google_event_id text not null default '';
--- T-03: часовой пояс клиента (разница с поясом психолога на дату сессии: '+02:00'; '' = совпадает)
-alter table sessions add column if not exists timezone_offset text not null default '';
+
+-- T-03 / SR-001 / SR-108 — КАНОНЧЕСКИЙ контракт часового пояса клиента:
+--   client_timezone        — IANA-имя пояса клиента ('Europe/Berlin'); '' = пояс кабинета.
+--                            Пояс — первичен: он единственный корректен при переходе на DST.
+--   client_utc_offset_min  — снимок смещения пояса клиента в минутах НА МОМЕНТ записи.
+--                            Это история, а не замена пояса (пояс мог сменить смещение).
+--   duration_min           — снимок длительности услуги на момент записи: если услуга
+--                            позже изменится, историческая занятость не «поедет».
+-- Раньше здесь была колонка timezone_offset text ('+02:00') — несовместимый формат
+-- и альтернативное имя того же бизнес-поля; она удалена (SR-001 закрыт).
+alter table sessions drop column if exists timezone_offset;
+alter table sessions add column if not exists client_timezone       text not null default '';
+alter table sessions add column if not exists client_utc_offset_min integer;
+alter table sessions add column if not exists duration_min          integer;
+
+alter table sessions
+  drop constraint if exists sessions_client_utc_offset_min_check;
+alter table sessions
+  add constraint sessions_client_utc_offset_min_check
+  check (client_utc_offset_min is null or client_utc_offset_min between -840 and 840);
 
 create index if not exists sessions_psy_idx on sessions (psychologist_id, session_date);
 
@@ -490,13 +508,15 @@ create or replace view public_schedule_blocks as
   from schedule_blocks;
 
 -- 4) Занятые слоты (дата/время — без данных клиентов)
---    duration_min — длительность услуги: 90-минутная сессия закрывает на
---    клиенте и частичные перекрытия сетки (T-02)
+--    duration_min — длительность занятой записи: 90-минутная сессия закрывает на
+--    клиенте и частичные перекрытия сетки (T-02, SR-003).
+--    Приоритет: снимок длительности в сессии → текущая услуга → шаг сетки → 60.
 create or replace view public_booked_slots as
   select s.psychologist_id, s.session_date, s.session_time,
-         coalesce(sv.duration_min, 60) as duration_min
+         coalesce(s.duration_min, sv.duration_min, ss.slot_step_min, 60) as duration_min
   from sessions s
   left join services sv on sv.id = s.service_id
+  left join session_settings ss on ss.psychologist_id = s.psychologist_id
   where s.status not in ('cancelled', 'expired', 'no_show')
     and (s.status <> 'held' or s.hold_expires_at is null or s.hold_expires_at > now());
 
@@ -511,79 +531,108 @@ grant select on services               to anon, authenticated;
 -- security definer (пишет в clients/sessions минуя RLS),
 -- проверяет активность специалиста, свободный слот и анти-спам по телефону.
 -- ============================================================
--- T-02/T-03: новая сигнатура (появился p_timezone_offset; длительности услуг
--- учитываются в проверке перекрытия). Старую перегрузку убираем явно —
--- иначе create or replace создал бы вторую функцию.
+-- SR-001/SR-002/SR-108: каноническая сигнатура (пояс клиента — IANA + снимок
+-- смещения; снимок длительности). Все предыдущие перегрузки убираем явно —
+-- иначе create or replace создал бы вторую функцию с тем же именем.
 drop function if exists public.create_booking(text, text, text, text, text, text, text, text, text, text, text, text, text, text, numeric, numeric, text);
 drop function if exists public.create_booking(text, text, text, text, text, text, text, text, text, text, text, text, text, text, numeric, numeric, text, text);
+drop function if exists public.create_booking(text, text, text, text, text, text, text, text, text, text, text, text, text, text, text, numeric, numeric, text, boolean, timestamptz);
+drop function if exists public.create_booking(text, text, text, text, text, text, text, text, text, text, text, text, text, text, numeric, numeric, text, text, integer, integer, boolean, timestamptz);
 
 create or replace function public.create_booking(
-  p_psychologist_id text,
-  p_service_id      text,
-  p_session_date    text,
-  p_session_time    text,
-  p_client_name     text default '',
-  p_client_nickname text default '',
-  p_client_phone    text default '',
-  p_client_contact  text default '',
-  p_client_note     text default '',
-  p_session_note    text default '',
-  p_status          text default 'pending',
-  p_video_platform  text default '',
-  p_payment_policy  text default 'none',
-  p_payment_status  text default 'unpaid',
-  p_amount_due      numeric default 0,
-  p_amount_paid     numeric default 0,
-  p_currency        text default 'BYN',
-  p_timezone_offset text default '',
-  p_consent         boolean default false,
-  p_consent_at      timestamptz default null
+  p_psychologist_id       text,
+  p_service_id            text,
+  p_session_date          text,
+  p_session_time          text,
+  p_client_name           text default '',
+  p_client_nickname       text default '',
+  p_client_phone          text default '',
+  p_client_contact        text default '',
+  p_client_note           text default '',
+  p_session_note          text default '',
+  p_status                text default 'pending',
+  p_video_platform        text default '',
+  p_payment_policy        text default 'none',
+  p_payment_status        text default 'unpaid',
+  p_amount_due            numeric default 0,
+  p_amount_paid           numeric default 0,
+  p_currency              text default 'BYN',
+  p_client_timezone       text default '',
+  p_client_utc_offset_min integer default null,
+  p_duration_min          integer default null,
+  p_consent               boolean default false,
+  p_consent_at            timestamptz default null
 ) returns jsonb
 language plpgsql
 security definer
 set search_path = public
 as $$
 declare
+  -- Канонический дефолт длительности на сервере. Зеркало константы
+  -- DEFAULT_DURATION_MIN в js/domain/duration.js — менять только парой.
+  v_default_dur constant int := 60;
   v_psy_id text;
   v_phone_key text := regexp_replace(coalesce(p_client_phone, ''), '\D', '', 'g');
   v_client_id text;
   v_session_id text;
   v_today_count bigint;
   v_new_start int := (substr(p_session_time, 1, 2)::int * 60 + substr(p_session_time, 4, 2)::int);
-  v_new_dur int := 60;
+  v_new_dur int;
+  v_step int;
 begin
   select id into v_psy_id from psychologists where id = p_psychologist_id and is_active;
   if v_psy_id is null then
     return jsonb_build_object('ok', false, 'error', 'Специалист не найден или неактивен');
   end if;
 
-  -- T-02: длительность новой услуги (для проверки перекрытия занятых интервалов)
-  select coalesce(sv.duration_min, 60) into v_new_dur
-  from services sv where sv.id = p_service_id and sv.psychologist_id = p_psychologist_id;
-  if v_new_dur is null then v_new_dur := 60; end if;
+  -- ============================================================
+  -- Атомарность (SR-002). Проверка занятости и INSERT ниже — одна транзакция,
+  -- но без блокировки две параллельные записи на один слот обе проходят проверку
+  -- и обе вставляются (гонка). Транзакционная advisory-блокировка по
+  -- (психолог, дата) сериализует такие вызовы: второй ждёт коммита первого
+  -- и уже видит его запись в проверке перекрытия.
+  -- ============================================================
+  perform pg_advisory_xact_lock(hashtext('booking:' || p_psychologist_id || ':' || p_session_date));
 
-  -- Занятость с учётом длительности: новый интервал [start, start+dur) не должен
-  -- пересекаться ни с одной существующей сессией [s, s+dur_s)
+  -- Длительность новой записи: снимок от клиента → услуга → шаг сетки → дефолт
+  select coalesce(sv.duration_min, v_default_dur) into v_new_dur
+  from services sv where sv.id = p_service_id and sv.psychologist_id = p_psychologist_id;
+  select coalesce(ss.slot_step_min, v_default_dur) into v_step
+  from session_settings ss where ss.psychologist_id = p_psychologist_id;
+  v_new_dur := coalesce(nullif(p_duration_min, 0), v_new_dur, v_step, v_default_dur);
+
+  -- Занятость по ИНТЕРВАЛАМ: новый [start, start+dur) не должен пересекаться
+  -- ни с одной существующей записью [s, s+dur_s). Длительность чужой записи —
+  -- её снимок, иначе услуга, иначе шаг сетки, иначе дефолт.
   if exists (
     select 1 from sessions s
     left join services sv on sv.id = s.service_id
+    left join session_settings ss on ss.psychologist_id = s.psychologist_id
     where s.psychologist_id = p_psychologist_id
       and s.session_date = p_session_date
       and s.status not in ('cancelled', 'expired', 'no_show')
       and (s.status <> 'held' or s.hold_expires_at is null or s.hold_expires_at > now())
       and (substr(s.session_time, 1, 2)::int * 60 + substr(s.session_time, 4, 2)::int) < v_new_start + v_new_dur
-      and (substr(s.session_time, 1, 2)::int * 60 + substr(s.session_time, 4, 2)::int) + coalesce(sv.duration_min, 60) > v_new_start
+      and (substr(s.session_time, 1, 2)::int * 60 + substr(s.session_time, 4, 2)::int)
+            + coalesce(s.duration_min, sv.duration_min, ss.slot_step_min, v_default_dur) > v_new_start
   ) then
-    return jsonb_build_object('ok', false, 'error', 'Слот уже занят');
+    return jsonb_build_object('ok', false, 'error', 'Это время только что заняли — выберите другое');
   end if;
 
+  -- Блокировки занятости — тоже по интервалам (раньше сравнивался только старт слота)
   if exists (
     select 1 from schedule_blocks b
     where b.psychologist_id = p_psychologist_id
       and p_session_date between b.date_from and b.date_to
-      and (b.time_from = '' and b.time_to = ''
-           or p_session_time >= coalesce(nullif(b.time_from, ''), '00:00')
-          and p_session_time < coalesce(nullif(b.time_to, ''), '23:59'))
+      and (
+        (b.time_from = '' and b.time_to = '')
+        or (
+          v_new_start < (substr(coalesce(nullif(b.time_to, ''), '23:59'), 1, 2)::int * 60
+                         + substr(coalesce(nullif(b.time_to, ''), '23:59'), 4, 2)::int)
+          and (substr(coalesce(nullif(b.time_from, ''), '00:00'), 1, 2)::int * 60
+               + substr(coalesce(nullif(b.time_from, ''), '00:00'), 4, 2)::int) < v_new_start + v_new_dur
+        )
+      )
   ) then
     return jsonb_build_object('ok', false, 'error', 'В это время специалист не принимает');
   end if;
@@ -621,31 +670,51 @@ begin
   insert into sessions (psychologist_id, client_id, service_id, session_date, session_time,
                         status, note, video_platform,
                         payment_policy, payment_status, amount_due, amount_paid, currency,
-                        timezone_offset)
+                        client_timezone, client_utc_offset_min, duration_min)
   values (p_psychologist_id, v_client_id, p_service_id, p_session_date, p_session_time,
           coalesce(p_status, 'pending'), p_session_note, p_video_platform,
           p_payment_policy, p_payment_status, p_amount_due, p_amount_paid, p_currency,
-          coalesce(nullif(p_timezone_offset, ''), ''))
+          coalesce(nullif(p_client_timezone, ''), ''), p_client_utc_offset_min, v_new_dur)
   returning id into v_session_id;
 
-  return jsonb_build_object('ok', true, 'client_id', v_client_id, 'session_id', v_session_id);
+  return jsonb_build_object(
+    'ok', true,
+    'client_id', v_client_id,
+    'session_id', v_session_id,
+    'duration_min', v_new_dur
+  );
 end;
 $$;
 
-revoke execute on function public.create_booking(text, text, text, text, text, text, text, text, text, text, text, text, text, text, text, numeric, numeric, text, boolean, timestamptz) from public;
-grant execute on function public.create_booking(text, text, text, text, text, text, text, text, text, text, text, text, text, text, text, numeric, numeric, text, boolean, timestamptz) to anon, authenticated;
+-- Сигнатура должна совпадать с объявлением выше (22 параметра). Раньше здесь
+-- было на один text больше и на один text меньше — schema.sql падал на этом
+-- месте, и всё, что ниже (claim_psychologist_profile, client_error_logs),
+-- в проде не создавалось.
+revoke execute on function public.create_booking(text, text, text, text, text, text, text, text, text, text, text, text, text, text, numeric, numeric, text, text, integer, integer, boolean, timestamptz) from public;
+grant execute on function public.create_booking(text, text, text, text, text, text, text, text, text, text, text, text, text, text, numeric, numeric, text, text, integer, integer, boolean, timestamptz) to anon, authenticated;
 
 -- ============================================================
--- claim_psychologist_profile — привязка профиля к подтверждённому email.
--- Вызывается ПОСЛЕ проверки кода (authenticated, auth.uid() задан):
---   1) находит психолога по email → присваивает owner_id (владение кабинетом);
---   2) если профиля нет (регистрация) → создаёт со slug из имени/email.
+-- claim_psychologist_profile — привязка профиля к АУТЕНТИФИЦИРОВАННОМУ пользователю.
+-- Вызывается ПОСЛЕ подтверждения кода, когда auth.uid() уже задан.
+--
+-- Инварианты (проверяются тестами tests/db-contract.mjs):
+--   1) владение определяется ТОЛЬКО auth.uid(); email — лишь способ найти профиль,
+--      но никогда не источник ownership;
+--   2) профиль создаётся только после подтверждения личности (без uid — отказ);
+--   3) повторный вход тем же email возвращает тот же id и НЕ создаёт дубль;
+--   4) чужой уже привязанный профиль не отбирается — честная ошибка;
+--   5) все обязательные поля регистрации сохраняются (email, full_name, phone,
+--      specialization, city, about).
 -- ============================================================
+drop function if exists public.claim_psychologist_profile(text, text, text, text);
+
 create or replace function public.claim_psychologist_profile(
   p_email          text,
   p_full_name      text default '',
+  p_phone          text default '',
   p_specialization text default 'Психолог',
-  p_city           text default ''
+  p_city           text default '',
+  p_about          text default ''
 ) returns jsonb
 language plpgsql
 security definer
@@ -654,30 +723,60 @@ as $$
 declare
   v_id    text;
   v_owner uuid := auth.uid();
+  v_cur   uuid;
   v_base  text;
   v_slug  text;
   v_i     int := 0;
+  v_email text := lower(trim(coalesce(p_email, '')));
+  v_name  text := nullif(trim(coalesce(p_full_name, '')), '');
+  v_spec  text := nullif(trim(coalesce(p_specialization, '')), '');
 begin
   if v_owner is null then
     return jsonb_build_object('ok', false, 'error', 'Email не подтверждён');
   end if;
+  if v_email = '' then
+    return jsonb_build_object('ok', false, 'error', 'Не указан email');
+  end if;
+  -- имя по умолчанию — локальная часть email (профиль не остаётся без имени)
+  v_name := coalesce(v_name, split_part(v_email, '@', 1));
 
-  select id into v_id
+  select id, owner_id into v_id, v_cur
   from psychologists
-  where lower(trim(email)) = lower(trim(p_email))
+  where lower(trim(email)) = v_email
   order by created_at
   limit 1;
 
   if v_id is not null then
+    -- профиль уже привязан к ДРУГОМУ пользователю Auth — не отбираем
+    if v_cur is not null and v_cur <> v_owner then
+      return jsonb_build_object(
+        'ok', false,
+        'error', 'Этот профиль уже привязан к другой учётной записи'
+      );
+    end if;
+
     update psychologists
-    set owner_id = coalesce(owner_id, v_owner),
-        is_active = true
-    where id = v_id;
-    return jsonb_build_object('ok', true, 'id', v_id);
+    set owner_id       = coalesce(owner_id, v_owner),
+        is_active      = true,
+        -- дозаполняем только пустое: существующие данные специалиста не затираем
+        full_name      = nullif(trim(full_name), '') || '',
+        phone          = case when coalesce(trim(phone), '') = '' then coalesce(trim(p_phone), '') else phone end,
+        specialization = case when coalesce(trim(specialization), '') = '' then coalesce(v_spec, 'Психолог') else specialization end,
+        city           = case when coalesce(trim(city), '') = '' then coalesce(trim(p_city), '') else city end,
+        about          = case when coalesce(trim(about), '') = '' then coalesce(trim(p_about), '') else about end,
+        updated_at     = now()
+    where id = v_id
+    returning owner_id into v_cur;
+
+    return jsonb_build_object(
+      'ok', true,
+      'id', v_id,
+      'owner_id', v_cur,
+      'created', false
+    );
   end if;
 
-  v_base := lower(regexp_replace(coalesce(nullif(trim(p_full_name), ''), split_part(trim(p_email), '@', 1)),
-                                 '[^0-9a-zA-Zа-яё]+', '-', 'gi'));
+  v_base := lower(regexp_replace(v_name, '[^0-9a-zA-Zа-яё]+', '-', 'gi'));
   if v_base is null or v_base in ('', '-') then
     v_base := 'specialist';
   end if;
@@ -687,24 +786,36 @@ begin
     v_slug := v_base || '-' || v_i;
   end loop;
 
-  insert into psychologists (email, full_name, specialization, city, slug, owner_id, is_active)
+  insert into psychologists (email, full_name, phone, specialization, city, about, slug, owner_id, is_active)
   values (
-    lower(trim(p_email)),
-    coalesce(nullif(trim(p_full_name), ''), split_part(trim(p_email), '@', 1)),
-    coalesce(nullif(trim(p_specialization), ''), 'Психолог'),
+    v_email,
+    v_name,
+    coalesce(trim(p_phone), ''),
+    coalesce(v_spec, 'Психолог'),
     coalesce(trim(p_city), ''),
+    coalesce(trim(p_about), ''),
     v_slug,
     v_owner,
     true
   )
-  returning id into v_id;
+  returning id, owner_id into v_id, v_cur;
 
-  return jsonb_build_object('ok', true, 'id', v_id, 'created', true);
+  -- стартовые настройки кабинета: без них сетка слотов и часовой пояс не определены
+  insert into session_settings (psychologist_id)
+  values (v_id)
+  on conflict (psychologist_id) do nothing;
+
+  return jsonb_build_object(
+    'ok', true,
+    'id', v_id,
+    'owner_id', v_cur,
+    'created', true
+  );
 end;
 $$;
 
-revoke execute on function public.claim_psychologist_profile(text, text, text, text) from public, anon;
-grant execute on function public.claim_psychologist_profile(text, text, text, text) to authenticated;
+revoke execute on function public.claim_psychologist_profile(text, text, text, text, text, text) from public, anon;
+grant execute on function public.claim_psychologist_profile(text, text, text, text, text, text) to authenticated;
 
 -- ============================================================
 -- client_error_logs — критичные ошибки фронтенда (boot, runtime, catalog).

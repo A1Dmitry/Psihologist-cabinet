@@ -1,0 +1,185 @@
+/**
+ * tools/dbtest — тестовая обвязка, поднимающая НАСТОЯЩИЙ PostgreSQL и применяющая
+ * к нему `supabase/schema.sql` дословно.
+ *
+ * Зачем: смоук-скрипты проекта мокают `fetch`, поэтому SQL-контракт (RPC
+ * create_booking / claim_psychologist_profile, RLS, ограничения) до этого не
+ * проверялся ничем. Здесь проверяется именно он — без второй реализации логики:
+ * исполняется тот же файл схемы, что деплоится в прод.
+ *
+ * Обвязка воспроизводит только то окружение, которое в Supabase уже есть:
+ *   роли anon / authenticated / service_role,
+ *   схема auth (auth.users) и функция auth.uid() из JWT-claim,
+ *   GUC request.jwt.claim.sub, который ставит PostgREST.
+ * Это НЕ продуктовый код и в сборку сайта не попадает.
+ */
+import EmbeddedPostgres from 'embedded-postgres';
+import pg from 'pg';
+import { readFile, rm } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+/** Окружение Supabase, которого нет в чистом Postgres. */
+const SUPABASE_ENV = `
+do $$ begin
+  if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon nologin; end if;
+  if not exists (select 1 from pg_roles where rolname = 'authenticated') then create role authenticated nologin; end if;
+  if not exists (select 1 from pg_roles where rolname = 'service_role') then create role service_role nologin bypassrls; end if;
+end $$;
+
+create schema if not exists auth;
+
+create table if not exists auth.users (
+  id uuid primary key default gen_random_uuid(),
+  email text unique not null,
+  created_at timestamptz not null default now()
+);
+
+-- auth.uid() в Supabase — это sub из JWT, который PostgREST кладёт в GUC.
+create or replace function auth.uid() returns uuid
+language sql stable
+as $$
+  select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
+$$;
+
+grant usage on schema auth to anon, authenticated, service_role;
+grant usage on schema public to anon, authenticated, service_role;
+-- Базовые гранты Supabase: в реальном проекте они выдаются default privileges,
+-- а дальше RLS-политики решают, какие именно строки видны. schema.sql при этом
+-- явно отзывает доступ у anon там, где он не нужен (revoke all ... from anon).
+alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
+alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
+alter default privileges in schema public grant execute on functions to anon, authenticated, service_role;
+`;
+
+export class TestDatabase {
+  constructor({
+    // случайный порт: параллельные/повторные запуски не должны ловить EADDRINUSE
+    port = 55000 + Math.floor(Math.random() * 1000),
+    dataDir = join(ROOT, '.pgdata')
+  } = {}) {
+    this.port = port;
+    this.dataDir = dataDir;
+    this.pg = null;
+    this.pool = null;
+  }
+
+  async start() {
+    // embedded-postgres с persistent:false сам чистит каталог при остановке, но
+    // после аварийного завершения прошлый запуск может оставить данные — тогда
+    // initdb отказывается работать. Чистим сами: это одноразовая тестовая БД.
+    await rm(this.dataDir, { recursive: true, force: true });
+    this.pg = new EmbeddedPostgres({
+      databaseDir: this.dataDir,
+      user: 'postgres',
+      password: 'postgres',
+      port: this.port,
+      persistent: false,
+      // без явного UTF8 initdb берёт кодировку из локали песочницы (SQL_ASCII),
+      // и кириллица в данных падает с «invalid byte sequence for encoding»
+      initdbFlags: ['--encoding=UTF8']
+    });
+    await this.pg.initialise();
+    await this.pg.start();
+    this.pool = new pg.Pool({
+      host: '127.0.0.1',
+      port: this.port,
+      user: 'postgres',
+      password: 'postgres',
+      database: 'postgres'
+    });
+    await this.pool.query(SUPABASE_ENV);
+    return this;
+  }
+
+  /** Применить supabase/schema.sql (и, опционально, seed.sql) дословно. */
+  async applySchema({ seed = false } = {}) {
+    const schema = await readFile(join(ROOT, 'supabase', 'schema.sql'), 'utf8');
+    await this.pool.query(schema);
+    if (seed) {
+      const seedSql = await readFile(join(ROOT, 'supabase', 'seed.sql'), 'utf8');
+      await this.pool.query(seedSql);
+    }
+    return this;
+  }
+
+  async stop() {
+    if (this.pool) await this.pool.end().catch(() => {});
+    this.pool = null;
+    if (this.pg) await this.pg.stop().catch(() => {});
+    this.pg = null;
+  }
+
+  /** Запрос от имени роли PostgREST. uid — sub из JWT (для authenticated). */
+  async query(sql, params = [], { role = 'service_role', uid = null } = {}) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      await client.query(`set local role ${role}`);
+      if (uid) {
+        await client.query(`set local request.jwt.claim.sub = '${uid}'`);
+      } else {
+        await client.query(`set local request.jwt.claim.sub = ''`);
+      }
+      const res = await client.query(sql, params);
+      await client.query('commit');
+      return res.rows;
+    } catch (e) {
+      await client.query('rollback').catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Отдельное соединение, живущее внутри одной транзакции — нужно, чтобы
+   * проверить гонку двух параллельных записей на один слот.
+   */
+  async transaction({ role = 'authenticated', uid = null } = {}) {
+    const client = await this.pool.connect();
+    await client.query('begin isolation level read committed');
+    await client.query(`set local role ${role}`);
+    await client.query(`set local request.jwt.claim.sub = ${uid ? `'${uid}'` : "''"}`);
+    return {
+      query: (sql, params) => client.query(sql, params).then(r => r.rows),
+      commit: async () => { await client.query('commit'); client.release(); },
+      rollback: async () => { await client.query('rollback').catch(() => {}); client.release(); }
+    };
+  }
+
+  /**
+   * Создать пользователя Supabase Auth (в проде это делает GoTrue).
+   * Выполняется от суперпользователя, без переключения роли: auth.users —
+   * служебная таблица GoTrue, PostgREST-роли к ней доступа не имеют.
+   */
+  async createAuthUser(email) {
+    const rows = await this.pool.query(
+      `insert into auth.users (email) values ($1) returning id`,
+      [String(email).toLowerCase().trim()]
+    );
+    return rows.rows[0].id;
+  }
+
+  /** RPC от имени пользователя (как PostgREST /rpc/<fn>). */
+  rpc(fn, args, { uid = null, role = 'authenticated' } = {}) {
+    const names = Object.keys(args);
+    const sql = `select ${fn}(${names.map((n, i) => `${n} => $${i + 1}`).join(', ')}) as result`;
+    return this.query(sql, Object.values(args), { role, uid }).then(r => r[0]?.result);
+  }
+
+  async count(table, where = '', params = []) {
+    const rows = await this.query(`select count(*)::int as n from ${table} ${where}`, params);
+    return rows[0].n;
+  }
+}
+
+/** Поднять БД, применить схему, вернуть handle. */
+export async function startTestDatabase(opts = {}) {
+  const db = new TestDatabase(opts);
+  await db.start();
+  await db.applySchema(opts);
+  return db;
+}
