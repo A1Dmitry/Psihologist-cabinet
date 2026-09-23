@@ -15,6 +15,7 @@ import { cabinetApi } from './services/cabinetApi.js';
 import { telegramService } from './services/telegramService.js';
 import { NOTIFY_WEBHOOK_URL } from './services/supabaseConfig.js';
 import { supabaseApi } from './services/supabaseApi.js';
+import { reportClientError } from './services/errorLogService.js';
 import { isSupabaseConfigured } from './services/supabaseConfig.js';
 import { applyProfileSeo, applyPortalSeo, applyBookingSeo } from './services/seoService.js';
 import { googleAddLink } from './services/calendarService.js';
@@ -2162,6 +2163,12 @@ async function loadServerCatalog() {
     portalVm.source = 'none';
     portalVm.serverError = String(e.message || e);
     console.error('[Supabase] catalog load failed:', e);
+    // фиксируем на сервере: падение загрузки каталога — критичный инфра-инцидент
+    reportClientError('catalog', {
+      message: `catalog load failed: ${e.message || e}`,
+      stack: e.stack,
+      extra: { configured: isSupabaseConfigured() }
+    });
     renderPortal();
     return false;
   }
