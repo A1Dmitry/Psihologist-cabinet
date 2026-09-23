@@ -25,7 +25,8 @@ CHECKS = [
     ('/index.html', 200, 'ПсихоПортал'),
     ('/js/app.js', 200, 'import'),
     ('/js/core/dbContext.js', 200, 'export'),
-    (f'/psy/{SLUG}', 200, 'js/app.js'),          # SPA-fallback → index.html
+    (f'/psy/{SLUG}', 200, 'js/app.js'),          # страница специалиста (SPA-fallback)
+    (f'/book/{SLUG}', 200, 'js/app.js'),         # страница записи (SPA-fallback)
     ('/cabinet', 200, 'ПсихоПортал'),
     ('/auth', 200, 'ПсихоПортал'),
     ('/booking-done', 200, 'ПсихоПортал'),

@@ -456,7 +456,19 @@
     </div>
   </div>
 
-  <!-- ========== BOOKING ========== -->
+  <!-- ========== PSY PROFILE (SEO-лендинг специалиста) ========== -->
+  <div id="page-profile" class="page hidden">
+    <header class="sticky top-0 z-40 bg-white border-b">
+      <div class="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
+        <button onclick="navigate('portal')" class="text-sm text-slate-500">← Каталог</button>
+        <span class="font-semibold text-sm truncate max-w-[50%]" id="prof-header-name"></span>
+        <div class="w-16"></div>
+      </div>
+    </header>
+    <div id="prof-body" class="max-w-3xl mx-auto px-4 py-10"></div>
+  </div>
+
+  <!-- ========== BOOKING (запись — отдельный шаг) ========== -->
   <div id="page-booking" class="page hidden">
     <header class="sticky top-0 z-40 bg-white border-b">
       <div class="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
@@ -466,19 +478,15 @@
       </div>
     </header>
     <div id="book-body" class="max-w-3xl mx-auto px-4 py-10">
-      <div id="own-page-banner" class="hidden mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 flex flex-wrap items-center gap-3">
-        <span class="text-sm font-medium text-emerald-800 flex-1">✓ Это ваша публичная страница — так её видят клиенты</span>
-        <button data-cabtab="journal" class="own-page-btn px-4 py-2 rounded-full bg-emerald-600 text-white text-sm font-medium">Книга записей</button>
-        <button data-cabtab="tasks" class="own-page-btn px-4 py-2 rounded-full border border-emerald-300 text-emerald-700 text-sm font-medium bg-white">Задачи</button>
-        <button data-cabtab="notepad" class="own-page-btn px-4 py-2 rounded-full border border-emerald-300 text-emerald-700 text-sm font-medium bg-white">Блокнот</button>
-        <button data-cabtab="home" class="own-page-btn px-4 py-2 rounded-full border border-emerald-300 text-emerald-700 text-sm font-medium bg-white">Кабинет</button>
+      <div class="rounded-2xl bg-indigo-50 p-5 mb-8 flex items-center gap-4">
+        <img id="book-psy-photo" alt="" class="hidden w-14 h-14 rounded-xl object-cover shrink-0">
+        <div class="flex-1 min-w-0">
+          <h2 class="text-lg font-bold truncate" id="book-psy-name">—</h2>
+          <p class="text-sm text-indigo-700 truncate" id="book-psy-spec"></p>
+          <p class="text-xs text-slate-500 mt-0.5" id="book-psy-city"></p>
+        </div>
+        <a id="book-to-profile" class="text-sm text-indigo-600 hover:underline whitespace-nowrap">О специалисте →</a>
       </div>
-      <div class="rounded-2xl bg-indigo-50 p-6 mb-8">
-        <h2 class="text-xl font-bold" id="book-psy-name">—</h2>
-        <p class="text-sm text-indigo-700" id="book-psy-spec"></p>
-        <p class="text-xs text-slate-500 mt-1" id="book-psy-city"></p>
-      </div>
-      <div id="book-profile" class="mb-10"></div>
       <div id="book-error" class="hidden mb-4 text-sm text-rose-600 bg-rose-50 px-3 py-2 rounded-lg"></div>
       <div id="book-payment-info" class="mb-6"></div>
       <div id="book-pay-actions" class="hidden mb-8"></div>
@@ -629,6 +637,6 @@
     </div>
   </div>
 
-  <script type="module" src="%BASE%js/app.js?v=20260923b"></script>
+  <script type="module" src="%BASE%js/app.js?v=20260923c"></script>
 </body>
 </html>

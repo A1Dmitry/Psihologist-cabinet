@@ -149,3 +149,14 @@ export function applyPortalSeo(baseUrl) {
     }
   });
 }
+
+/** SEO страницы записи /book/{slug} (лёгкое: JSON-LD остаётся на странице профиля) */
+export function applyBookingSeo(psy, pageUrl) {
+  setMeta({
+    title: `Запись — ${psy.fullName} · ПсихоПортал`,
+    description: `Онлайн-запись на консультацию к специалисту ${psy.fullName}${psy.city ? ` (${psy.city})` : ''}: выбор услуги, свободного времени и удобного способа оплаты.`,
+    url: pageUrl,
+    image: psy.photoUrl || '',
+    ogType: 'website'
+  });
+}

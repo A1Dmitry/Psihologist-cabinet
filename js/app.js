@@ -12,7 +12,7 @@ import { PaymentPolicy } from './models/entities.js';
 import { reminderService } from './services/reminderService.js';
 import { supabaseSync } from './services/supabaseSync.js';
 import { isSupabaseConfigured } from './services/supabaseConfig.js';
-import { applyProfileSeo, applyPortalSeo } from './services/seoService.js';
+import { applyProfileSeo, applyPortalSeo, applyBookingSeo } from './services/seoService.js';
 import { googleAddLink } from './services/calendarService.js';
 
 const portalVm = new PortalViewModel();
@@ -89,23 +89,25 @@ function showToast(msg, isError) {
 function computeBasePath() {
   let p = location.pathname;
   if (p.endsWith('/index.html')) p = p.slice(0, -'index.html'.length);
-  p = p.replace(/\/(psy\/[^/]+|cabinet|auth|booking-done|reply)\/?$/i, '');
+  p = p.replace(/\/(psy\/[^/]+|book\/[^/]+|cabinet|auth|booking-done|reply)\/?$/i, '');
   return p.endsWith('/') ? p : p + '/';
 }
 const BASE = computeBasePath();
 const urlFor = {
   home: () => BASE,
   psy: slug => `${BASE}psy/${encodeURIComponent(slug)}`,
+  book: slug => `${BASE}book/${encodeURIComponent(slug)}`,
   cabinet: () => `${BASE}cabinet`,
   auth: () => `${BASE}auth`,
   success: () => `${BASE}booking-done`,
   reply: token => `${BASE}reply?reply=${encodeURIComponent(token)}`,
   /** Публичная (индексируемая) ссылка записи для клиентов */
-  bookingLink: slug => `${location.origin}${urlFor.psy(slug)}`
+  bookingLink: slug => `${location.origin}${urlFor.book(slug)}`
 };
 
 function routeUrl(r) {
-  if (r.name === 'booking' && r.params.slug) return urlFor.psy(r.params.slug);
+  if (r.name === 'profile' && r.params.slug) return urlFor.psy(r.params.slug);
+  if (r.name === 'booking' && r.params.slug) return urlFor.book(r.params.slug);
   if (r.name === 'portal') return urlFor.home();
   if (r.name === 'cabinet') return urlFor.cabinet();
   if (r.name === 'auth') return urlFor.auth();
@@ -121,10 +123,20 @@ function routeFromUrl() {
   if (book) return { name: 'booking', params: { slug: book } };
   const reply = qs.get('reply') || qs.get('token');
   if (reply && /\/reply\/?$/.test(location.pathname)) return { name: 'clientReply', params: { token: reply } };
-  const m = location.pathname.match(/\/psy\/([^/]+)\/?$/);
+  let m = location.pathname.match(/\/book\/([^/]+)\/?$/);
   if (m) {
-    try { return { name: 'booking', params: { slug: decodeURIComponent(m[1]), anchor: location.hash === '#book' ? 'book' : '' } }; }
-    catch { return { name: 'booking', params: { slug: m[1], anchor: location.hash === '#book' ? 'book' : '' } }; }
+    try { return { name: 'booking', params: { slug: decodeURIComponent(m[1]) } }; }
+    catch { return { name: 'booking', params: { slug: m[1] } }; }
+  }
+  m = location.pathname.match(/\/psy\/([^/]+)\/?$/);
+  if (m) {
+    // легаси: /psy/{slug}#book раньше открывал форму — ведём на отдельную страницу записи
+    if (location.hash === '#book') {
+      try { return { name: 'booking', params: { slug: decodeURIComponent(m[1]) } }; }
+      catch { return { name: 'booking', params: { slug: m[1] } }; }
+    }
+    try { return { name: 'profile', params: { slug: decodeURIComponent(m[1]) } }; }
+    catch { return { name: 'profile', params: { slug: m[1] } }; }
   }
   if (/\/cabinet\/?$/.test(location.pathname)) return { name: 'cabinet', params: {} };
   if (/\/auth\/?$/.test(location.pathname)) return { name: 'auth', params: { mode: qs.get('mode') || 'login' } };
@@ -192,6 +204,7 @@ function render() {
   $$('.page').forEach(p => p.classList.add('hidden'));
   const map = {
     portal: 'page-portal',
+    profile: 'page-profile',
     auth: 'page-auth',
     cabinet: 'page-cabinet',
     booking: 'page-booking',
@@ -203,6 +216,7 @@ function render() {
   if (page) page.classList.remove('hidden');
 
   if (route.name === 'portal') { renderPortal(); applyPortalSeo(urlFor.home()); }
+  if (route.name === 'profile') renderProfile();
   if (route.name === 'auth') renderAuth();
   if (route.name === 'cabinet') renderCabinet();
   if (route.name === 'booking') renderBooking();
@@ -259,7 +273,9 @@ function renderPortal() {
               : esc(p.fullName.split(' ').map(x => x[0]).slice(0, 2).join(''))}
           </div>
           <div class="min-w-0">
-            <h3 class="font-bold text-slate-900 text-lg leading-tight">${p.fullName}</h3>
+            <h3 class="font-bold text-slate-900 text-lg leading-tight">
+              <a href="${urlFor.psy(p.slug)}" data-spa data-slug="${esc(p.slug)}" class="hover:text-indigo-700">${p.fullName}</a>
+            </h3>
             <p class="text-sm text-indigo-600 mt-0.5">${p.specialization}</p>
             <p class="text-xs text-slate-400 mt-1">${p.city || 'Онлайн'}${online ? ' · Google Meet' : ''}</p>
           </div>
@@ -268,7 +284,7 @@ function renderPortal() {
         <div class="flex flex-wrap gap-2 mb-4">
           ${svcs.slice(0, 3).map(s => `<span class="text-xs px-2 py-1 rounded-full bg-slate-50 text-slate-600">${s.name}</span>`).join('')}
         </div>
-        <a href="${urlFor.psy(p.slug)}#book" data-spa data-slug="${esc(p.slug)}" data-anchor="book" class="block w-full text-center py-2.5 rounded-full bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">
+        <a href="${urlFor.book(p.slug)}" data-spa-book data-slug="${esc(p.slug)}" class="block w-full text-center py-2.5 rounded-full bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">
           Записаться
         </a>
       </article>`;
@@ -924,9 +940,19 @@ function serviceMetaLine(s) {
 }
 
 /** Публичный профиль психолога на странице записи (модель сайта — без потерь) */
-function renderBookProfile(p) {
-  const box = $('#book-profile');
-  if (!box) return;
+// ——— Страница специалиста /psy/{slug}: SEO-лендинг (профиль без формы записи) ———
+function renderProfile() {
+  const slug = route.params.slug;
+  const p = db.findPsychologistBySlug(slug);
+  const body = $('#prof-body');
+  if (!body) return;
+  if (!p || !p.isActive) {
+    body.innerHTML = '<div class="text-center py-20 text-slate-400">Страница не найдена. <button class="text-indigo-600" onclick="navigate(\'portal\')">К каталогу</button></div>';
+    return;
+  }
+  $('#prof-header-name') && ($('#prof-header-name').textContent = p.fullName);
+  const services = db.servicesOf(p.id).filter(x => x.isActive !== false);
+
   const dirs = p.directions || [];
   const eduBasic = p.education?.basic || [];
   const eduExtra = p.education?.additional || [];
@@ -934,8 +960,8 @@ function renderBookProfile(p) {
   const socials = p.socials || [];
   const links = p.paymentLinks || [];
   const req = p.paymentRequisites || {};
-  const services = bookingVm.services || [];
   const hasReq = req.recipient || req.account || req.unp || req.purpose;
+  const bookUrl = urlFor.book(p.slug);
 
   const eduList = items => items.length
     ? `<ul class="mt-2 space-y-1.5 text-sm text-slate-700 list-disc list-inside">${items.map(x =>
@@ -964,33 +990,33 @@ function renderBookProfile(p) {
     p.address ? `<div>${esc(p.address)}</div>` : '',
     p.publicEmail ? `<div><a class="text-indigo-600 hover:underline" href="mailto:${esc(p.publicEmail)}">${esc(p.publicEmail)}</a></div>` : '',
     p.website ? `<div><a class="text-indigo-600 hover:underline" target="_blank" rel="noopener" href="${esc(p.website)}">${esc(p.website)}</a></div>` : '',
-    ...socials.map(s => {
-      const label = SOCIAL_TITLES[s.kind] || s.title || s.kind;
-      return `<div><a class="text-indigo-600 hover:underline" target="_blank" rel="noopener" href="${esc(s.url)}">${esc(label)}</a></div>`;
+    ...socials.map(x => {
+      const label = SOCIAL_TITLES[x.kind] || x.title || x.kind;
+      return `<div><a class="text-indigo-600 hover:underline" target="_blank" rel="noopener" href="${esc(x.url)}">${esc(label)}</a></div>`;
     })
   ].join('');
 
-  const servicesHtml = services.length ? `
-      <h3 class="font-semibold text-slate-900 mt-6">Услуги и стоимость</h3>
-      <div class="mt-2 divide-y border rounded-xl overflow-hidden">
-        ${services.map(s => `
-        <div class="p-3 flex justify-between items-start gap-3 text-sm">
-          <div><div class="font-medium">${esc(s.name)}</div>
-          <div class="text-slate-500">${esc(serviceMetaLine(s))}</div>
-          ${s.description ? `<div class="text-slate-500">${esc(s.description)}</div>` : ''}</div>
-          <div class="font-semibold text-indigo-700 whitespace-nowrap">${esc(s.priceLabel())}</div>
-        </div>`).join('')}
-      </div>` : '';
+  // панель для владельца (видна только ему)
+  const own = authService.isAuthenticated()
+    && authService.currentPsychologist && authService.currentPsychologist.id === p.id;
+  const banner = own ? `
+    <div class="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 flex flex-wrap items-center gap-3">
+      <span class="text-sm font-medium text-emerald-800 flex-1">✓ Это ваша публичная страница — так её видят клиенты</span>
+      <button data-cabtab="journal" class="own-page-btn px-4 py-2 rounded-full bg-emerald-600 text-white text-sm font-medium">Книга записей</button>
+      <button data-cabtab="tasks" class="own-page-btn px-4 py-2 rounded-full border border-emerald-300 text-emerald-700 text-sm font-medium bg-white">Задачи</button>
+      <button data-cabtab="notepad" class="own-page-btn px-4 py-2 rounded-full border border-emerald-300 text-emerald-700 text-sm font-medium bg-white">Блокнот</button>
+      <button data-cabtab="home" class="own-page-btn px-4 py-2 rounded-full border border-emerald-300 text-emerald-700 text-sm font-medium bg-white">Кабинет</button>
+    </div>` : '';
 
-  const html = `
+  body.innerHTML = `${banner}
     <div class="rounded-2xl bg-white border p-6">
       <div class="flex flex-col sm:flex-row gap-5 items-start">
-        ${p.photoUrl ? `<img src="${esc(p.photoUrl)}" alt="${esc(p.fullName)}" class="w-32 h-32 object-cover rounded-2xl shrink-0">` : ''}
+        ${p.photoUrl ? `<img src="${esc(p.photoUrl)}" alt="${esc(p.fullName)}" class="w-36 h-36 object-cover rounded-2xl shrink-0">` : ''}
         <div class="flex-1">
-          ${p.greeting ? `<p class="text-slate-600">${esc(p.greeting)}</p>` : ''}
+          <p class="text-slate-600">${esc(p.greeting || '')}</p>
           ${p.about ? `<p class="text-sm text-slate-700 mt-2">${esc(p.about)}</p>` : ''}
           ${p.approach ? `<p class="text-sm text-slate-700 mt-2">${esc(p.approach)}</p>` : ''}
-          <a href="#book-form-block" data-scroll-book class="inline-block mt-4 px-6 py-2.5 rounded-full bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">Записаться на консультацию</a>
+          <a href="${esc(bookUrl)}" data-spa-book data-slug="${esc(p.slug)}" class="inline-block mt-4 px-8 py-3 rounded-full bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700">Записаться на консультацию</a>
         </div>
       </div>
 
@@ -1000,7 +1026,17 @@ function renderBookProfile(p) {
         ${dirs.map(d => `<li>${esc(d.title)}${d.details ? ` <span class="text-slate-500">(${esc(d.details)})</span>` : ''}</li>`).join('')}
       </ul>` : ''}
 
-      ${servicesHtml}
+      ${services.length ? `
+      <h3 class="font-semibold text-slate-900 mt-6">Услуги и стоимость</h3>
+      <div class="mt-2 divide-y border rounded-xl overflow-hidden">
+        ${services.map(x => `
+        <div class="p-3 flex justify-between items-start gap-3 text-sm">
+          <div><div class="font-medium">${esc(x.name)}</div>
+          <div class="text-slate-500">${esc(serviceMetaLine(x))}</div>
+          ${x.description ? `<div class="text-slate-500">${esc(x.description)}</div>` : ''}</div>
+          <div class="font-semibold text-indigo-700 whitespace-nowrap">${esc(x.priceLabel())}</div>
+        </div>`).join('')}
+      </div>` : ''}
 
       ${eduBasic.length ? `<h3 class="font-semibold text-slate-900 mt-6">Психологическое образование</h3>${eduList(eduBasic)}` : ''}
       ${eduExtra.length ? `<h3 class="font-semibold text-slate-900 mt-6">Дополнительное образование</h3>${eduList(eduExtra)}` : ''}
@@ -1016,7 +1052,9 @@ function renderBookProfile(p) {
 
       ${contacts ? `<h3 class="font-semibold text-slate-900 mt-6">Контакты</h3><div class="mt-2 text-sm text-slate-700 space-y-0.5">${contacts}</div>` : ''}
     </div>`;
-  box.innerHTML = html;
+
+  // SEO-лендинг: canonical/OG/JSON-LD именно здесь
+  try { applyProfileSeo(p, services, urlFor.psy(p.slug)); } catch (e) { console.warn('seo', e); }
 }
 
 function renderBooking() {
@@ -1035,24 +1073,19 @@ function renderBooking() {
     return;
   }
   const p = bookingVm.psychologist;
+  // компактная головка: кто, где, ссылка на профиль
   $('#book-psy-name') && ($('#book-psy-name').textContent = p.fullName);
   $('#book-psy-spec') && ($('#book-psy-spec').textContent = p.specialization);
   $('#book-psy-city') && ($('#book-psy-city').textContent = (p.city || 'Онлайн') + ' · при необходимости Google Meet');
-  renderBookProfile(p);
-  // SEO: title/description/OG/JSON-LD для индексации страницы специалиста
-  try { applyProfileSeo(p, bookingVm.services, urlFor.psy(p.slug)); } catch (e) { console.warn('seo', e); }
-  // залогиненный владелец видит свою страницу с панелью управления
-  const banner = $('#own-page-banner');
-  if (banner) {
-    const own = authService.isAuthenticated()
-      && authService.currentPsychologist && authService.currentPsychologist.id === p.id;
-    banner.classList.toggle('hidden', !own);
+  const photo = $('#book-psy-photo');
+  if (photo) {
+    if (p.photoUrl) { photo.src = p.photoUrl; photo.classList.remove('hidden'); }
+    else photo.classList.add('hidden');
   }
-  // переход к форме записи по якорю (#book из карточки каталога)
-  if (route.params.anchor === 'book') {
-    route.params.anchor = null;
-    setTimeout(() => document.getElementById('book-form-block')?.scrollIntoView({ behavior: 'smooth' }), 30);
-  }
+  const toProfile = $('#book-to-profile');
+  if (toProfile) toProfile.href = urlFor.psy(p.slug);
+  // SEO страницы записи (лёгкое: JSON-LD остаётся на профиле)
+  try { applyBookingSeo(p, urlFor.book(p.slug)); } catch (e) { console.warn('seo', e); }
 
   const svcBox = $('#book-services');
   if (svcBox) {
@@ -1207,10 +1240,17 @@ function renderSuccess() {
 function bindEvents() {
   // Реальные <a href> (индексируются) + SPA-навигация без перезагрузки
   document.addEventListener('click', e => {
+    const bookA = e.target.closest('a[data-spa-book]');
+    if (bookA) {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      e.preventDefault();
+      navigate('booking', { slug: bookA.dataset.slug });
+      return;
+    }
     const a = e.target.closest('a[data-spa]');
     if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     e.preventDefault();
-    navigate('booking', { slug: a.dataset.slug });
+    navigate('profile', { slug: a.dataset.slug });
   });
 
   // Portal search
