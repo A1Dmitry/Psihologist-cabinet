@@ -61,7 +61,10 @@
     <header class="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-100">
       <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
         <button onclick="navigate('portal')" class="font-bold text-lg text-indigo-700 tracking-tight">ПсихоПортал</button>
-        <div class="flex items-center gap-3" id="nav-auth-area"></div>
+        <div class="flex items-center gap-3">
+          <span id="portal-src-badge" class="text-xs px-2.5 py-1 rounded-full font-medium whitespace-nowrap bg-slate-100 text-slate-500">…</span>
+          <span id="nav-auth-area" class="flex items-center gap-3"></span>
+        </div>
       </div>
     </header>
     <main class="max-w-6xl mx-auto px-4 py-10">
@@ -637,6 +640,6 @@
     </div>
   </div>
 
-  <script type="module" src="%BASE%js/app.js?v=20260923c"></script>
+  <script type="module" src="%BASE%js/app.js?v=20260923d"></script>
 </body>
 </html>

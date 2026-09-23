@@ -76,14 +76,16 @@ function toPsyRow(psy) {
 }
 
 function mapService(row) {
+  const title = row.title ?? row.name ?? '';
+  const duration = row.duration_min ?? row.duration ?? 60;
   return new Service({
     id: row.id,
     psychologistId: row.psychologist_id,
-    name: row.title,
-    title: row.title,
+    name: title,
+    title,
     description: row.description || '',
-    duration: row.duration_min || 60,
-    durationMin: row.duration_min || 60,
+    duration,
+    durationMin: duration,
     price: Number(row.price) || 0,
     currency: row.currency || 'BYN',
     format: row.format || 'offline',

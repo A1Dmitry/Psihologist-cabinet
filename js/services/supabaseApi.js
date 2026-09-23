@@ -15,6 +15,8 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY, isSupabaseConfigured } from './supabaseConfig.js';
 
 const PUBLIC_PROFILE_COLUMNS = 'id,full_name,phone,specialization,city,about,website,source_url,address,experience,slug,greeting,approach,photo_url,public_email,directions,education,experience_items,socials,payment_links,payment_requisites,profession,is_active,created_at';
+// пилотная схема (без расширенных колонок) — на случай, если миграция ещё не применена
+const PUBLIC_PROFILE_COLUMNS_LEGACY = 'id,full_name,phone,specialization,city,about,website,source_url,address,experience,slug,is_active,created_at';
 
 function headers(extra = {}) {
   return {
@@ -49,8 +51,34 @@ export const supabaseApi = {
   configured: isSupabaseConfigured,
 
   // ——— Публичный каталог / профиль ———
+  /** Строго серверные данные. Слои: view новой схемы → таблица с расширенными
+   *  колонками → пилотная таблица. select=* никогда не отдаём наружу как есть
+   *  (вырезаем key_verifier/email-учётку в коде). */
   async listPsychologists() {
-    return request(`public_profiles?is_active=eq.true&select=${PUBLIC_PROFILE_COLUMNS}`);
+    const attempts = [
+      () => request(`public_profiles?is_active=eq.true&select=${PUBLIC_PROFILE_COLUMNS}`),
+      () => request(`psychologists?is_active=eq.true&select=${PUBLIC_PROFILE_COLUMNS}`),
+      () => request(`psychologists?is_active=eq.true&select=${PUBLIC_PROFILE_COLUMNS_LEGACY}`),
+      async () => {
+        const rows = await request('psychologists?is_active=eq.true&select=*');
+        return (rows || []).map(r => {
+          const clean = { ...r };
+          delete clean.key_verifier;
+          delete clean.email;
+          return clean;
+        });
+      }
+    ];
+    let lastErr = null;
+    for (const attempt of attempts) {
+      try {
+        const rows = await attempt();
+        if (Array.isArray(rows)) return rows;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw lastErr || new Error('Каталог недоступен');
   },
 
   async getPsychologistBySlug(slug) {

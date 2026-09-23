@@ -232,10 +232,26 @@ function render() {
   });
 }
 
+/** Бейдж источника данных в шапке каталога */
+function renderSourceBadge() {
+  const el = $('#portal-src-badge');
+  if (!el) return;
+  const map = {
+    server: { text: 'Данные: сервер', cls: 'bg-emerald-100 text-emerald-700' },
+    demo: { text: 'ДЕМО-данные', cls: 'bg-amber-100 text-amber-700' },
+    none: { text: 'Нет связи с сервером', cls: 'bg-rose-100 text-rose-700' },
+    loading: { text: 'Загрузка…', cls: 'bg-slate-100 text-slate-500' }
+  };
+  const it = map[portalVm.source] || map.loading;
+  el.textContent = it.text;
+  el.className = 'text-xs px-2.5 py-1 rounded-full font-medium whitespace-nowrap ' + it.cls;
+}
+
 function renderPortal() {
   const list = portalVm.psychologists;
   const box = $('#portal-list');
   const navAuth = $('#nav-auth-area');
+  renderSourceBadge();
   if (navAuth) {
     if (portalVm.isLoggedIn) {
       navAuth.innerHTML = `
@@ -257,11 +273,41 @@ function renderPortal() {
   }
 
   if (!box) return;
+
+  // строго серверный режим: без сервера показываем причину, не локальные данные
+  if (portalVm.source === 'none' || (portalVm.source === 'loading' && !list.length)) {
+    box.innerHTML = `
+      <div class="bg-white rounded-2xl border p-8 max-w-2xl mx-auto text-center">
+        <div class="text-4xl mb-3">${portalVm.source === 'loading' ? '⏳' : '🔌'}</div>
+        <h3 class="font-bold text-lg mb-1">${portalVm.source === 'loading' ? 'Загружаем каталог с сервера…' : 'Нет связи с сервером данных'}</h3>
+        ${portalVm.serverError ? `<p class="text-sm text-rose-600 mb-4">${esc(portalVm.serverError)}</p>` : ''}
+        <div class="text-sm text-slate-600 bg-slate-50 rounded-xl p-4 text-left mb-5">
+          <div class="font-medium mb-2">Как подключить серверные данные:</div>
+          <ol class="list-decimal list-inside space-y-1">
+            <li>Откройте проект в Supabase → <b>SQL Editor</b></li>
+            <li>Выполните <code class="text-indigo-600">supabase/schema.sql</code> (таблицы, view, RLS)</li>
+            <li>Выполните <code class="text-indigo-600">supabase/seed.sql</code> (данные специалиста)</li>
+            <li>Нажмите «Повторить» ниже</li>
+          </ol>
+        </div>
+        <div class="flex flex-wrap gap-3 justify-center">
+          <button onclick="retryServerData()" class="px-6 py-2.5 rounded-full bg-indigo-600 text-white text-sm font-medium">Повторить</button>
+          <button onclick="enableDemoData()" class="px-6 py-2.5 rounded-full border border-slate-300 text-slate-600 text-sm font-medium">Показать демо-данные</button>
+        </div>
+      </div>`;
+    return;
+  }
+
   if (!list.length) {
     box.innerHTML = '<div class="col-span-full text-center text-slate-400 py-12">Психологи не найдены</div>';
     return;
   }
-  box.innerHTML = list.map(p => {
+  const demoStrip = portalVm.source === 'demo'
+    ? `<div class="mb-6 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 max-w-2xl mx-auto">
+         ⚠ Показаны демонстрационные данные (не из БД). <button onclick="retryServerData()" class="underline font-medium">Загрузить серверные</button>
+       </div>`
+    : '';
+  box.innerHTML = demoStrip + list.map(p => {
     const svcs = db.servicesOf(p.id);
     const online = svcs.some(s => s.format === 'online');
     return `
@@ -1764,34 +1810,68 @@ function openServiceModal() {
 }
 
 // ——— Boot ———
+// —— Источник данных каталога: 'server' | 'demo' | 'none' (строго серверный режим) ——
+portalVm.source = 'loading';
+portalVm.serverError = '';
+
+/** Жёстко серверная загрузка каталога. Никаких локальных подмен:
+ *  ошибка/пусто → честный экран с причиной (см. renderPortal). */
+async function loadServerCatalog() {
+  portalVm.source = 'loading';
+  portalVm.serverError = '';
+  renderPortal();
+  if (!isSupabaseConfigured()) {
+    db.psychologists = [];
+    db.services = [];
+    db.settings = [];
+    portalVm.source = 'none';
+    portalVm.serverError = 'SUPABASE_URL / SUPABASE_ANON_KEY не заданы (js/services/supabaseConfig.js)';
+    renderPortal();
+    return false;
+  }
+  try {
+    const result = await supabaseSync.pullAll();
+    if (!result.ok) throw new Error(result.message || 'Сервер не вернул данные');
+    portalVm.source = 'server';
+    showToast('Каталог загружен с сервера');
+    console.info('[Supabase] server catalog loaded:', result.message);
+    renderPortal();
+    return true;
+  } catch (e) {
+    // не показываем локальный seed как «настоящий» — только честная ошибка
+    db.psychologists = [];
+    db.services = [];
+    db.settings = [];
+    db.scheduleBlocks = [];
+    portalVm.source = 'none';
+    portalVm.serverError = String(e.message || e);
+    console.error('[Supabase] catalog load failed:', e);
+    renderPortal();
+    return false;
+  }
+}
+
+window.retryServerData = () => { loadServerCatalog(); };
+/** Демо — только по явному клику, с жёлтой плашкой «ДЕМО» */
+window.enableDemoData = () => {
+  db.resetToSeed();
+  portalVm.source = 'demo';
+  portalVm.serverError = '';
+  showToast('Включены демонстрационные данные (не из БД)');
+  renderPortal();
+};
+
 function boot() {
   bindEvents();
   (async () => {
-    if (!isSupabaseConfigured()) {
-      db.psychologists = [];
-      db.services = [];
-      showToast('Серверная БД не настроена — каталог не загружен', true);
-    } else {
-      try {
-        const result = await supabaseSync.pullAll();
-        if (!result.ok) throw new Error(result.message || 'Не удалось загрузить каталог с сервера');
-        console.info('[Supabase] server catalog loaded', result.message);
-      } catch (e) {
-        // Сервер пуст/недоступен: если локального каталога нет — показываем seed-каталог
-        // с явной пометкой «локальный демо» (это не серверные данные).
-        console.error('[Supabase] initial catalog load failed', e);
-        if (!db.psychologists.length) db._seed();
-        showToast('Каталог с сервера не загружен — показан локальный демо-каталог', true);
-      }
-    }
-
-    // стартовый маршрут — из URL (индексируемые ссылки /psy/{slug} + легаси ?book=)
+    // стартовый маршрут — из URL (индексируемые ссылки /psy/{slug}, /book/{slug} + легаси)
     bookingVm.onAvailability = () => { if (route.name === 'booking') renderBooking(); };
     route = routeFromUrl();
     if (route.name === 'cabinet' && !authService.isAuthenticated()) {
       route = { name: 'auth', params: { mode: 'login' } };
     }
     navigate(route.name, route.params, { push: false });
+    await loadServerCatalog();
   })();
 }
 
