@@ -1,0 +1,16 @@
+# Supabase CLI config — продакшен-проект портала.
+# project_id — публичный ref проекта (НЕ секрет): см. Dashboard → Project Settings → General.
+project_id = "phiavtroybgwyjdhqqkh"
+
+# Edge Functions вызываются с публичных страниц без пользовательской JWT-сессии
+# (auth-code — до входа, telegram-notify — со страницы записи), поэтому
+# JWT-gateway у них выключен. Авторизация реализована внутри функций:
+#   - auth-code: сам и выдаёт сессию после проверки одноразового кода из письма;
+#   - telegram-notify: не возвращает данных, читает токен бота сервисным ключом.
+# CLI (>= v1.178) применяет эти флаги при `supabase functions deploy`
+# (при деплое из Dashboard флаг задаётся вручную / --no-verify-jwt).
+[functions.auth-code]
+verify_jwt = false
+
+[functions.telegram-notify]
+verify_jwt = false
