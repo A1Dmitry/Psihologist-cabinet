@@ -10,6 +10,14 @@ import { supabaseSync } from '../services/supabaseSync.js';
 import { fetchGoogleBusyBlocks } from '../services/calendarService.js';
 import { cabinetApi } from '../services/cabinetApi.js';
 import { ScheduleBlockKind } from '../models/entities.js';
+// ——— Агент 3: серии, индивидуальные условия, мини-кабинет клиента, аналитика, пояса ———
+import { sessionSeriesService } from '../services/sessionSeriesService.js';
+import { clientCabinetService, MATERIAL_KINDS } from '../services/clientCabinetService.js';
+import { cabinetStatsService, moneyLabel } from '../services/cabinetStatsService.js';
+import {
+  timezoneService, todayStr as zoneToday, weekdayOf, addDaysStr,
+  weekdayTimeLabel, zoneCity, sessionZoneLabel, sessionZoneHint, WEEKDAY_NAMES_SHORT
+} from '../services/timezoneService.js';
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
@@ -34,6 +42,12 @@ export class CabinetViewModel extends BaseViewModel {
     // книга записей / клиенты / задачи / блокнот
     this.journalFilter = 'upcoming'; // upcoming | pending | past | all
     this.selectedClientId = null;
+    // ——— Агент 3: регулярные сессии / выбор области переноса / загрузка боковых данных ———
+    this.rescheduleScope = 'single';       // single | series (переключатель в модалке переноса)
+    this.pendingSeriesChoice = null;       // ждёт выбора «одна встреча или вся серия»
+    this.editingSeriesId = null;
+    this._sideDataFor = null;              // для какой psy уже подтянуты серии/материалы
+    this.materialKinds = MATERIAL_KINDS;
   }
 
   get scheduleRangeOptions() {
@@ -88,6 +102,48 @@ export class CabinetViewModel extends BaseViewModel {
     }
     this._decryptedClients = await clientVaultService.listDecrypted(this.psyId);
     this.notify();
+    await this.ensureSideData();
+  }
+
+  /**
+   * Боковые данные кабинета (серии, материалы, ссылки клиентов, запросы).
+   * Тянем один раз на вход, ошибки сервера не ломают кабинет: остаёмся на
+   * локальном зеркале и объясняем это в UI (serverHint).
+   */
+  async ensureSideData(force = false) {
+    if (!this.psyId) return;
+    if (this._sideDataFor === this.psyId && !force) return;
+    if (!force && this._sideDataLoading) return this._sideDataLoading;
+    this._sideDataLoading = (async () => {
+      try {
+        await sessionSeriesService.pull(this.psyId, { force });
+        await clientCabinetService.pull(this.psyId, { force });
+        this._sideDataFor = this.psyId;
+      } catch (e) {
+        console.warn('[Cabinet] боковые данные не загружены:', e?.message || e);
+      } finally {
+        this._sideDataLoading = null;
+        this.attachSeriesLinks();
+        this.notify();
+      }
+    })();
+    return this._sideDataLoading;
+  }
+
+  /** Пометить загруженные сессии привязкой к серии (для переноса «одна/вся») */
+  attachSeriesLinks() {
+    const list = this.series;
+    if (!list.length) return 0;
+    let n = 0;
+    for (const s of this.sessions) {
+      if (s.seriesId) continue;
+      const sr = list.find(x => x.id === s.seriesId) || list.find(x =>
+        x.clientId === s.clientId && x.time === s.time && x.coversDate(s.date) &&
+        (!x.serviceId || !s.serviceId || x.serviceId === s.serviceId)
+      );
+      if (sr) { s.seriesId = sr.id; n++; }
+    }
+    return n;
   }
 
   get sessions() {
@@ -151,12 +207,13 @@ export class CabinetViewModel extends BaseViewModel {
 
   // ——— Commands ———
   saveSession(form) {
-    if (!this.psyId) return;
+    if (!this.psyId) return false;
     if (!form.clientId || !form.serviceId || !form.date || !form.time) {
       this.error = 'Заполните обязательные поля';
       this.notify();
       return false;
     }
+    const client = this.clientById(form.clientId);
     const payload = {
       psychologistId: this.psyId,
       clientId: form.clientId,
@@ -168,10 +225,56 @@ export class CabinetViewModel extends BaseViewModel {
       videoPlatform: form.videoPlatform || '',
       meetLink: form.meetLink || ''
     };
+    // T-09/T-10: индивидуальные условия клиента подставляются в новую сессию
+    if (!form.id) this.applyClientConditions(payload, client, { keepMeetLink: !!form.meetLink });
 
     if (form.id) {
       const existing = this.sessions.find(s => s.id === form.id);
       const timeChanged = existing && (existing.date !== form.date || existing.time !== form.time);
+      const series = existing ? this.seriesForSession(existing) : null;
+
+      // T-06: встреча из серии — сначала спрашиваем область переноса
+      if (timeChanged && series && !form.seriesScope) {
+        this.pendingSeriesChoice = {
+          form: { ...form },
+          seriesId: series.id,
+          sessionId: existing.id,
+          seriesLabel: series.label()
+        };
+        this.error = '';
+        this.notify();
+        return false;
+      }
+      if (timeChanged && series && form.seriesScope === 'series') {
+        const res = sessionSeriesService.reschedule(series.id, {
+          weekday: weekdayOf(form.date),
+          time: form.time,
+          reason: form.changeReason || ''
+        });
+        if (!res.ok) {
+          this.error = res.message || 'Не удалось перенести серию';
+          this.notify();
+          return false;
+        }
+        // прочие поля — на соответствующую встречу серии (если она есть в расписании)
+        const moved = res.series
+          ? sessionSeriesService.sessionsOfSeries(res.series).find(s => s.date === form.date && s.time === form.time)
+          : null;
+        if (moved) {
+          db.updateSession(moved.id, {
+            serviceId: payload.serviceId,
+            status: form.status || moved.status,
+            note: form.note || '',
+            videoPlatform: payload.videoPlatform,
+            meetLink: payload.meetLink || moved.meetLink
+          });
+          cabinetApi.pushSessionPatch(moved.id, sessPatchOf(moved));
+          reminderService.scheduleForSession(moved.id);
+        }
+        this.showToast(`Серия перенесена: ${weekdayTimeLabel(res.series.weekday, res.series.time)} · встреч: ${res.created}${res.skipped?.length ? `, пропущено: ${res.skipped.length}` : ''}`);
+        this.notify();
+        return true;
+      }
       if (timeChanged && form.notifyClient !== false) {
         // владелец переставил запись → клиенту запрос согласия, слот пока старый
         const res = reminderService.notifyReschedule(form.id, {
@@ -632,6 +735,637 @@ export class CabinetViewModel extends BaseViewModel {
     db.removeClientEntry(id);
     cabinetApi.pushEntryDelete(id);
     this.notify();
+  }
+
+  // ==================================================================
+  //  РЕГУЛЯРНЫЕ СЕССИИ (T-05 / T-06 / T-07)
+  // ==================================================================
+
+  get series() {
+    return this.psyId ? sessionSeriesService.list(this.psyId) : [];
+  }
+
+  /** Серии с подписью для UI: {series, label, upcoming, clientName, serviceName} */
+  get seriesCards() {
+    return this.series.map(sr => {
+      const client = this.clientById(sr.clientId);
+      const service = this.serviceById(sr.serviceId);
+      return {
+        series: sr,
+        id: sr.id,
+        label: sr.label(),
+        when: weekdayTimeLabel(sr.weekday, sr.time),
+        clientName: client?.nickname || client?.name || '—',
+        serviceName: service?.name || '',
+        upcoming: sessionSeriesService.upcomingCount(sr),
+        paused: !!sr.paused,
+        intervalWeeks: sr.intervalWeeks,
+        note: sr.note
+      };
+    });
+  }
+
+  get seriesServerHint() {
+    return sessionSeriesService.serverHint();
+  }
+
+  /** Создать серию (T-05): «каждый вторник 15:00, N недель вперёд» */
+  createSeries(form = {}) {
+    if (!this.psyId) return { ok: false, message: 'Нет кабинета' };
+    const client = this.clientById(form.clientId);
+    if (!client) {
+      this.error = 'Выберите клиента для серии';
+      this.notify();
+      return { ok: false, message: this.error };
+    }
+    const service = form.serviceId ? this.serviceById(form.serviceId) : null;
+    const conditions = clientVaultService.conditionsOf(client);
+    const res = sessionSeriesService.create(this.psyId, {
+      clientId: form.clientId,
+      serviceId: form.serviceId || null,
+      weekday: Number(form.weekday) || weekdayOf(form.dateFrom || zoneToday()),
+      time: form.time || '10:00',
+      intervalWeeks: Number(form.intervalWeeks) || 1,
+      dateFrom: form.dateFrom || zoneToday(),
+      dateTo: form.dateTo || '',
+      horizonWeeks: Number(form.horizonWeeks) || 8,
+      note: form.note || '',
+      clientTimezone: conditions.clientTimezone || ''
+    });
+    if (!res.ok) {
+      this.error = res.message || 'Не удалось создать серию';
+      this.notify();
+      return res;
+    }
+    this.attachSeriesLinks();
+    const conflicts = (res.skipped || []).length;
+    this.showToast(`Серия создана: ${weekdayTimeLabel(res.series.weekday, res.series.time, { full: true })} · встреч: ${res.created}${conflicts ? `, пропущено: ${conflicts}` : ''}`);
+    if (conflicts) {
+      this.lastSeriesSkipped = res.skipped;
+    }
+    this.notify();
+    return res;
+  }
+
+  /** Перенос серии целиком: меняем день недели/время и перегенерируем (T-06) */
+  rescheduleSeries(seriesId, patch = {}) {
+    const res = sessionSeriesService.reschedule(seriesId, patch);
+    if (!res.ok) {
+      this.error = res.message || 'Не удалось изменить серию';
+      this.notify();
+      return res;
+    }
+    this.showToast(`Серия перенесена: ${weekdayTimeLabel(res.series.weekday, res.series.time, { full: true })} · встреч: ${res.created}`);
+    this.notify();
+    return res;
+  }
+
+  /** Пауза серии: будущие встречи уходят из расписания, слоты свободны (T-07) */
+  pauseSeries(seriesId) {
+    const res = sessionSeriesService.pause(seriesId, { reason: 'пауза' });
+    if (!res.ok) {
+      this.error = res.message;
+      this.notify();
+      return res;
+    }
+    this.showToast(`Серия на паузе. Снято встреч: ${res.removed}`);
+    this.notify();
+    return res;
+  }
+
+  resumeSeries(seriesId) {
+    const res = sessionSeriesService.resume(seriesId);
+    if (!res.ok) {
+      this.error = res.message;
+      this.notify();
+      return res;
+    }
+    this.showToast(`Серия возобновлена · создано встреч: ${res.created}`);
+    this.notify();
+    return res;
+  }
+
+  removeSeries(seriesId) {
+    const res = sessionSeriesService.remove(seriesId);
+    if (res.ok) this.showToast(`Серия удалена, снято встреч: ${res.removed}`);
+    this.notify();
+    return res;
+  }
+
+  /** Продлить серию (догенерировать встречи на горизонт) */
+  extendSeries(seriesId, horizonWeeks = 8) {
+    const sr = this.series.find(x => x.id === seriesId);
+    if (!sr) return { ok: false };
+    sr.horizonWeeks = Math.max(horizonWeeks, sr.horizonWeeks || 0);
+    sr.updatedAt = new Date().toISOString();
+    const gen = sessionSeriesService.generateSessions(sr);
+    this.showToast(`Серия продлена до ${sr.horizonWeeks} нед. · добавлено встреч: ${gen.created}`);
+    this.notify();
+    return gen;
+  }
+
+  seriesForSession(sessionOrId) {
+    const s = typeof sessionOrId === 'string' ? this.sessions.find(x => x.id === sessionOrId) : sessionOrId;
+    return s ? sessionSeriesService.seriesForSession(s) : null;
+  }
+
+  seriesSessions(seriesId) {
+    const sr = this.series.find(x => x.id === seriesId);
+    return sr ? sessionSeriesService.sessionsOfSeries(sr) : [];
+  }
+
+  /** Применить выбор области переноса из модалки (одна встреча / вся серия / отмена) */
+  applySeriesChoice(scope) {
+    const pending = this.pendingSeriesChoice;
+    if (!pending) return false;
+    this.pendingSeriesChoice = null;
+    if (!scope || scope === 'cancel') {
+      this.notify();
+      return false;
+    }
+    return this.saveSession({ ...pending.form, seriesScope: scope });
+  }
+
+  // ==================================================================
+  //  ИНДИВИДУАЛЬНЫЕ УСЛОВИЯ КЛИЕНТА (T-09 / T-10)
+  // ==================================================================
+
+  /** Условия клиента (зашифрованный сейф кабинета + пояс из мини-кабинета) */
+  conditionsOf(clientOrId) {
+    const c = typeof clientOrId === 'string' ? this.clientById(clientOrId) : clientOrId;
+    const cond = clientVaultService.conditionsOf(c);
+    if (c?.id && !cond.clientTimezone) {
+      const zone = clientCabinetService.clientTimezoneOf(c.id);
+      if (zone) cond.clientTimezone = zone;
+    }
+    return cond;
+  }
+
+  /**
+   * Подставить индивидуальные условия клиента в сессию (T-09/T-10):
+   * цена/валюта/способ оплаты/постоянная ссылка на встречу/ссылка на оплату.
+   */
+  applyClientConditions(session, client, { keepMeetLink = false } = {}) {
+    const cond = clientVaultService.conditionsOf(client);
+    const service = this.services.find(s => s.id === session.serviceId);
+    const price = cond.priceOverride ?? service?.price ?? 0;
+    session.currency = cond.currency || service?.currency || 'BYN';
+    session.amountDue = Number(price) || 0;
+    session.paymentMethod = cond.paymentMethod || '';
+    session.paymentUrl = cond.paymentUrl || service?.payUrl || '';
+    if (!keepMeetLink) {
+      if (cond.meetLink) session.meetLink = cond.meetLink;
+      if (!session.videoPlatform && cond.videoPlatform) session.videoPlatform = cond.videoPlatform;
+    }
+    if (cond.clientTimezone) session.clientTimezone = cond.clientTimezone;
+    if (Object.keys(cond).length) session.conditionsApplied = true;
+    return session;
+  }
+
+  /** Сохранить условия клиента из карточки */
+  async saveClientConditions(clientId, patch) {
+    if (!this.psyId) return false;
+    if (!this.vaultUnlocked) {
+      this.error = 'Сейф заблокирован — войдите с паролем, чтобы менять условия клиента';
+      this.notify();
+      return false;
+    }
+    try {
+      const updated = await clientVaultService.updateConditions(this.psyId, clientId, patch);
+      // не-PII часть условий — на серверные колонки (SR-102), чтобы кабинет был
+      // одинаков на разных устройствах; до применения миграции вызов тихо пропускается
+      cabinetApi.pushClientConditions(clientId, clientVaultService.conditionsOf(updated));
+      await this.refreshClients();
+      this.showToast('Условия клиента сохранены');
+      this.notify();
+      return true;
+    } catch (e) {
+      this.error = e.message || 'Не удалось сохранить условия';
+      this.notify();
+      return false;
+    }
+  }
+
+  /** Готовая строка условий для карточки: «80 BYN · перевод · ссылка на встречу есть» */
+  conditionsSummary(clientOrId) {
+    const cond = this.conditionsOf(clientOrId);
+    const bits = [];
+    if (cond.priceOverride != null) bits.push(`${cond.priceOverride} ${cond.currency || 'BYN'}`.trim());
+    else if (cond.currency) bits.push(`валюта ${cond.currency}`);
+    if (cond.paymentMethod) bits.push(this.paymentMethodLabel(cond.paymentMethod));
+    if (cond.meetLink) bits.push('постоянная ссылка на встречу');
+    if (cond.paymentUrl) bits.push('ссылка на оплату');
+    if (cond.clientTimezone) bits.push(`пояс клиента: ${zoneCity(cond.clientTimezone)}`);
+    return bits.join(' · ');
+  }
+
+  paymentMethodLabel(method) {
+    return ({
+      transfer: 'перевод', card: 'карта', cash: 'наличные', erip: 'ЕРИП', bepaid: 'bePaid', receipt: 'чек'
+    })[method] || method;
+  }
+
+  get paymentMethodOptions() {
+    return [
+      { id: '', label: '— как в услуге —' },
+      { id: 'transfer', label: 'Перевод' },
+      { id: 'card', label: 'Карта' },
+      { id: 'cash', label: 'Наличные' },
+      { id: 'erip', label: 'ЕРИП' },
+      { id: 'bepaid', label: 'bePaid' },
+      { id: 'receipt', label: 'По чеку' }
+    ];
+  }
+
+  /** История платежей клиента (T-11) — данные уже в сессиях */
+  paymentsSummary(clientId) {
+    const list = this.sessions
+      .filter(s => s.clientId === clientId && s.status !== 'cancelled')
+      .sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
+    const byCurrency = {};
+    const rows = list.map(s => {
+      const svc = this.serviceById(s.serviceId);
+      const due = Number(s.amountDue) || Number(svc?.price) || 0;
+      const paid = Number(s.amountPaid) || 0;
+      const currency = s.currency || svc?.currency || 'BYN';
+      const debt = Math.max(0, Math.round((due - paid) * 100) / 100);
+      byCurrency[currency] = byCurrency[currency] || { received: 0, due: 0, debt: 0, sessions: 0 };
+      byCurrency[currency].received += paid;
+      byCurrency[currency].due += due;
+      byCurrency[currency].debt += debt;
+      byCurrency[currency].sessions += 1;
+      return {
+        id: s.id, date: s.date, time: s.time, status: s.status,
+        serviceName: svc?.name || '', due, paid, debt, currency,
+        paymentStatus: s.paymentStatus || 'unpaid',
+        method: s.paymentMethod || this.conditionsOf(clientId).paymentMethod || ''
+      };
+    });
+    const totals = Object.entries(byCurrency).map(([currency, v]) => ({ currency, ...v }));
+    return {
+      rows: rows.slice(0, 12),
+      totals,
+      totalLabel: totals.length
+        ? totals.map(t => `${Math.round(t.received * 100) / 100} из ${Math.round(t.due * 100) / 100} ${t.currency}`).join(' · ')
+        : 'нет данных',
+      debtLabel: moneyLabel(totals.reduce((acc, t) => { acc[t.currency] = t.debt; return acc; }, {}), { empty: 'долгов нет' }),
+      unpaidCount: rows.filter(r => r.debt > 0 && r.paymentStatus !== 'refunded').length
+    };
+  }
+
+  // ==================================================================
+  //  МИНИ-КАБИНЕТ КЛИЕНТА: ССЫЛКА, МАТЕРИАЛЫ, ДОКУМЕНТЫ (T-12 / T-13 / T-14)
+  // ==================================================================
+
+  get clientCabinetServerHint() {
+    return clientCabinetService.serverHint();
+  }
+
+  /** Постоянная секретная ссылка клиента (создаётся один раз, дальше — та же) */
+  clientAccessLink(clientId, { rotate = false, ttlDays = 180 } = {}) {
+    if (!this.psyId || !clientId) return null;
+    if (!this.vaultUnlocked) return { ok: false, message: 'Сейф заблокирован — войдите с паролем' };
+    const res = clientCabinetService.issueToken({ psychologistId: this.psyId, clientId, ttlDays, rotate });
+    if (!res.ok) return res;
+    const base = (() => {
+      try { return location.pathname.replace(/(cabinet|auth|reply|booking-done)\/?$/, ''); } catch { return '/'; }
+    })();
+    return { ...res, url: clientCabinetService.tokenUrl(res.token, base || '/') };
+  }
+
+  revokeClientAccessLink(token) {
+    clientCabinetService.revokeToken(token);
+    this.showToast('Ссылка клиента отозвана');
+    this.notify();
+  }
+
+  accessTokenOf(clientId) {
+    return this.psyId ? clientCabinetService.activeToken(this.psyId, clientId) : null;
+  }
+
+  /** Материалы и домашние задания клиента (T-13) */
+  materialsOf(clientId) {
+    return clientCabinetService.materialsOf(clientId);
+  }
+
+  addMaterial(form = {}) {
+    if (!this.psyId || !form.clientId) return { ok: false };
+    const res = clientCabinetService.addMaterial({
+      psychologistId: this.psyId,
+      clientId: form.clientId,
+      kind: form.kind || 'text',
+      title: form.title || '',
+      body: form.body || '',
+      url: form.url || ''
+    });
+    this.showToast(res.ok ? 'Материал добавлен — клиент увидит его по своей ссылке' : res.message, !res.ok && 0);
+    this.notify();
+    return res;
+  }
+
+  removeMaterial(id) {
+    clientCabinetService.removeMaterial(id);
+    this.showToast('Материал удалён');
+    this.notify();
+  }
+
+  toggleMaterialPin(id) {
+    clientCabinetService.toggleMaterialPin(id);
+    this.notify();
+  }
+
+  /** Документы клиента с «подписью» (T-14 — вспомогательный уровень) */
+  documentsOf(clientId) {
+    return clientCabinetService.documentsOf(clientId);
+  }
+
+  addDocument(form = {}) {
+    if (!this.psyId || !form.clientId) return { ok: false };
+    const res = clientCabinetService.addDocument({
+      psychologistId: this.psyId,
+      clientId: form.clientId,
+      title: form.title,
+      body: form.body
+    });
+    this.showToast(res.ok ? 'Документ добавлен в кабинет клиента' : res.message);
+    this.notify();
+    return res;
+  }
+
+  removeDocument(id) {
+    clientCabinetService.removeDocument(id);
+    this.notify();
+  }
+
+  // ==================================================================
+  //  ЛИСТ ОЖИДАНИЯ И ЗАПРОСЫ КЛИЕНТА (T-08 / T-24)
+  // ==================================================================
+
+  /** Очередь: заявки из публичной записи + запросы из мини-кабинета клиента */
+  get clientRequests() {
+    return this.psyId ? clientCabinetService.requestsOf(this.psyId) : [];
+  }
+
+  get pendingClientRequests() {
+    return this.clientRequests.filter(r => r.status === 'pending');
+  }
+
+  get waitingQueue() {
+    const requests = this.pendingClientRequests.map(r => ({
+      id: r.id,
+      source: 'client',
+      kind: r.kind,
+      kindLabel: ({ propose_time: 'Другое время', recurring: 'Постоянное время', waiting_day: 'Нужен день' })[r.kind] || 'Запрос',
+      text: clientCabinetService.requestLabel(r),
+      clientId: r.clientId,
+      sessionId: r.sessionId,
+      desiredDate: r.desiredDate,
+      desiredTime: r.desiredTime,
+      weekday: r.weekday,
+      intervalWeeks: r.intervalWeeks,
+      comment: r.comment,
+      createdAt: r.createdAt
+    }));
+    const items = this.waiting.map(w => {
+      const pref = clientCabinetService.waitingPref(w.id) || {};
+      const recurring = !!(w.recurring || pref.recurring);
+      return {
+        id: w.id,
+        source: 'booking',
+        kind: recurring ? 'recurring' : (w.type === 'reschedule' ? 'propose_time' : 'wait'),
+        kindLabel: recurring ? 'Постоянное время' : (w.type === 'reschedule' ? 'Перенос' : 'Очередь'),
+        text: `${w.name || 'Заявка'}${w.note ? ` · ${w.note}` : ''}`,
+        clientId: w.clientId || null,
+        desiredDate: pref.desiredDate || '',
+        desiredTime: pref.desiredTime || '',
+        weekday: pref.weekday ?? null,
+        intervalWeeks: pref.intervalWeeks ?? null,
+        raw: w,
+        pref
+      };
+    });
+    const queue = requests.concat(items);
+    return {
+      all: queue,
+      forDay: queue.filter(q => q.desiredDate).sort((a, b) => (a.desiredDate || '').localeCompare(b.desiredDate || '')),
+      recurring: queue.filter(q => q.kind === 'recurring'),
+      propose: queue.filter(q => q.kind === 'propose_time'),
+      byDay: queue.filter(q => q.desiredDate).reduce((acc, q) => {
+        (acc[q.desiredDate] = acc[q.desiredDate] || []).push(q);
+        return acc;
+      }, {})
+    };
+  }
+
+  /** Уточнить пожелание к позиции очереди (день/время/«хочет постоянное время») */
+  setWaitingPreference(id, patch = {}) {
+    const w = this.waiting.find(x => x.id === id);
+    if (!w) return false;
+    const cur = clientCabinetService.waitingPref(id) || {};
+    const weekday = patch.weekday ?? cur.weekday ?? (patch.desiredDate ? weekdayOf(patch.desiredDate) : null);
+    // пожелание дня/времени хранится рядом с заявкой (SR-106) и зеркалится на сервер
+    clientCabinetService.setWaitingPref(id, {
+      desiredDate: patch.desiredDate ?? cur.desiredDate ?? '',
+      desiredTime: patch.desiredTime ?? cur.desiredTime ?? '',
+      recurring: patch.recurring ?? cur.recurring ?? false,
+      weekday,
+      intervalWeeks: patch.intervalWeeks ?? cur.intervalWeeks ?? null
+    });
+    this.notify();
+    return true;
+  }
+
+  /** Подтвердить запрос клиента «предложить другое время» — переносим встречу */
+  acceptClientRequest(id) {
+    const r = this.pendingClientRequests.find(x => x.id === id);
+    if (!r) return false;
+    const session = r.sessionId
+      ? this.sessions.find(s => s.id === r.sessionId)
+      : this.sessions.find(s => s.clientId === r.clientId && s.date >= zoneToday());
+    if (r.kind === 'propose_time' && session && r.desiredDate && r.desiredTime) {
+      const busy = this.sessions.some(s =>
+        s.id !== session.id && s.date === r.desiredDate && s.time === r.desiredTime &&
+        !['cancelled', 'expired', 'no_show'].includes(s.status)
+      );
+      if (busy || db.isSlotBlocked(this.psyId, r.desiredDate, r.desiredTime)) {
+        this.error = 'Это время уже занято — предложите клиенту другой слот';
+        this.notify();
+        return false;
+      }
+      session.previousSlot = { date: session.date, time: session.time };
+      session.date = r.desiredDate;
+      session.time = r.desiredTime;
+      session.pendingChange = null;
+      session.changeConsentStatus = 'confirmed_client_request';
+      session.clientResponse = 'change_confirmed';
+      db.saveChanges();
+      cabinetApi.pushSessionPatch(session.id, sessPatchOf(session));
+      reminderService.scheduleForSession(session.id);
+      clientCabinetService.resolveRequest(id, 'accepted');
+      this._notifyClientTelegram(session, `✅ Новое время согласовано: ${r.desiredDate} в ${r.desiredTime}`);
+      this.showToast('Запрос клиента принят — встреча перенесена');
+      this.notify();
+      return true;
+    }
+    if (r.kind === 'recurring') {
+      // подтверждение постоянного времени = создание серии (психолог может поменять параметры)
+      const res = this.createSeries({
+        clientId: r.clientId,
+        serviceId: r.sessionId ? this.sessions.find(s => s.id === r.sessionId)?.serviceId : null,
+        weekday: r.weekday || (r.desiredDate ? weekdayOf(r.desiredDate) : 1),
+        time: r.desiredTime || '10:00',
+        intervalWeeks: r.intervalWeeks || 1,
+        dateFrom: zoneToday(),
+        horizonWeeks: 8
+      });
+      if (res.ok) {
+        clientCabinetService.resolveRequest(id, 'accepted');
+        this.showToast('Постоянное время назначено');
+      }
+      this.notify();
+      return res.ok;
+    }
+    // «нужен день» из очереди — открываем расписание на этом дне
+    if (r.desiredDate) this.selectedDate = r.desiredDate;
+    this.tab = 'schedule';
+    clientCabinetService.resolveRequest(id, 'accepted');
+    this.showToast('Пожелание клиента учтено — выберите слот в расписании');
+    this.notify();
+    return true;
+  }
+
+  declineClientRequest(id) {
+    clientCabinetService.resolveRequest(id, 'declined');
+    this.showToast('Запрос отклонён');
+    this.notify();
+  }
+
+  removeClientRequest(id) {
+    clientCabinetService.removeRequest(id);
+    this.notify();
+  }
+
+  /**
+   * «Записать» заявку из листа ожидания: завести карточку клиента (если её нет)
+   * и сразу создать серию, если человек просил постоянное время (T-08/T-24).
+   * Без выбранного «постоянного времени» просто сохраняет пожелание.
+   */
+  async createSeriesFromWaiting(waitingId, form = {}) {
+    const w = this.waiting.find(x => x.id === waitingId);
+    if (!w) return { ok: false, message: 'Заявка не найдена' };
+    const pref = clientCabinetService.waitingPref(waitingId) || {};
+    const desiredDate = pref.desiredDate || '';
+    const desiredTime = pref.desiredTime || '';
+    const wantsRecurring = !!(pref.recurring || w.recurring);
+    const wanted = form.weekday || pref.weekday || (desiredDate ? weekdayOf(desiredDate) : null);
+    const time = form.time || desiredTime || '10:00';
+    const dateFrom = form.dateFrom || (desiredDate && desiredDate >= zoneToday() ? desiredDate : zoneToday());
+    // постоянное время не просили — ограничиваемся пожеланием
+    if (!(form.recurring || wantsRecurring || (wanted && desiredDate))) {
+      this.setWaitingPreference(waitingId, { desiredTime: time });
+      return { ok: false, message: 'Пожелание сохранено' };
+    }
+    let client = w.clientId ? this.clientById(w.clientId) : this.clients.find(c => c.phone && c.phone === w.phone);
+    if (!client) {
+      client = db.addClient({
+        psychologistId: this.psyId,
+        name: w.name || 'Клиент',
+        phone: w.phone || '',
+        note: w.note || ''
+      });
+      cabinetApi.pushClient(this.psyId, client);
+      await this.refreshClients();
+    }
+    const res = this.createSeries({
+      clientId: client.id,
+      serviceId: form.serviceId || null,
+      weekday: wanted || weekdayOf(dateFrom),
+      time,
+      intervalWeeks: Number(form.intervalWeeks) || 1,
+      dateFrom,
+      horizonWeeks: Number(form.horizonWeeks) || 8
+    });
+    if (res.ok) {
+      db.removeWaiting(waitingId);
+      cabinetApi.pushWaitingDelete(waitingId);
+      clientCabinetService.clearWaitingPref(waitingId);
+      this.tab = 'schedule';
+      this.notify();
+    }
+    return res;
+  }
+
+  /** Из заявки «хочу постоянное время» собрать серию (форма психолога) */
+  createSeriesFromRequest(requestId, form = {}) {
+    const r = this.clientRequests.find(x => x.id === requestId);
+    if (!r) return { ok: false };
+    const res = this.createSeries({
+      clientId: r.clientId,
+      serviceId: form.serviceId || null,
+      weekday: form.weekday || r.weekday || 1,
+      time: form.time || r.desiredTime || '10:00',
+      intervalWeeks: form.intervalWeeks || r.intervalWeeks || 1,
+      dateFrom: form.dateFrom || zoneToday(),
+      horizonWeeks: form.horizonWeeks || 8
+    });
+    if (res.ok) clientCabinetService.resolveRequest(requestId, 'accepted');
+    return res;
+  }
+
+  _notifyClientTelegram(session, text) {
+    const client = this.clientById(session?.clientId);
+    if (!client?.telegramChat) return;
+    telegramService.sendToClient(client, text).catch(() => {});
+  }
+
+  // ==================================================================
+  //  АНАЛИТИКА (T-20)
+  // ==================================================================
+
+  get stats() {
+    return cabinetStatsService.buildStats({
+      sessions: this.sessions,
+      services: this.services,
+      settings: this.settings,
+      blocks: this.blocks,
+      clients: this.clients,
+      today: zoneToday()
+    });
+  }
+
+  moneyLabel = (map, opts) => moneyLabel(map, opts);
+
+  // ==================================================================
+  //  ЧАСОВЫЕ ПОЯСА (T-23)
+  // ==================================================================
+
+  get scheduleZone() {
+    return this.settings?.timezone || timezoneService.DEFAULT_TIMEZONE;
+  }
+
+  get scheduleZoneLabel() {
+    return timezoneService.zoneLabel(this.scheduleZone);
+  }
+
+  /** Подпись времени сессии с поясом клиента (если он известен) */
+  sessionZone(session) {
+    const info = sessionZoneLabel(session, this.scheduleZone);
+    return { ...info, hint: sessionZoneHint(session, this.scheduleZone) };
+  }
+
+  /** Сохранить пояс клиента (когда клиент открыл свою ссылку из другого пояса) */
+  async setClientTimezone(clientId, tz) {
+    const client = this.clientById(clientId);
+    if (!client || !tz || !timezoneService.isValidZone(tz)) return false;
+    if (this.conditionsOf(client).clientTimezone === tz) return true;
+    return this.saveClientConditions(clientId, { clientTimezone: tz });
+  }
+
+  /** Пояс, который прислал клиент из мини-кабинета (для T-23) */
+  applyClientTimezoneFromRequest(requestId, tz) {
+    const r = this.clientRequests.find(x => x.id === requestId);
+    if (!r) return false;
+    return this.setClientTimezone(r.clientId, tz);
   }
 }
 
