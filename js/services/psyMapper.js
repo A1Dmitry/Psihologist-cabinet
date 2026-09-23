@@ -20,7 +20,24 @@ function listValue(raw) {
   return Array.isArray(value) ? value : [];
 }
 
+/** Официальная страница Наталии публикует эти ссылки в блоке «Контакты». */
+function officialSocials(row, socials) {
+  const source = String(value(row, 'source_url', 'sourceUrl', value(row, 'website', 'website', ''))).toLowerCase();
+  const name = String(value(row, 'full_name', 'fullName', '')).toLowerCase().replaceAll('ё', 'е');
+  const isNatalia = name.includes('наталия михайловская') && source.includes('nataliamikhailouskaya.by');
+  if (!isNatalia) return socials;
+  const result = [...socials];
+  if (!result.some(item => item?.kind === 'telegram' && item?.url)) {
+    result.push({ kind: 'telegram', url: 'https://t.me/psyholog_natali', title: 'telegram' });
+  }
+  if (!result.some(item => item?.kind === 'instagram' && item?.url)) {
+    result.push({ kind: 'instagram', url: 'https://www.instagram.com/psyholog__natali', title: 'instagram' });
+  }
+  return result;
+}
+
 export function mapPsy(row = {}) {
+  const socials = officialSocials(row, listValue(value(row, 'socials', 'socials', [])));
   return new Psychologist({
     id: value(row, 'id', 'id', null),
     email: value(row, 'email', 'email', ''),
@@ -42,7 +59,7 @@ export function mapPsy(row = {}) {
     directions: listValue(value(row, 'directions', 'directions', [])),
     education: jsonValue(value(row, 'education', 'education', null), null),
     experienceItems: listValue(value(row, 'experience_items', 'experienceItems', [])),
-    socials: listValue(value(row, 'socials', 'socials', [])),
+    socials,
     paymentLinks: listValue(value(row, 'payment_links', 'paymentLinks', [])),
     paymentRequisites: jsonValue(value(row, 'payment_requisites', 'paymentRequisites', null), null),
     isActive: value(row, 'is_active', 'isActive', true) !== false,
