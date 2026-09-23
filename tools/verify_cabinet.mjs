@@ -103,6 +103,7 @@ const { clientCabinetService } = await import('../js/services/clientCabinetServi
 const { cabinetStatsService, buildStats } = await import('../js/services/cabinetStatsService.js');
 const { timezoneService } = await import('../js/services/timezoneService.js');
 const { CabinetViewModel } = await import('../js/viewmodels/CabinetViewModel.js');
+const { reminderService } = await import('../js/services/reminderService.js');
 
 const today = new Date().toISOString().slice(0, 10);
 const addDaysOrSame = (iso, days) => {
@@ -332,6 +333,25 @@ ok(html('cc-root').includes('Подключиться'), 'страница кл�
 ok(html('cc-root').includes('Предложить другое время'), 'страница клиента: предложение другого времени');
 ok(html('cc-root').includes('Дыхательная практика'), 'страница клиента: материалы видны');
 ok(html('cc-root').includes('Хочу постоянное время'), 'страница клиента: запрос постоянного времени');
+
+console.log('\n9b. Страница /reply: напоминание + мини-кабинет (T-12 и старый механизм ответа)');
+{
+  const settings = db.settingsOf(psyId);
+  settings.reminderEnabled = true;
+  const future = db.sessions.find(x => x.clientId === client.id && x.date >= today && ['pending', 'confirmed'].includes(x.status));
+  const created = reminderService.scheduleForSession(future.id);
+  ok(created.length >= 1, 'напоминание о встрече создано');
+  const rem = created[0];
+  await cabinetUi.afterRender({ route: { name: 'clientReply', params: { token: rem.responseToken } }, vm });
+  ok(html('cc-root').includes('Ближайшие встречи'), 'страница /reply показывает мини-кабинет клиента');
+  ok(html('cc-root').includes('Подтвердите встречу'), 'страница /reply показывает подтверждение встречи');
+  ok(html('cc-root').includes('Дыхательная практика'), 'в кабинете клиента видны материалы психолога');
+  const answered = reminderService.respond(rem.responseToken, 'confirmed');
+  ok(answered.ok === true, 'старый механизм ответа на напоминание не сломан');
+  const after = cabinetUi.afterRender({ route: { name: 'clientReply', params: { token: rem.responseToken } }, vm });
+  await after;
+  ok(html('cc-root').includes('уже подтвердили') || html('cc-root').includes('Ближайшие встречи'), 'после ответа кабинет перерисовывается без ошибок');
+}
 
 console.log('\n10. Разметка index.html под новые блоки');
 {
