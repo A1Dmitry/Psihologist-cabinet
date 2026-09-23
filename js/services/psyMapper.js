@@ -24,7 +24,10 @@ function listValue(raw) {
 function officialSocials(row, socials) {
   const source = String(value(row, 'source_url', 'sourceUrl', value(row, 'website', 'website', ''))).toLowerCase();
   const name = String(value(row, 'full_name', 'fullName', '')).toLowerCase().replaceAll('ё', 'е');
-  const isNatalia = name.includes('наталия михайловская') && source.includes('nataliamikhailouskaya.by');
+  // The legacy public_profiles view may omit source_url; the full name is
+  // sufficient here because this fallback is only for the known official profile.
+  const isNatalia = name.includes('наталия михайловская')
+    && (!source || source.includes('nataliamikhailouskaya.by'));
   if (!isNatalia) return socials;
   const result = [...socials];
   if (!result.some(item => item?.kind === 'telegram' && item?.url)) {
