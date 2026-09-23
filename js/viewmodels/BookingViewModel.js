@@ -166,21 +166,25 @@ export class BookingViewModel extends BaseViewModel {
     return b ? (b.title || 'Закрыто') : null;
   }
 
-  get slots() {
-    paymentService.expireStaleHolds(this.psychologist?.id);
-    const times = this.settings?.slotTimes || ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
-    const busy = new Set(this.remoteBusy[this.date] || []);
+  /** Занятые слоты на дату: сессии/холды/переносы + удалённый free/busy */
+  _busySetFor(date) {
+    const busy = new Set(this.remoteBusy[date] || []);
     db.sessions.forEach(s => {
       if (s.psychologistId !== this.psychologist?.id) return;
       if (['cancelled', 'expired', 'no_show'].includes(s.status)) return;
       if (s.status === 'held' && s.holdExpiresAt && new Date(s.holdExpiresAt) < new Date()) return;
-      // текущий слот
-      if (s.date === this.date) busy.add(s.time);
-      // предложенный перенос ещё не подтверждён — резервируем новое время
-      if (s.pendingChange && s.changeConsentStatus === 'pending' && s.pendingChange.date === this.date) {
+      if (s.date === date) busy.add(s.time);
+      if (s.pendingChange && s.changeConsentStatus === 'pending' && s.pendingChange.date === date) {
         busy.add(s.pendingChange.time);
       }
     });
+    return busy;
+  }
+
+  get slots() {
+    paymentService.expireStaleHolds(this.psychologist?.id);
+    const times = this.settings?.slotTimes || ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
+    const busy = this._busySetFor(this.date);
     // блокировки занятости: выходной, занят, отпуск… (локальные + с сервера)
     const blocks = [
       ...db.blocksOf(this.psychologist?.id),
@@ -190,6 +194,24 @@ export class BookingViewModel extends BaseViewModel {
       time: t,
       busy: busy.has(t) || blocks.some(b => blockCovers(b, this.date, t))
     }));
+  }
+
+  /** Сколько свободных окон в диапазоне N дней (счётчики на табах периода, как у ОКОН) */
+  freeCountInRange(days) {
+    paymentService.expireStaleHolds(this.psychologist?.id);
+    const times = this.settings?.slotTimes || ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
+    const workDays = this.settings?.workDays || [1, 2, 3, 4, 5];
+    const blocks = [...db.blocksOf(this.psychologist?.id), ...this.remoteBlocks];
+    let count = 0;
+    for (let i = 0; i < days; i++) {
+      const date = addDays(i);
+      if (!workDays.includes(((new Date(date + 'T12:00:00').getDay() + 6) % 7) + 1)) continue;
+      const busy = this._busySetFor(date);
+      for (const t of times) {
+        if (!busy.has(t) && !blocks.some(b => blockCovers(b, date, t))) count++;
+      }
+    }
+    return count;
   }
 
   _refreshPaymentInfo() {

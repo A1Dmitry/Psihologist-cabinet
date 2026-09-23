@@ -1253,9 +1253,10 @@ function renderBooking() {
 
   const rangeBox = $('#book-range');
   if (rangeBox) {
-    rangeBox.innerHTML = bookingVm.dateRangeOptions.map(o => `
-      <button type="button" data-range="${o.id}" class="px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap ${bookingVm.dateRange === o.id ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}">${o.label}</button>
-    `).join('');
+    rangeBox.innerHTML = bookingVm.dateRangeOptions.map(o => {
+      const free = bookingVm.freeCountInRange(o.days);
+      return `<button type="button" data-range="${o.id}" class="px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap ${bookingVm.dateRange === o.id ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}">${o.label}${free ? ` · ${free}` : ''}</button>`;
+    }).join('');
     rangeBox.querySelectorAll('button').forEach(btn => {
       btn.onclick = () => { bookingVm.setDateRange(btn.dataset.range); renderBooking(); };
     });

@@ -27,6 +27,7 @@ chmod +x serve.sh && ./serve.sh  # простой статический сер�
 - `supabase/schema.sql` — DDL БД + RLS (аноним видит только публичное; клиенты — только владельцу; запись через RPC)
 - `supabase/seed.sql` — референс-данные профиля с сайта nataliamikhailouskaya.by
 - `docs/DATA-MODEL.md` — модель данных сайта, сверка и маппинг в БД
+- `docs/ROADMAP-OKNA.md` — роадмап: сверка функций с okna.one и бэклог задач (T-01…T-25)
 - `devserver.py` — локальный сервер со SPA-fallback (глубокие ссылки `/psy/{slug}`)
 - `verify_pages.py` — смоук-проверка маршрутов (локально или GitHub Pages)
 
