@@ -25,6 +25,7 @@ CHECKS = [
     ('/index.html', 200, 'ПсихоПортал'),
     ('/js/app.js', 200, 'import'),
     ('/js/core/dbContext.js', 200, 'export'),
+    ('/css/tailwind.css', 200, '--tw-'),       # сборка Tailwind (не runtime CDN)
     (f'/psy/{SLUG}', 200, 'js/app.js'),          # страница специалиста (SPA-fallback)
     (f'/book/{SLUG}', 200, 'js/app.js'),         # страница записи (SPA-fallback)
     ('/cabinet', 200, 'ПсихоПортал'),

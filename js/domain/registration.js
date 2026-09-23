@@ -106,8 +106,10 @@ export function friendlyAuthError(ex) {
  * Шаг 1. Запросить одноразовый код.
  * Решение о канале принимается ЗДЕСЬ и один раз: основной канал — Edge Function
  * auth-code (код живёт в БД, письмо через Resend); если функция не задеплоена
- * (404) — запасной канал встроенной почты Supabase Auth. Любой другой отказ
- * основного канала — честная ошибка, без тихого переключения.
+ * (404) или недоступна на уровне сети (status=0: браузер маскирует отсутствие
+ * функции под CORS-ошибку preflight) — запасной канал встроенной почты
+ * Supabase Auth. Любой другой отказ основного канала (задеплоена, но ответила
+ * ошибкой: 429/500/502…) — честная ошибка, без тихого переключения.
  */
 export async function requestVerification(email) {
   const e = normalizeEmail(email);
@@ -118,7 +120,7 @@ export async function requestVerification(email) {
   try {
     await supabaseApi.requestLoginCode(e);
   } catch (ex) {
-    if (ex?.status !== 404) {
+    if (ex?.status !== 404 && ex?.status !== 0) {
       return {
         ok: false,
         message: ex?.message ? `Не удалось отправить код: ${ex.message}` : friendlyAuthError(ex)

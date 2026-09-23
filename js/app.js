@@ -914,36 +914,38 @@ function renderVaultPanel() {
   if (!box) return;
   const p = cabinetVm.psychologist;
   if (!p) { box.innerHTML = ''; return; }
+  // Пароль сейфа вводится в настоящей <form> (Enter отправляет, нет DOM-ворнинга
+  // «Password field is not contained in a form»), novalidate — валидирует сервис.
   if (!p.keyVerifier) {
     box.innerHTML = `<div class="mb-6 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm">
       <div class="font-medium text-amber-900 mb-1">Сейф клиентов не настроен</div>
       <p class="text-amber-800 mb-2">Задайте пароль — из него выводится ключ шифрования карточек клиентов (пароль не хранится).</p>
-      <div class="flex flex-wrap gap-2"><input id="vault-pass" type="password" placeholder="Пароль (мин. 6)" class="flex-1 min-w-[180px] px-3 py-2 rounded-xl border"><button id="btn-vault-init" class="px-4 py-2 rounded-full bg-amber-600 text-white text-sm font-medium">Задать и открыть</button></div>
+      <form class="flex flex-wrap gap-2" novalidate><input id="vault-pass" type="password" autocomplete="new-password" placeholder="Пароль (мин. 6)" class="flex-1 min-w-[180px] px-3 py-2 rounded-xl border"><button id="btn-vault-init" type="submit" class="px-4 py-2 rounded-full bg-amber-600 text-white text-sm font-medium">Задать и открыть</button></form>
     </div>`;
   } else if (!authService.isVaultUnlocked()) {
     box.innerHTML = `<div class="mb-6 rounded-xl border p-4 text-sm">
       <div class="font-medium mb-1">🔒 Сейф клиентов закрыт</div>
-      <div class="flex flex-wrap gap-2"><input id="vault-pass" type="password" placeholder="Пароль сейфа" class="flex-1 min-w-[180px] px-3 py-2 rounded-xl border"><button id="btn-vault-unlock" class="px-4 py-2 rounded-full bg-slate-900 text-white text-sm font-medium">Открыть</button></div>
+      <form class="flex flex-wrap gap-2" novalidate><input id="vault-pass" type="password" autocomplete="current-password" placeholder="Пароль сейфа" class="flex-1 min-w-[180px] px-3 py-2 rounded-xl border"><button id="btn-vault-unlock" type="submit" class="px-4 py-2 rounded-full bg-slate-900 text-white text-sm font-medium">Открыть</button></form>
     </div>`;
   } else {
     box.innerHTML = '<div class="mb-6 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">🔓 Сейф открыт — карточки клиентов расшифрованы</div>';
     return;
   }
-  const init = $('#btn-vault-init');
-  if (init) init.onclick = async () => {
+  $('#btn-vault-init')?.closest('form')?.addEventListener('submit', async e => {
+    e.preventDefault();
     const r = await authService.initVaultPassword(p.id, $('#vault-pass')?.value);
     showToast(r.message, !r.ok);
     if (r.ok) {
       supabaseSync.pushProfile(p); // key_verifier → сервер (владелец, по своей сессии)
       renderCabClients();
     }
-  };
-  const unl = $('#btn-vault-unlock');
-  if (unl) unl.onclick = async () => {
+  });
+  $('#btn-vault-unlock')?.closest('form')?.addEventListener('submit', async e => {
+    e.preventDefault();
     const r = await authService.unlockVault(p.id, $('#vault-pass')?.value);
     showToast(r.message, !r.ok);
     if (r.ok) renderCabClients();
-  };
+  });
 }
 
 // ——— Карточка клиента: сессии + записи (журнал работы) ———
@@ -1906,14 +1908,16 @@ function bindEvents() {
     renderPortal();
   });
 
-  // Auth
+  // Auth. Шаги входа — настоящие <form> (Enter отправляет, менеджеры паролей
+  // видят форму), логика та же, что была у кнопок: слушаем submit, а не click.
   $$('[data-auth-mode]').forEach(btn => {
     btn.addEventListener('click', () => {
       authVm.setMode(btn.dataset.authMode);
       renderAuth();
     });
   });
-  $('#auth-send')?.addEventListener('click', async () => {
+  $('#auth-step-email')?.addEventListener('submit', async e => {
+    e.preventDefault();
     authVm.email = $('#auth-email')?.value || '';
     collectAuthRegFields();
     await authVm.requestCode();
@@ -1924,7 +1928,8 @@ function bindEvents() {
     await authVm.requestCode();
     renderAuth();
   });
-  $('#auth-confirm')?.addEventListener('click', async () => {
+  $('#auth-step-code')?.addEventListener('submit', async e => {
+    e.preventDefault();
     authVm.email = $('#auth-email')?.value || authVm.email;
     authVm.code = $('#auth-code')?.value || '';
     authVm.password = $('#auth-password')?.value || '';

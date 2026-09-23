@@ -75,6 +75,7 @@ const dbState = {
   psychologists: new Map(),// id -> row
   codes: new Map(),        // email -> { code, expiresAt, used, attempts }
   fnDeployed: true,
+  fnThrows: false,       // функция есть, но сеть/CORS: fetch бросает TypeError
   mailConfigured: true,
   rpcFails: false,
   issuedCode: null,
@@ -123,6 +124,7 @@ globalThis.fetch = async (url, opts = {}) => {
   // —— Edge Function auth-code ——
   if (u.includes('/functions/v1/auth-code')) {
     if (!dbState.fnDeployed) return resp(404, { msg: 'Function not found' });
+    if (dbState.fnThrows) throw new TypeError('Failed to fetch'); // CORS-маскировка 404
     if (body.action === 'request') {
       if (!dbState.mailConfigured) {
         return resp(500, { ok: false, error: 'Почта не настроена: задайте секрет RESEND_API_KEY (supabase secrets set RESEND_API_KEY=re_...)' });
@@ -406,6 +408,18 @@ check('нет Edge Function: вход через запасной канал в�
 check('нет Edge Function: профиль создан тем же use case (owner_id задан)',
   [...dbState.psychologists.values()].find(p => p.email === 'fallback@example.by')?.owner_id === fallbackLogin.ownerId);
 dbState.fnDeployed = true;
+
+// функция не задеплоена, но браузер вместо 404 показывает CORS-ошибку
+// (preflight OPTIONS получает 404 без CORS-заголовков → fetch бросает TypeError
+// без статуса) — запасной канал обязан включаться и в этом случае
+const cors = await loadFreshModules();
+dbState.fnThrows = true;
+const corsRes = await cors.registration.requestVerification('cors@example.by');
+check('CORS вместо 404: включён запасной канал Supabase OTP',
+  corsRes.ok === true && corsRes.channel === 'otp', JSON.stringify(corsRes));
+const corsLogin = await cors.registration.completeVerification('cors@example.by', dbState.issuedCode, PROFILE);
+check('CORS вместо 404: вход через запасной канал выполнен', corsLogin.ok === true, corsLogin.message || '');
+dbState.fnThrows = false;
 
 const noMail = await loadFreshModules();
 dbState.mailConfigured = false;

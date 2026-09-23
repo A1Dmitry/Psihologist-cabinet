@@ -24,7 +24,7 @@
 | 5 | Edge Function `telegram-notify` | ⏳ задеплоить | то же |
 | 6 | Секрет `RESEND_API_KEY` | ⛔ блокер на владельце | нужен аккаунт Resend + **верифицированный домен** (иначе письма уходят только владельцу аккаунта Resend — блокирует T-15) |
 | 7 | Секрет `MAIL_FROM` | ⏳ после домена | напр. `PsyПортал <login@ваш-домен>`; без домена — `onboarding@resend.dev` (только на email владельца Resend) |
-| 8 | GitHub Pages CI | ✅ готов | сборка `_site`, `%BASE%`, статические маршруты (200 для deep-links), `404.html`-fallback, post-deploy смоук |
+| 8 | GitHub Pages CI | ✅ готов (исправлено 2026-09-23) | сборка `_site`, `%BASE%`, статические маршруты (200 для deep-links), `404.html`-fallback, post-deploy смоук. ⚠️ 2026-09-23: PR #9 случайно склеил строки в YAML (`- name: … run: |` в одну строку) — деплой молча падал (0s, workflow file issue), сайт показывал устаревшую сборку PR #6. Проверка YAML теперь часть смоука: `npx js-yaml .github/workflows/*.yml` |
 | 9 | Логирование ошибок фронтенда | ✅ код готов | `js/services/errorLogService.js` → `client_error_logs` (после применения п.2) |
 | 10 | Кастомный домен | ⚪ опционально | инструкция ниже |
 
@@ -66,6 +66,18 @@
      supabase functions deploy telegram-notify --project-ref phiavtroybgwyjdhqqkh --no-verify-jwt
      ```
      (`verify_jwt=false` зашит и в `supabase/config.toml` — флаг дублирует его на случай старого CLI.)
+
+   > **Симптом «функция не задеплоена» в браузере — CORS-ошибка, а не 404.**
+   > Preflight-запрос OPTIONS к несуществующей функции получает 404 БЕЗ
+   > CORS-заголовков, поэтому консоль показывает
+   > `blocked by CORS policy: Response to preflight request doesn't pass access
+   > control check: It does not have HTTP ok status`, а `fetch` бросает
+   > `TypeError: Failed to fetch`. Проверить напрямую:
+   > `curl -i https://phiavtroybgwyjdhqqkh.supabase.co/functions/v1/auth-code`
+   > → `{"code":"NOT_FOUND","message":"Requested function was not found"}`.
+   > Фронтенд в этом случае автоматически переключается на запасной канал
+   > (встроенная почта Supabase OTP), пункт «Диагностика сервера» → «Edge
+   > Function auth-code» подсвечивает проблему красным.
 6. **Открыть сайт** → нажать «Диагностика сервера» на странице входа — все пункты
    должны быть зелёными; бейдж «Данные: сервер». Проверить «Получить код» —
    письмо приходит на подставленный email, вход открывает кабинет.
