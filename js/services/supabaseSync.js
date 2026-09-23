@@ -99,15 +99,13 @@ export const supabaseSync = {
       return { ok: false, message: 'В Supabase нет психологов — выполните seed.sql' };
     }
 
-    // заменяем локальных психологов данными с сервера
-    const remoteIds = new Set(rows.map(r => r.id));
-    db.psychologists = db.psychologists.filter(p => !remoteIds.has(p.id));
-    for (const r of rows) {
-      const existing = db.psychologists.findIndex(p => p.id === r.id || p.email === r.email);
-      const mapped = mapPsy(r);
-      if (existing >= 0) db.psychologists[existing] = mapped;
-      else db.psychologists.push(mapped);
-    }
+    // Серверный каталог полностью заменяет локальный seed-каталог.
+    // Это не merge: локальные демо-записи не должны попадать в публичный список.
+    db.psychologists = rows.map(mapPsy);
+    db.services = [];
+    db.clients = [];
+    db.sessions = [];
+    db.settings = [];
 
     // услуги, клиенты, сессии, настройки по каждому
     for (const r of rows) {

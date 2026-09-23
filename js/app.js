@@ -1043,15 +1043,35 @@ function openServiceModal() {
 // ——— Boot ———
 function boot() {
   bindEvents();
-  const params = new URLSearchParams(location.search);
-  const book = params.get('book');
-  if (book) {
-    navigate('booking', { slug: book });
-  } else if (authService.isAuthenticated() && params.get('cabinet') === '1') {
-    navigate('cabinet');
-  } else {
-    navigate('portal');
-  }
+  (async () => {
+    if (!isSupabaseConfigured()) {
+      db.psychologists = [];
+      db.services = [];
+      showToast('Серверная БД не настроена — каталог не загружен', true);
+    } else {
+      try {
+        const result = await supabaseSync.pullAll();
+        if (!result.ok) throw new Error(result.message || 'Не удалось загрузить каталог с сервера');
+        console.info('[Supabase] server catalog loaded', result.message);
+      } catch (e) {
+        // Fail closed: не показываем устаревший локальный seed как будто это серверные данные.
+        db.psychologists = [];
+        db.services = [];
+        console.error('[Supabase] initial catalog load failed', e);
+        showToast('Не удалось загрузить каталог с сервера', true);
+      }
+    }
+
+    const params = new URLSearchParams(location.search);
+    const book = params.get('book');
+    if (book) {
+      navigate('booking', { slug: book });
+    } else if (authService.isAuthenticated() && params.get('cabinet') === '1') {
+      navigate('cabinet');
+    } else {
+      navigate('portal');
+    }
+  })();
 }
 
 boot();
