@@ -418,10 +418,17 @@ try {
   await import('../js/app.js');
   console.log('  ✅ IMPORT OK');
   pass++;
-  for (const fn of listeners['DOMContentLoaded'] || []) { try { fn(); } catch (e) { console.log('  BOOT ERROR:', e.message); } }
-  for (const fn of listeners['w:load'] || []) { try { fn(); } catch (e) { console.log('  LOAD ERROR:', e.message); } }
-  console.log('  ✅ BOOT RAN');
-  pass++;
+  let bootFailed = 0;
+  for (const fn of listeners['DOMContentLoaded'] || []) {
+    try { fn(); }
+    catch (e) { bootFailed++; console.log('  BOOT ERROR:', e.message); }
+  }
+  for (const fn of listeners['w:load'] || []) {
+    try { fn(); }
+    catch (e) { bootFailed++; console.log('  LOAD ERROR:', e.message); }
+  }
+  if (bootFailed) { fail += bootFailed; }
+  else { console.log('  ✅ BOOT RAN'); pass++; }
 } catch (e) {
   fail++;
   console.log('  ❌ IMPORT/LINK ERROR:', e.constructor.name + ':', e.message);

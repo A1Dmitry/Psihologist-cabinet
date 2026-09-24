@@ -46,8 +46,18 @@ await finishSuite(failed.length);
 
 - `tests/harness-guard.mjs` (часть `npm run verify`) статически требует:
   finishSuite в DB-наборах, отсутствие `.unref` и `= failed ?`,
-  детерминированный выход каждого `tests/*.mjs`, регистрацию каждого
-  набора в `verify_all.mjs`.
+  детерминированный выход **каждого набора из SUITES** (не только `tests/`),
+  регистрацию каждого `tests/*.mjs` в `verify_all.mjs`.
+- Негативные контроли в том же guard: скелет со stray async-крахом и
+  `verify_app` против битого импорта/boot обязаны выйти ≠0.
+- `finishSuite(failedCount)` выходит ненулевым, если `failedCount > 0`
+  **или** обработчик уже выставил `process.exitCode` (канал A).
+- `verify_app.mjs`: IMPORT/LINK ERROR и BOOT/LOAD ERROR → `process.exit(1)`
+  (канал B). Шов `VERIFY_APP_ENTRY` — только для негативного контроля.
+- `tools/verify_all.mjs`: набор красный при ненулевом коде **или** строках
+  `FAIL` / `❌` / `BOOT ERROR` / `LOAD ERROR` / `IMPORT/LINK ERROR` в выводе
+  (defence-in-depth). Голое `ERROR:` не матчится: Postgres пишет его в
+  ожидаемых RLS-пробах.
 
 ## 5. Приёмка нового DB-набора (обязательно)
 

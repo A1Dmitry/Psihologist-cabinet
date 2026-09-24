@@ -70,10 +70,17 @@ for (const [title, cmd, args] of SUITES) {
   const { code, out } = await run(cmd, args);
   const lines = out.split('\n').filter(Boolean);
   const passed = lines.filter(l => /^(PASS|  ✅)/.test(l)).length;
-  const failedLines = lines.filter(l => /^(FAIL|  ❌)/.test(l));
+  // Defence-in-depth (#36): exit 0 не должен зеленеть набор, который сам
+  // напечатал FAIL / ❌ / BOOT|LOAD|IMPORT ERROR. Нельзя матчить голое
+  // `ERROR:` — Postgres пишет `ERROR: permission denied` в ожидаемых RLS-пробах,
+  // а PASS-строки guard содержат слово ERROR в названии проверки.
+  const failedLines = lines.filter(l =>
+    /^(FAIL\b|  ❌)/.test(l) ||
+    /(^|\s)(BOOT ERROR|LOAD ERROR|IMPORT\/LINK ERROR):/.test(l)
+  );
   process.stdout.write(lines.map(l => '   ' + l).join('\n') + '\n');
   const file = args[args.length - 1];
-  report.push({ title, file, ok: code === 0, passed, failedLines });
+  report.push({ title, file, ok: code === 0 && failedLines.length === 0, passed, failedLines });
 }
 
 process.stdout.write('\n════════ ИТОГ ════════\n');
