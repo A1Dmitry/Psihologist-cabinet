@@ -318,6 +318,43 @@
   `BookingViewModel.remoteBusy` хранит `{date: {time: durationMin}}`. В проде — вместе с
   переприменением `schema.sql`.
 
+### SR-004 — `auth_login_codes`: атомарное погашение кода и восстановление сессии
+- **От:** работа по issue #14 (п.4 «OTP CONSUMPTION ATOMICITY»)
+- **Дата:** 2026-09-23
+- **Что нужно:**
+  - `auth_login_codes.issued_token_hash text null` — состояние выпуска сессии:
+    `null` — код ещё не выпускался; случайный uuid — строка захвачена одним
+    запросом (условный UPDATE = compare-and-swap); SHA-256(hashed_token) —
+    токен выпущен, браузер его ещё не обменял;
+  - `auth_login_codes.issues integer not null default 1` — сколько раз по этому
+    коду выпускалась сессия (лимит 3 в Edge Function);
+  - `auth_login_codes.consumed_at timestamptz null` — браузер получил JWT:
+    перевыпуск (`action=recover`) закрывается навсегда.
+- **Куда:** `supabase/schema.sql` → блок `auth_login_codes`
+  (`alter table … add column if not exists`); потребитель — Edge Function
+  `supabase/functions/auth-code/index.ts` (actions `verify` / `recover` / `redeem`).
+- **Зачем:** раньше функция ставила `used_at` **до** `admin/generate_link`.
+  Временный отказ Supabase Auth сжигал верный код: пользователь оставался и без
+  кода, и без сессии, регистрация терялась безвозвратно. Теперь порядок
+  «захват → сессия → погашение», при отказе Auth — компенсация (код можно ввести
+  снова), а одноразовость и защита от replay сохранены (`used_at` + `consumed_at`
+  + лимит `issues`).
+- **Миграция:** три `add column if not exists` — идемпотентно, backfill не нужен
+  (`issues` по умолчанию 1 = «выпущен один раз», для старых строк не важно:
+  они либо погашены, либо уже истекли).
+- **Обратная совместимость:** Edge Function обнаруживает отсутствие колонок
+  (PostgREST 42703/PGRST204) и работает по прежнему порядку с компенсацией,
+  помечая ответ `legacy_schema: true` и не возвращая `code_id`. Вход при этом
+  не блокируется, но атомарный захват и `recover` недоступны — пункт
+  «Схема auth_login_codes (SR-004)» в клиентской «Диагностике сервера»
+  показывает это красным.
+- **Приоритет:** высокий (вместе с переприменением `schema.sql`, п.2 `docs/INFRA.md`).
+- **Статус:** `applied` в репозитории 2026-09-23 (issue #14). Проверено на реальном
+  PostgreSQL 18.4: `node tests/db-contract.mjs` → 47 PASS, из них 3 проверки
+  «SR-004: атомарность погашения кода» (наличие всех трёх колонок).
+  **В проде требует переприменения `schema.sql`** — до этого функция остаётся
+  в legacy-режиме.
+
 ### Не заявки (рекомендации Агенту 1, без изменения схемы)
 1. **sitemap.xml:** CI генерирует `/psy/{slug}`, но не `/book/{slug}`, хотя Pages отдаёт оба маршрута с HTTP 200. Предлагаю добавить `/book/{slug}` в sitemap (или, наоборот, поставить на `/book/{slug}` canonical → `/psy/{slug}` — тогда в sitemap они не нужны). Сейчас canonical на странице записи — собственный.
 2. **Перерисовка после загрузки каталога:** в `loadServerCatalog()`/`enableDemoData()` заменены вызовы `renderPortal()` на `render()` — иначе глубокие ссылки `/psy/{slug}` и `/book/{slug}` после загрузки каталога оставались на экране «не найдено» (исправлено Агентом 2, точечно, с комментарием).

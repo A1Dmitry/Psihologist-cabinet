@@ -187,7 +187,12 @@ ok('block POST на сервер', calls.some(u => u.includes('/rest/v1/schedule
 
 // —— фолбэк type: magiclink отклонён → signup принят (новый пользователь) ——
 authService.logout();
-authVm.step = 'code'; authVm.email = 'new@x.by'; authVm.code = '222222';
+authVm.step = 'email'; authVm.error = ''; authVm.email = 'new@x.by'; authVm.code = '';
+// код обязателен до шага ввода: канал доставки фиксируется в ожидании
+// (safeStorage) и переживает перезагрузку — см. domain/registration
+r = await authVm.requestCode();
+ok('otp: код запрошен до шага ввода', r === true && authVm.step === 'code');
+authVm.code = '222222';
 state.verifyTypes = [];
 const psy2 = await authVm.confirmCode();
 ok('verify fallback signup → psychologist', !!psy2 && psy2.id === 'psy_test_1');

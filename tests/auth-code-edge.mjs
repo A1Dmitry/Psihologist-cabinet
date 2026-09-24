@@ -9,7 +9,9 @@
  *
  * Подменяемое окружение моделирует PostgREST-таблицу auth_login_codes и
  * Supabase Auth Admin API, поэтому тест ловит именно ошибки обработчика,
- * а не ошибки фейка.
+ * а не ошибки фейка. PostgREST-фейк понимает условные UPDATE
+ * (Prefer: return=representation + фильтры в query-строке) — именно на них
+ * держится атомарный захват кода (issue #14, п.4).
  *
  * Запуск: node tests/auth-code-edge.mjs   (или: npm run verify:authcode)
  */
@@ -37,16 +39,18 @@ const truthy = (v, m) => assert.ok(v, m);
 /** Состояние «БД» и «Auth» + журнал исходящих запросов. */
 let state;
 
+/** Колонки SR-004: без них атомарный захват и recover невозможны. */
+const SR004_COLUMNS = ['issued_token_hash', 'issues', 'consumed_at'];
+
 /**
- * Промотать время вперёд. Обработчик сравнивает `created_at` с настоящим
- * `Date.now()`, подменять который здесь незачем: достаточно сдвинуть отметки
- * существующих строк в прошлое на ту же величину.
+ * Промотать время вперёд: сдвигаем отметки существующих строк в прошлое на ту
+ * же величину (обработчик сравнивает их с настоящим Date.now()).
  */
 function advanceTime(ms) {
   const shift = new Date(Date.now() - ms).toISOString();
   for (const row of state.codes) {
     row.created_at = shift;
-    row.expires_at = new Date(new Date(row.expires_at).getTime() - 0).toISOString();
+    row.expires_at = new Date(new Date(row.expires_at).getTime() - ms).toISOString();
   }
 }
 let sentMail;
@@ -56,17 +60,43 @@ function sha256Hex(s) {
   return createHash('sha256').update(s, 'utf8').digest('hex');
 }
 
+/** Фильтры PostgREST, которые реально использует функция. */
+function matchFilter(row, key, op, value) {
+  const v = row[key];
+  switch (op) {
+    case 'eq': return String(v) === value;
+    case 'gt': return new Date(v).getTime() > new Date(value).getTime();
+    case 'lt': return new Date(v).getTime() < new Date(value).getTime();
+    case 'is': return value === 'null' ? v === null || v === undefined : String(v) === value;
+    default: throw new Error(`фейк PostgREST не знает оператор ${op}`);
+  }
+}
+
+function parseFilters(qs) {
+  const params = new URLSearchParams(qs);
+  const filters = [];
+  for (const [key, raw] of params.entries()) {
+    if (['order', 'limit', 'select', 'offset'].includes(key)) continue;
+    const dot = raw.indexOf('.');
+    filters.push({ key, op: raw.slice(0, dot), value: raw.slice(dot + 1) });
+  }
+  return { filters, params };
+}
+
 /**
  * Минимальный PostgREST-фейк для таблицы auth_login_codes + Auth Admin API.
  * Поддерживает ровно те запросы, которые делает функция: SELECT с фильтром
- * email/order/limit, DELETE по email, POST строки, PATCH по id.
+ * email/order/limit, DELETE по email, POST строки, условный PATCH по id
+ * (с Prefer: return=representation) и ошибки «колонка не найдена», если
+ * схема БД не переприменена (legacySchema).
  */
-function makeFetch({ mailOk = true, mailStatus = 200, linkFails = false } = {}) {
+function makeFetch({ mailOk = true, mailStatus = 200, linkFails = false, legacySchema = false } = {}) {
   return async function fakeFetch(url, init = {}) {
     const u = String(url);
     const method = (init.method || 'GET').toUpperCase();
     const body = init.body ? JSON.parse(init.body) : null;
-    logs.push({ url: u, method, body });
+    const prefer = String(init.headers?.Prefer || '');
+    logs.push({ url: u, method, body, prefer });
 
     if (u.startsWith('https://api.resend.com/emails')) {
       sentMail.push(body);
@@ -97,20 +127,21 @@ function makeFetch({ mailOk = true, mailStatus = 200, linkFails = false } = {}) 
     if (!isTable) return new Response('{}', { status: 404 });
 
     const qs = u.split('?')[1] || '';
-    const params = new URLSearchParams(qs);
-    const emailFilter = params.get('email'); // 'eq.who@x.y'
-    const idFilter = params.get('id');       // 'eq.<id>'
+    const { filters, params } = parseFilters(qs);
+    const matches = (row) => filters.every(f => matchFilter(row, f.key, f.op, f.value));
+    const limit = params.get('limit');
 
     if (method === 'GET') {
-      let rows = state.codes.filter(r => (emailFilter ? r.email === emailFilter.slice(3) : true));
-      rows = rows.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-      const limit = params.get('limit');
+      let rows = state.codes.filter(matches);
+      if (filters.some(f => f.key === 'order') || /order=created_at\.desc/.test(qs)) {
+        rows = rows.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      }
       if (limit) rows = rows.slice(0, Number(limit));
       return Response.json(rows);
     }
     if (method === 'DELETE') {
       const before = state.codes.length;
-      state.codes = state.codes.filter(r => (emailFilter ? r.email !== emailFilter.slice(3) : true));
+      state.codes = state.codes.filter(r => !matches(r));
       return new Response(null, { status: 204, headers: { 'content-range': `0-${before - 1}/${before}` } });
     }
     if (method === 'POST') {
@@ -121,14 +152,27 @@ function makeFetch({ mailOk = true, mailStatus = 200, linkFails = false } = {}) 
         expires_at: body.expires_at,
         created_at: new Date(state.clock).toISOString(),
         used_at: null,
-        attempts: 0
+        attempts: 0,
+        issued_token_hash: null,
+        issues: 1,
+        consumed_at: null
       });
       return Response.json([{ id: 'code_' + state.codes.length }], { status: 201 });
     }
     if (method === 'PATCH') {
-      const row = state.codes.find(r => r.id === (idFilter || '').slice(3));
-      if (row) Object.assign(row, body);
-      return Response.json(row ? [row] : [], { status: 200 });
+      // «Схема БД устарела»: колонки SR-004 в таблице нет
+      const missing = [...Object.keys(body || {}), ...filters.map(f => f.key)]
+        .filter(k => SR004_COLUMNS.includes(k));
+      if (legacySchema && missing.length) {
+        return Response.json({
+          code: '42703',
+          message: `column auth_login_codes.${missing[0]} does not exist`
+        }, { status: 400 });
+      }
+      const rows = state.codes.filter(matches);
+      for (const row of rows) Object.assign(row, body);
+      if (prefer.includes('return=representation')) return Response.json(rows, { status: 200 });
+      return new Response(null, { status: 204 });
     }
     return new Response('{}', { status: 405 });
   };
@@ -183,6 +227,9 @@ function freshState({ clock = Date.now(), users = new Set(['a@test.invalid']) } 
 const codeFromMail = () => /letter-spacing:6px[^>]*>([A-Z0-9]{6,8})</.exec(sentMail[0]?.html || '')?.[1]
   ?? /Код входа: ([A-Z0-9]{6,8})/.exec(sentMail[0]?.subject || '')?.[1];
 
+const codeRow = () => state.codes[0];
+const generateLinkCalls = () => logs.filter(l => l.url.includes('admin/generate_link')).length;
+
 // ——— тесты ——————————————————————————————————————————————————————————————
 
 console.log('\n── auth-code (настоящий исходник Edge Function)\n');
@@ -230,19 +277,23 @@ console.log('\n── auth-code (настоящий исходник Edge Functi
     truthy(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/.test(code), code);
   });
   ok('email нормализован (lowercase+trim) в БД и в письме', () => {
-    eq(state.codes[0].email, 'a@test.invalid');
+    eq(codeRow().email, 'a@test.invalid');
     eq(sentMail[0].to, 'a@test.invalid');
   });
   ok('в БД лежит ХЕШ, а не сам код', () => {
-    eq(state.codes[0].code_hash, sha256Hex(code + '|a@test.invalid'));
-    truthy(!JSON.stringify(state.codes[0]).includes(`"${code}"`), 'код не должен лежать в строке БД');
+    eq(codeRow().code_hash, sha256Hex(code + '|a@test.invalid'));
+    truthy(!JSON.stringify(codeRow()).includes(`"${code}"`), 'код не должен лежать в строке БД');
   });
   ok('TTL записан как now+2 мин', () => {
-    const ttl = new Date(state.codes[0].expires_at).getTime() - Date.now();
+    const ttl = new Date(codeRow().expires_at).getTime() - Date.now();
     truthy(ttl > 110e3 && ttl <= 120e3, `TTL вне окна 2 мин: ${ttl} мс`);
   });
   ok('код НЕ попадает в логи/ответ (в ответе нет кода)', () => {
     truthy(!JSON.stringify(j).includes(code), 'код утёк в ответ');
+  });
+  ok('новый код не выпущен и не израсходован (SR-004 поля чистые)', () => {
+    eq(codeRow().issued_token_hash, null);
+    eq(codeRow().consumed_at, null);
   });
 }
 
@@ -267,7 +318,7 @@ console.log('\n── auth-code (настоящий исходник Edge Functi
   freshState();
   const h = await loadHandler({ mailOk: false });
   const res = await post(h, { action: 'request', email: 'a@test.invalid' });
-  ok('Resend 422 → 502 с подсказкой', async () => eq(res.status, 502));
+  ok('Resend 422 → 502 с подсказкой', () => eq(res.status, 502));
 }
 
 // 7. Проверка кода: счастливый путь
@@ -281,7 +332,11 @@ console.log('\n── auth-code (настоящий исходник Edge Functi
   ok('verify правильным кодом (в нижнем регистре) → ok + hashed_token', () => {
     eq(res.status, 200); eq(j.ok, true); truthy(/^HASH_/.test(j.hashed_token), JSON.stringify(j));
   });
-  ok('код погашен (used_at выставлен)', () => truthy(state.codes[0].used_at, 'used_at не выставлен'));
+  ok('код погашен (used_at выставлен)', () => truthy(codeRow().used_at, 'used_at не выставлен'));
+  ok('в БД отмечен хеш выпущенного токена (recovery capability)', () => {
+    eq(codeRow().issued_token_hash, sha256Hex(j.hashed_token));
+  });
+  ok('ответ отдаёт code_id для восстановления сессии', () => eq(j.code_id, codeRow().id));
   ok('ответ НЕ содержит сам код', () => truthy(!JSON.stringify(j).includes(code)));
 }
 
@@ -309,7 +364,7 @@ console.log('\n── auth-code (настоящий исходник Edge Functi
   const j = await readJson(res);
   ok('неверный код → 400', () => eq(res.status, 400));
   ok('неверный код → attempts=1, код жив', () => {
-    eq(state.codes[0].attempts, 1); eq(state.codes[0].used_at, null);
+    eq(codeRow().attempts, 1); eq(codeRow().used_at, null);
   });
   ok('неверный код → hashed_token не выдан', () => truthy(!j.hashed_token));
 }
@@ -320,7 +375,7 @@ console.log('\n── auth-code (настоящий исходник Edge Functi
   const h = await loadHandler();
   await post(h, { action: 'request', email: 'a@test.invalid' });
   for (let i = 0; i < 5; i += 1) await post(h, { action: 'verify', email: 'a@test.invalid', code: 'ZZZZZZZZ' });
-  eq(state.codes[0].attempts, 5, 'после 5 неверных попыток attempts должен быть 5');
+  eq(codeRow().attempts, 5, 'после 5 неверных попыток attempts должен быть 5');
   const code = codeFromMail();
   const res = await post(h, { action: 'verify', email: 'a@test.invalid', code });
   const j = await readJson(res);
@@ -335,7 +390,7 @@ console.log('\n── auth-code (настоящий исходник Edge Functi
   const h = await loadHandler();
   await post(h, { action: 'request', email: 'a@test.invalid' });
   const code = codeFromMail();
-  state.codes[0].expires_at = new Date(state.clock - 1000).toISOString();
+  codeRow().expires_at = new Date(state.clock - 1000).toISOString();
   const res = await post(h, { action: 'verify', email: 'a@test.invalid', code });
   const j = await readJson(res);
   ok('просроченный код → 400 «истёк»', () => {
@@ -388,11 +443,11 @@ console.log('\n── auth-code (настоящий исходник Edge Functi
     eq(res.status, 200); eq(j.ok, true); truthy(state.users.has('new@test.invalid'));
   });
   ok('generate_link вызван дважды (до и после создания пользователя)', () => {
-    eq(logs.filter(l => l.url.includes('admin/generate_link')).length, 2);
+    eq(generateLinkCalls(), 2);
   });
 }
 
-// 16. Сессия не создалась → честная ошибка, код уже погашен
+// 16. АТОМАРНОСТЬ (issue #14, п.4): отказ Auth не сжигает верный код
 {
   freshState();
   const h = await loadHandler({ linkFails: true });
@@ -400,13 +455,167 @@ console.log('\n── auth-code (настоящий исходник Edge Functi
   const code = codeFromMail();
   const res = await post(h, { action: 'verify', email: 'a@test.invalid', code });
   const j = await readJson(res);
-  ok('generate_link не работает → 500 с объяснением', () => {
-    eq(res.status, 500); truthy(/сессия не создана/i.test(j.error), j.error);
+  ok('generate_link не работает → 502 с объяснением', () => {
+    eq(res.status, 502); truthy(/сессия не создана/i.test(j.error), j.error);
   });
   ok('при отказе сессии ok=false (клиент не увидит «успех»)', () => eq(j.ok, false));
+  ok('ОТП НЕ сожжён: used_at пуст после отказа Auth', () => eq(codeRow().used_at, null));
+  ok('захват снят: issued_token_hash снова null (компенсация)', () => eq(codeRow().issued_token_hash, null));
+  ok('сессия не выдана', () => truthy(!j.hashed_token));
 }
 
-// 17. Код не уходит в консоль
+// 16b. После компенсации тот же код принимается, когда Auth ожил
+{
+  freshState();
+  let linkFails = true;
+  const h = await loadHandler();
+  // подменяем отказ Auth «на лету»: первый verify падает, второй проходит
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('admin/generate_link') && linkFails) {
+      return Response.json({ error: 'server_error', msg: 'temporary' }, { status: 500 });
+    }
+    return realFetch(url, init);
+  };
+  await post(h, { action: 'request', email: 'a@test.invalid' });
+  const code = codeFromMail();
+  const first = await post(h, { action: 'verify', email: 'a@test.invalid', code });
+  const firstJson = await readJson(first);
+  const afterFailure = { ...codeRow() }; // снимок ДО успешного verify
+  linkFails = false;
+  const second = await post(h, { action: 'verify', email: 'a@test.invalid', code });
+  const secondJson = await readJson(second);
+  globalThis.fetch = realFetch;
+  ok('первый verify с отказом Auth → код не израсходован', () => {
+    eq(first.status, 502);
+    eq(afterFailure.used_at, null);
+    eq(afterFailure.issued_token_hash, null);
+    truthy(/не израсходован/i.test(firstJson.error), firstJson.error);
+  });
+  ok('тот же код после восстановления Auth → сессия выдана', () => {
+    eq(second.status, 200); eq(secondJson.ok, true); truthy(/^HASH_/.test(secondJson.hashed_token), JSON.stringify(secondJson));
+  });
+  ok('после успешной выдачи код погашен', () => truthy(codeRow().used_at, 'used_at не выставлен'));
+}
+
+// 17. Гонка: два параллельных verify — сессию получает ровно один
+{
+  freshState();
+  const h = await loadHandler();
+  await post(h, { action: 'request', email: 'a@test.invalid' });
+  const code = codeFromMail();
+  const [r1, r2] = await Promise.all([
+    post(h, { action: 'verify', email: 'a@test.invalid', code }),
+    post(h, { action: 'verify', email: 'a@test.invalid', code })
+  ]);
+  const [j1, j2] = [await readJson(r1), await readJson(r2)];
+  const winners = [j1, j2].filter(j => j.ok && j.hashed_token);
+  const losers = [j1, j2].filter(j => !j.ok);
+  ok('два параллельных verify → ровно один hashed_token', () => {
+    eq(winners.length, 1, JSON.stringify([j1, j2]));
+  });
+  ok('второй запрос отклонён (409) без токена', () => {
+    eq(losers.length, 1); eq(losers[0].hashed_token, undefined);
+  });
+  ok('гонка: сессия в Auth создана один раз', () => eq(generateLinkCalls(), 1));
+  ok('гонка: код погашен один раз', () => {
+    truthy(codeRow().used_at);
+    eq(codeRow().issues, 2, 'issues = захват(1) + выпуск(1)');
+  });
+}
+
+// 18. Recover: сессия потеряна в сети → перевыпуск по code_id
+{
+  freshState();
+  const h = await loadHandler();
+  await post(h, { action: 'request', email: 'a@test.invalid' });
+  const code = codeFromMail();
+  const verified = await readJson(await post(h, { action: 'verify', email: 'a@test.invalid', code }));
+  const rec = await post(h, { action: 'recover', email: 'a@test.invalid', code_id: verified.code_id });
+  const j = await readJson(rec);
+  ok('recover по code_id → новая сессия в пределах TTL', () => {
+    eq(rec.status, 200); eq(j.ok, true); truthy(/^HASH_/.test(j.hashed_token), JSON.stringify(j));
+  });
+  ok('recover: счётчик выпусков растёт', () => eq(codeRow().issues, 3));
+  const noId = await post(h, { action: 'recover', email: 'a@test.invalid' });
+  ok('recover без code_id → 400', () => eq(noId.status, 400));
+  const wrongId = await post(h, { action: 'recover', email: 'a@test.invalid', code_id: 'code_999' });
+  ok('recover с чужим code_id → 400', () => eq(wrongId.status, 400));
+  codeRow().expires_at = new Date(Date.now() - 1000).toISOString();
+  const ttlGone = await readJson(await post(h, { action: 'recover', email: 'a@test.invalid', code_id: verified.code_id }));
+  ok('recover после истечения TTL → 400 «истекло»', () => {
+    eq(ttlGone.ok, false); truthy(/истекло|истёк/i.test(ttlGone.error), ttlGone.error);
+  });
+}
+
+// 19. Redeem: браузер получил JWT → перевыпуск закрыт (replay protection)
+{
+  freshState();
+  const h = await loadHandler();
+  await post(h, { action: 'request', email: 'a@test.invalid' });
+  const code = codeFromMail();
+  const verified = await readJson(await post(h, { action: 'verify', email: 'a@test.invalid', code }));
+  const redeemed = await readJson(await post(h, {
+    action: 'redeem', email: 'a@test.invalid', code_id: verified.code_id, hashed_token: verified.hashed_token
+  }));
+  ok('redeem своим токеном → consumed_at выставлен', () => {
+    eq(redeemed.ok, true); truthy(codeRow().consumed_at, 'consumed_at не выставлен');
+  });
+  codeRow().consumed_at = null;
+  const evil = await readJson(await post(h, {
+    action: 'redeem', email: 'a@test.invalid', code_id: verified.code_id, hashed_token: 'HASH_evil'
+  }));
+  ok('redeem чужим токеном → 400', () => eq(evil.ok, false));
+
+  codeRow().consumed_at = new Date().toISOString();
+  const afterRedeem = await readJson(await post(h, { action: 'recover', email: 'a@test.invalid', code_id: verified.code_id }));
+  ok('после redeem recover отказывает (один код = одна сессия)', () => {
+    eq(afterRedeem.ok, false); truthy(/использован/i.test(afterRedeem.error), afterRedeem.error);
+  });
+
+  codeRow().consumed_at = null;
+  codeRow().issued_token_hash = sha256Hex('HASH_x');
+  codeRow().issues = 3;
+  const overLimit = await readJson(await post(h, { action: 'recover', email: 'a@test.invalid', code_id: verified.code_id }));
+  ok('лимит перевыпусков: 4-й выпуск отклонён', () => {
+    eq(overLimit.ok, false); truthy(/попыток/i.test(overLimit.error), overLimit.error);
+  });
+}
+
+// 20. Устаревшая схема БД (нет колонок SR-004): вход работает, но честно
+{
+  freshState();
+  const h = await loadHandler({ legacySchema: true });
+  await post(h, { action: 'request', email: 'a@test.invalid' });
+  const code = codeFromMail();
+  const res = await post(h, { action: 'verify', email: 'a@test.invalid', code });
+  const j = await readJson(res);
+  ok('legacy: вход по-прежнему работает (регистрация не заблокирована)', () => {
+    eq(res.status, 200); eq(j.ok, true); truthy(/^HASH_/.test(j.hashed_token), JSON.stringify(j));
+  });
+  ok('legacy: код погашен (одноразовость сохранена прежним способом)', () => truthy(codeRow().used_at));
+  ok('legacy: ответ помечен и без code_id (recover недоступен)', () => {
+    eq(j.legacy_schema, true); eq(j.code_id, undefined);
+  });
+}
+
+// 20b. Устаревшая схема + отказ Auth → компенсация и подсказка про schema.sql
+{
+  freshState();
+  const h = await loadHandler({ legacySchema: true, linkFails: true });
+  await post(h, { action: 'request', email: 'a@test.invalid' });
+  const code = codeFromMail();
+  const res = await post(h, { action: 'verify', email: 'a@test.invalid', code });
+  const j = await readJson(res);
+  ok('legacy + отказ Auth → 502, код не израсходован', () => {
+    eq(res.status, 502); eq(codeRow().used_at, null); truthy(!j.hashed_token);
+  });
+  ok('legacy + отказ Auth → ошибка требует переприменить schema.sql', () => {
+    truthy(/schema\.sql/.test(j.error), j.error);
+  });
+}
+
+// 21. Код не уходит в консоль
 {
   freshState();
   const h = await loadHandler();
@@ -431,13 +640,27 @@ console.log('\n── auth-code (настоящий исходник Edge Functi
   });
 }
 
-// 18. Сервис-ключ не уходит в письмо
+// 22. Сервис-ключ не уходит в письмо
 {
   freshState();
   const h = await loadHandler();
   await post(h, { action: 'request', email: 'a@test.invalid' });
   ok('service_role ключ не попадает в тело письма', () => {
     truthy(!JSON.stringify(sentMail).includes('service_role_test'));
+  });
+}
+
+// 23. Холостая проверка схемы (диагностика клиента): recover с несуществующим code_id
+{
+  freshState();
+  const h = await loadHandler();
+  const res = await post(h, { action: 'recover', email: 'a@test.invalid', code_id: 'schema-probe' });
+  const j = await readJson(res);
+  ok('диагностика схемы: холостой recover → 400 без писем и записей', () => {
+    eq(res.status, 400);
+    eq(j.ok, false);
+    eq(sentMail.length, 0);
+    eq(state.codes.length, 0);
   });
 }
 

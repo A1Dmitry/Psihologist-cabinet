@@ -487,6 +487,9 @@ function collectAuthRegFields() {
 
 function renderAuth() {
   if (route.params.mode) authVm.setMode(route.params.mode);
+  // После перезагрузки страницы возвращаем шаг ввода кода и ТОТ ЖЕ канал
+  // доставки (ожидание хранится в safeStorage — см. domain/registration).
+  authVm.resumePendingVerification();
   const title = $('#auth-title');
   const subtitle = $('#auth-subtitle');
   const emailStep = $('#auth-step-email');

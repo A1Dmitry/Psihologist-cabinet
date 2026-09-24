@@ -135,6 +135,21 @@
 | 9 | Синхронизация ROADMAP / SCHEMA-REQUESTS / отчёт | ✅ SR-001/002/003/108 закрыты с фактическими именами; T-02/T-03/T-23 и `INFRA.md` п.2 обновлены |
 | 10 | Прогон всех verify + регрессия | ✅ `npm run verify` → 12/12; `verify_pages.py` → ALL PASS (11 маршрутов) |
 
+---
+
+## 4. Продолжение: issue #14 «Production activation + auth-flow hardening» (2026-09-23)
+
+Отчёт по циклу — `docs/ISSUE-14-REPORT.md`. Что сделано в этом цикле и чем проверено:
+
+| Шаг | Что | Статус |
+|-----|-----|--------|
+| 11 | Pending-канал переживает reload: ожидание `{email, channel, requestedAt, expiresAt}` в `safeStorage`, перебор каналов удалён, при истёкшем окне — явное «Запросите новый код» | ✅ `js/domain/registration.js`, `AuthViewModel.resumePendingVerification()`, `renderAuth()`; проверки: `tests/registration-flow.mjs` (10 проверок «reload до ввода кода» + «потерянное состояние» + «чужой email» + «истёкшее окно»), `tests/auth-ui-pending.mjs` (12 проверок) |
+| 12 | Атомарность погашения кода: захват → сессия → `used_at`, компенсация при отказе Auth, `recover`/`redeem`, SR-004 (`issued_token_hash` / `issues` / `consumed_at`) | ✅ `supabase/functions/auth-code/index.ts`, `supabase/schema.sql`; проверки: `tests/auth-code-edge.mjs` → 67 PASS (в т.ч. гонка двух параллельных verify, отказ Auth, legacy-схема), `tests/db-contract.mjs` → 47 PASS (3 из них — колонки SR-004) |
+| 13 | Диагностика SR-004 в клиенте («Диагностика сервера» → «Схема auth_login_codes») | ✅ `supabaseApi.serverDiagnostics()` + проверка холостого `recover` в `tests/auth-code-edge.mjs` |
+| 14 | Починен плавающий результат `tests/db-contract.mjs` (unhandled FATAL 57P01 при остановке PostgreSQL обрывал процесс до печати итога) | ✅ `node tools/verify_all.mjs` → 4/4 прогона зелёные, exit 0 |
+| 15 | Production E2E (новый email → письмо → код → сессия → claim → кабинет → reload) | ⛔ **ЗАБЛОКИРОВАНО**: из песочницы нет сети до `supabase.co` (TLS-рукопожатие обрывается, `curl` exit 35), почтовый ящик для приёма OTP недоступен, секреты Resend/Supabase — у владельца. См. `docs/ISSUE-14-REPORT.md`, разделы 3/5/11 |
+| 16 | Независимый Challenger-аудит другим агентом | ⛔ не выполнен: доступен один конвейер. Сделан отдельный проход «как челленджер» (поиск дублей, логирование секретов, reload/replay-сценарии) — его результаты и ограничения в `docs/ISSUE-14-REPORT.md`, раздел 9. Маркер: **АУДИТОР: САМ** |
+
 ## 3. Границы (что НЕ делаем)
 
 - Не переписываем архитектуру: MVVM, `dbContext`, `entities.js` остаются.

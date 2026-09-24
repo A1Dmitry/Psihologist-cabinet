@@ -19,6 +19,28 @@
  */
 import { startTestDatabase } from '../tools/dbtest/index.mjs';
 
+/**
+ * Гонка при остановке PostgreSQL: pg_ctl гасит сервер, а «спящий» клиент пула
+ * успевает получить FATAL 57P01 «terminating connection due to administrator
+ * command». pg.Pool пробрасывает его как unhandled 'error' — процесс падал с
+ * кодом 1 ещё ДО печати итога (плавающий результат `npm run verify`).
+ * Обработчики ставим ДО поднятия БД: событие прилетает во время db.stop().
+ * На результат проверок это не влияет — они к тому моменту все выполнены,
+ * а любая настоящая ошибка печатается и взводит ненулевой код выхода.
+ */
+let teardownNoise = false;
+const isTeardownNoise = (e) => /terminating connection|57P01/.test(String(e?.message || e));
+process.on('uncaughtException', (e) => {
+  if (isTeardownNoise(e)) { teardownNoise = true; return; }
+  console.error(e);
+  process.exitCode = 1;
+});
+process.on('unhandledRejection', (e) => {
+  if (isTeardownNoise(e)) { teardownNoise = true; return; }
+  console.error(e);
+  process.exitCode = 1;
+});
+
 const results = [];
 const check = (name, cond, extra = '') => {
   results.push([name, !!cond]);
@@ -43,6 +65,15 @@ try {
     fns.map(f => f.proname).join(', '));
   check('таблица auth_login_codes существует',
     (await db.count('auth_login_codes')) === 0);
+  // SR-004 (issue #14, п.4): без этих колонок Edge Function не может атомарно
+  // гасить код и не умеет восстанавливать сессию (action=recover).
+  const codeCols = (await db.query(
+    `select column_name from information_schema.columns where table_name = 'auth_login_codes'`
+  )).map(r => r.column_name);
+  for (const col of ['issued_token_hash', 'issues', 'consumed_at']) {
+    check(`auth_login_codes.${col} (SR-004: атомарность погашения кода)`,
+      codeCols.includes(col), codeCols.join(', '));
+  }
   check('таблица client_error_logs существует (шла в самом конце файла)',
     (await db.query(`select to_regclass('public.client_error_logs') as t`))[0].t !== null);
 
@@ -267,4 +298,6 @@ try {
 
 const failed = results.filter(r => !r[1]).length;
 console.log(failed ? `\n${failed} FAILED` : '\nALL PASS');
-process.exit(failed ? 1 : 0);
+if (teardownNoise) console.log('(шум остановки PostgreSQL проигнорирован: 57P01 на закрытии соединения)');
+process.exitCode = failed ? 1 : 0;
+setTimeout(() => process.exit(process.exitCode || 0), 200).unref?.();

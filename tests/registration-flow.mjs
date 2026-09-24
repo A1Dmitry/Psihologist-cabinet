@@ -69,6 +69,8 @@ globalThis.prompt = () => 'x';
 globalThis.FileReader = class {};
 
 /* ——— Контрактный фейк Supabase ——— */
+import { createHash } from 'node:crypto';
+
 const TTL_MS = 2 * 60e3;
 const dbState = {
   users: new Map(),        // email -> { id }
@@ -85,6 +87,8 @@ const dbState = {
 function uid() {
   return 'uid_' + Math.random().toString(36).slice(2, 10);
 }
+
+const sha256Hex = (str) => createHash('sha256').update(String(str), 'utf8').digest('hex');
 
 /** Неподписанный JWT с `sub` — подписи в фейке нет, нам нужен только auth.uid(). */
 function fakeJwt(sub) {
@@ -117,8 +121,11 @@ function resp(status, json) {
 const logLines = [];
 const realConsoleLog = console.log;
 
+const logCalls = [];
+const localStorageSnapshot = () => Object.fromEntries(lsMap.entries());
 globalThis.fetch = async (url, opts = {}) => {
   const u = String(url);
+  logCalls.push(u);
   const body = opts.body ? JSON.parse(opts.body) : {};
 
   // —— Edge Function auth-code ——
@@ -133,9 +140,13 @@ globalThis.fetch = async (url, opts = {}) => {
       dbState.issuedCode = code;
       dbState.codes.set(body.email, {
         code,
+        id: 'code_' + (dbState.codes.size + 1),
         expiresAt: dbState.clock() + TTL_MS,
         used: false,
-        attempts: 0
+        attempts: 0,
+        issuedTokenHash: null,   // SR-004: null | claimId | sha256(hashed_token)
+        issues: 1,
+        consumedAt: null         // браузер обменял токен на JWT
       });
       return resp(200, { ok: true, ttl_seconds: TTL_MS / 1000 });
     }
@@ -149,10 +160,39 @@ globalThis.fetch = async (url, opts = {}) => {
         rec.attempts++;
         return resp(400, { ok: false, error: 'Неверный код' });
       }
-      rec.used = true; // одноразовость
+      // атомарный захват: второй параллельный запрос сессию не получит
+      if (rec.issuedTokenHash !== null) {
+        return resp(409, { ok: false, error: 'Код уже используется другим запросом — запросите новый' });
+      }
       if (!dbState.users.has(body.email)) dbState.users.set(body.email, { id: uid() });
       const sub = dbState.users.get(body.email).id;
-      return resp(200, { ok: true, hashed_token: 'ht_' + sub });
+      const token = 'ht_' + sub;
+      rec.issuedTokenHash = sha256Hex(token);
+      rec.used = true; // одноразовость (после успешного создания сессии)
+      rec.issues += 1;
+      return resp(200, { ok: true, hashed_token: token, code_id: rec.id });
+    }
+    if (body.action === 'recover') {
+      const rec = dbState.codes.get(body.email);
+      if (!rec || rec.id !== body.code_id) return resp(400, { ok: false, error: 'Подтверждение не найдено — запросите новый код' });
+      if (rec.consumedAt) return resp(400, { ok: false, error: 'Код уже использован — запросите новый' });
+      if (rec.expiresAt < dbState.clock()) return resp(400, { ok: false, error: 'Окно ввода кода истекло (2 минуты) — запросите новый код' });
+      if (!rec.issuedTokenHash) return resp(400, { ok: false, error: 'Код ещё не подтверждён — введите код из письма' });
+      if (rec.issues >= 3) return resp(400, { ok: false, error: 'Слишком много попыток получить сессию — запросите новый код' });
+      const sub = dbState.users.get(body.email)?.id;
+      const token = 'ht_' + sub;
+      rec.issuedTokenHash = sha256Hex(token);
+      rec.issues += 1;
+      return resp(200, { ok: true, hashed_token: token, code_id: rec.id });
+    }
+    if (body.action === 'redeem') {
+      const rec = dbState.codes.get(body.email);
+      if (!rec || rec.id !== body.code_id) return resp(400, { ok: false, error: 'Подтверждение не найдено' });
+      if (rec.issuedTokenHash !== sha256Hex(String(body.hashed_token || ''))) {
+        return resp(400, { ok: false, error: 'Токен не соответствует выпущенному' });
+      }
+      rec.consumedAt = Date.now();
+      return resp(200, { ok: true, consumed: true });
     }
     return resp(400, { ok: false, error: 'Неизвестное действие' });
   }
@@ -254,6 +294,50 @@ globalThis.fetch = async (url, opts = {}) => {
   return resp(404, { msg: 'not found' });
 };
 
+/* ——— Режим дочернего процесса: «перезагрузка» между запросом и вводом кода ——— */
+if (process.argv[2] === '--pending') {
+  const { readFileSync } = await import('node:fs');
+  const snap = JSON.parse(readFileSync(process.argv[3], 'utf8'));
+  for (const [k, v] of snap.storage) lsMap.set(k, v);
+  for (const [k, v] of snap.server.codes) dbState.codes.set(k, v);
+  for (const [k, v] of snap.server.users) dbState.users.set(k, v);
+  for (const [k, v] of snap.server.psychologists) dbState.psychologists.set(k, v);
+  dbState.issuedCode = snap.code;
+
+  const out = [];
+  const reg = (await import('../js/domain/registration.js')).registration;
+  const before = logCalls.length;
+
+  const pending = reg.pendingVerification();
+  out.push(['reload до ввода кода: ожидание восстановлено', !!pending && pending.email === snap.email, JSON.stringify(pending)]);
+  out.push(['reload до ввода кода: канал восстановлен (fn)', pending?.channel === 'fn', String(pending?.channel)]);
+  out.push(['reload до ввода кода: окно жизни кода сохранено',
+    pending?.expiresAt > Date.now() && pending?.expiresAt <= Date.now() + TTL_MS, String(pending?.expiresAt)]);
+
+  const verified = await reg.verifyVerification(snap.email, snap.code);
+  const transportCalls = logCalls.slice(before);
+  out.push(['reload: код принят сохранённым каналом', verified.ok === true, JSON.stringify(verified)]);
+  out.push(['reload: канал не переключился на запасной OTP',
+    !transportCalls.some(u => u.includes('/auth/v1/otp')), transportCalls.join(' | ')]);
+  out.push(['reload: новый код не запрашивался (транспорт тот же)',
+    !transportCalls.some(u => u.includes('/functions/v1/auth-code') && /"action":"request"/.test(u)),
+    transportCalls.join(' | ')]);
+
+  // verifyVerification гасит ожидание (код одноразовый), поэтому дальше идём
+  // по явным шагам того же контракта, а не вызываем completeVerification повторно
+  const ensured = reg.ensureAuthenticatedSession(verified.session);
+  out.push(['reload: сессия зафиксирована (auth.uid() получен)',
+    ensured.ok === true && !!ensured.ownerId, JSON.stringify(ensured.ownerId)]);
+  const claimed = await reg.claimOrCreatePsychologist(snap.email, snap.profile);
+  out.push(['reload: кабинет привязан тем же use case', claimed.ok === true && !!claimed.id, JSON.stringify(claimed)]);
+  const loaded = await reg.loadOwnedProfile(claimed.id);
+  out.push(['reload: вход завершён, профиль загружен с сервера', loaded.ok === true, loaded.message || '']);
+  out.push(['reload: после входа ожидание кода очищено', reg.pendingVerification() === null]);
+
+  process.stdout.write('PENDING_RESULT ' + JSON.stringify(out));
+  process.exit(0);
+}
+
 /* ——— Режим дочернего процесса: «страница перезагружена» ——— */
 if (process.argv[2] === '--restore') {
   const { readFileSync } = await import('node:fs');
@@ -317,6 +401,13 @@ const EMAIL = 'natalia.test@example.by';
 let m = await loadFreshModules();
 let req = await m.registration.requestVerification(EMAIL);
 check('новый email: код запрошен (основной канал auth-code)', req.ok && req.channel === 'fn', JSON.stringify(req));
+const pendingAfterRequest = m.registration.pendingVerification();
+check('ожидание кода сохранено (email + канал + окно жизни)',
+  pendingAfterRequest?.email === EMAIL && pendingAfterRequest?.channel === 'fn'
+  && pendingAfterRequest.expiresAt > Date.now(), JSON.stringify(pendingAfterRequest));
+check('окно ожидания = 2 минуты (как TTL кода на сервере)',
+  Math.abs((pendingAfterRequest.expiresAt - pendingAfterRequest.requestedAt) - TTL_MS) < 1000,
+  String(pendingAfterRequest?.expiresAt - pendingAfterRequest?.requestedAt));
 
 let res = await m.registration.completeVerification(EMAIL, dbState.issuedCode, PROFILE, { requireProfileFields: true });
 check('новый email: вход выполнен', res.ok, res.message || '');
@@ -336,6 +427,7 @@ check('локальное состояние инициализировано (�
 check('сессия зафиксирована (кабинет пишет на сервер)', m.supabaseApi.hasSession() === true);
 check('создан authenticated Supabase user (JWT с sub)',
   m.userIdFromToken(m.registration.currentSession()?.access_token) === res.ownerId);
+check('после входа ожидание кода очищено', m.registration.pendingVerification() === null);
 
 /* ============================================================================
  * 2. Reload страницы сохраняет аутентификацию
@@ -458,6 +550,51 @@ console.log = realConsoleLog;
 check('одноразовый код не попадает в логи', !logLines.some(l => l.includes(logCode)), logLines.join(' | '));
 
 /* ============================================================================
+ * 6b. Pending-канал (issue #14, п.3): никакого самовольного переключения
+ * ========================================================================== */
+const pend = await loadFreshModules();
+pend.registration.signOut();
+pend.registration.clearPendingVerification();
+const fnCallsBefore = logCalls.filter(u => u.includes('/functions/v1/auth-code')).length;
+const otpCallsBefore = logCalls.filter(u => u.includes('/auth/v1/otp') || u.includes('/auth/v1/verify')).length;
+const lostState = await pend.registration.verifyVerification('nobody@example.by', 'ABCD2345');
+check('потерянное состояние: код не проверяется вовсе', lostState.ok === false, lostState.message || '');
+check('потерянное состояние: понятное сообщение «запросите новый код»',
+  /новый код/i.test(lostState.message || ''), lostState.message);
+check('потерянное состояние: на сервер не ушёл ни один запрос (перебор каналов удалён)',
+  logCalls.filter(u => u.includes('/functions/v1/auth-code')).length === fnCallsBefore
+  && logCalls.filter(u => u.includes('/auth/v1/otp') || u.includes('/auth/v1/verify')).length === otpCallsBefore,
+  String(logCalls.length));
+
+// код выслан на один email — проверяем другой: транспорт не подменяется
+await pend.registration.requestVerification('owner@example.by');
+const otherEmail = await pend.registration.verifyVerification('intruder@example.by', 'ABCD2345');
+check('чужой email: проверка отклонена до обращения к серверу',
+  otherEmail.ok === false && /owner@example\.by/.test(otherEmail.message || ''), otherEmail.message);
+
+// истёкшее окно: состояние выбрасывается, код на сервере не тратится
+await pend.registration.requestVerification('window@example.by');
+const pendingKey = Object.keys(localStorageSnapshot()).find(k => k.includes('pending_verification'));
+lsMap.set(pendingKey, JSON.stringify({
+  email: 'window@example.by',
+  channel: 'fn',
+  requestedAt: Date.now() - TTL_MS - 60e3,
+  expiresAt: Date.now() - 60e3
+}));
+const callsBeforeWindow = logCalls.length;
+const expiredWindow = await pend.registration.verifyVerification('window@example.by', 'ABCD2345');
+check('истёкшее окно: честная ошибка вместо подбора транспорта',
+  expiredWindow.ok === false && /истекло|новый код/i.test(expiredWindow.message || ''), expiredWindow.message);
+check('истёкшее окно: сохранённое ожидание сброшено', pend.registration.pendingVerification() === null);
+check('истёкшее окно: код на сервере не тратился', logCalls.length === callsBeforeWindow,
+  logCalls.slice(callsBeforeWindow).join(' | '));
+pend.registration.signOut();
+
+// перезагрузка страницы между «получить код» и «ввести код»
+const pendingReloadReport = await runPendingReloadCheck(EMAIL);
+for (const [name, isOk, extra] of pendingReloadReport) check(name, isOk, extra);
+
+/* ============================================================================
  * 7. Валидация обязательных полей — одна реализация
  * ========================================================================== */
 check('валидация: пустое имя отклоняется', !!m.registration.validateProfile({ ...PROFILE, fullName: '' }, { required: true }));
@@ -474,6 +611,45 @@ process.exit(failed ? 1 : 0);
 /* ============================================================================
  * Reload как отдельный процесс
  * ========================================================================== */
+
+/**
+ * Перезагрузка МЕЖДУ «получить код» и «ввести код»: в живом процессе остаётся
+ * только localStorage, память модулей чистая. Проверяем, что выбранный канал
+ * доставки восстановился и код проверяется именно им (без перебора).
+ */
+async function runPendingReloadCheck(email) {
+  const { spawnSync } = await import('node:child_process');
+  const { writeFileSync, rmSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+
+  const fresh = await loadFreshModules();
+  fresh.registration.signOut();
+  fresh.registration.clearPendingVerification();
+  const requested = await fresh.registration.requestVerification(email);
+  if (!requested.ok) return [['reload до ввода кода: код запрошен', false, requested.message]];
+
+  const snap = fileURLToPath(new URL('./.pending-snapshot.json', import.meta.url));
+  writeFileSync(snap, JSON.stringify({
+    storage: [...lsMap.entries()],
+    email,
+    code: dbState.issuedCode,
+    profile: PROFILE,
+    server: {
+      codes: [...dbState.codes.entries()],
+      users: [...dbState.users.entries()],
+      psychologists: [...dbState.psychologists.entries()]
+    }
+  }));
+  try {
+    const out = spawnSync(process.execPath, [fileURLToPath(import.meta.url), '--pending', snap], { encoding: 'utf8' });
+    const text = `${out.stdout || ''}${out.stderr || ''}`;
+    const parsed = /PENDING_RESULT (\[.*\])/s.exec(text);
+    if (!parsed) return [['reload до ввода кода: дочерняя проверка отработала', false, text.slice(0, 400)]];
+    return JSON.parse(parsed[1]);
+  } finally {
+    rmSync(snap, { force: true });
+  }
+}
 
 /**
  * Перезагрузка страницы: сохраняем localStorage, поднимаем НОВЫЙ процесс
