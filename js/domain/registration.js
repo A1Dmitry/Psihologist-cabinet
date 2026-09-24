@@ -102,10 +102,13 @@ export function validateProfile(profile = {}, { required = true } = {}) {
  * ========================================================================== */
 
 export function friendlyAuthError(ex) {
-  const m = String(ex?.message || ex);
+  const m = String(ex?.message || ex?.error_description || ex?.errorCode || ex);
   if (/over_email_send_rate_limit|rate|часто/i.test(m)) return 'Слишком часто. Подождите минуту и запросите код снова.';
-  if (/otp_expired|expired|истёк/i.test(m)) return 'Код истёк. Запросите новый.';
+  if (/otp_expired|email link is invalid|link is invalid|has expired|истёк/i.test(m)) {
+    return 'Ссылка или код из письма истекли. Запросите новый код на странице входа.';
+  }
   if (/otp_already_used|already used|использован/i.test(m)) return 'Код уже использован. Запросите новый.';
+  if (/access_denied/i.test(m)) return 'Вход по ссылке из письма отклонён. Запросите новый код.';
   if (/invalid|token|bad|неверн/i.test(m)) return 'Код неверный или истёк. Запросите новый.';
   if (/signup|not allowed|disabled/i.test(m)) return 'Вход по коду отключён в настройках Supabase Auth.';
   if (/RESEND_API_KEY|Почта не настроена/i.test(m)) return m;
@@ -138,7 +141,9 @@ export function readPendingVerification() {
   const p = safeStorage.getJSON(PENDING_KEY, null);
   if (!p || !p.email || !p.channel) return null;
   if (!Number.isFinite(p.expiresAt) || p.expiresAt <= Date.now()) {
-    safeStorage.remove(PENDING_KEY);
+    // Не удаляем запись здесь: peekPendingVerification должен отличить
+    // «истекло на этом устройстве» от «pending никогда не было» (другое
+    // устройство, issue #23). Удаляет clearPendingVerification / UI / verify.
     state.channel = null;
     return null;
   }
@@ -230,40 +235,85 @@ export async function requestVerification(email) {
  * Возвращает сессию, но НЕ создаёт профиль: создание — только после
  * ensureAuthenticatedSession + claimOrCreatePsychologist.
  *
- * Транспорт берётся ТОЛЬКО из сохранённого pending-состояния. Если оно
- * потеряно (другой браузер, очистка хранилища) или окно истекло — честная
- * ошибка «запросите новый код»: код одноразовый, и пробовать его на втором
- * транспорте значит сжечь его на первом и выдать неопределённый результат.
+ * Транспорт:
+ *   1) если pending на этом устройстве жив — ТОЛЬКО его канал (issue #14);
+ *   2) если pending истёк на этом устройстве — честный «запросите новый»,
+ *      без похода на сервер (окно ввода закончилось локально);
+ *   3) если pending никогда не было (другое устройство, issue #23) —
+ *      канал auth-code (код на сервере), без OTP-перебора.
  */
 export async function verifyVerification(email, code) {
   const e = normalizeEmail(email);
   const err = validateEmail(e) || validateCode(code);
   if (err) return { ok: false, message: err };
 
-  const pending = readPendingVerification();
-  if (!pending) {
-    return {
-      ok: false,
-      message: 'Состояние подтверждения кода потеряно или окно ввода истекло. Запросите новый код.'
-    };
+  const livePending = readPendingVerification();
+  const peeked = peekPendingVerification();
+
+  // Локальное окно истекло: не ходим на сервер и не маскируем под «другой девайс».
+  if (!livePending && peeked?.email) {
+    if (peeked.email === e) {
+      clearPendingVerification();
+      return {
+        ok: false,
+        message: 'Окно ввода кода истекло. Запросите новый код.'
+      };
+    }
+    // pending на другой email — не мешает вводу «чужого» с другого сценария
   }
-  if (pending.email !== e) {
+
+  if (livePending && livePending.email !== e) {
     return {
       ok: false,
-      message: `Код отправлен на ${pending.email}. Вернитесь к этому email или запросите новый код.`
+      message: `Код отправлен на ${livePending.email}. Вернитесь к этому email или запросите новый код.`
     };
   }
 
   const normalized = normalizeCode(code);
   let session;
   let codeId = null;
+
+  const tryFn = async () => {
+    const verified = await supabaseApi.verifyLoginCode(e, normalized);
+    return { session: verified?.session, codeId: verified?.codeId || null };
+  };
+  const tryOtp = async () => {
+    const s = await supabaseApi.verifyEmailOtp(e, normalized);
+    return { session: s, codeId: null };
+  };
+
   try {
-    if (pending.channel === VerificationChannel.OTP) {
-      session = await supabaseApi.verifyEmailOtp(e, normalized);
+    if (livePending?.channel === VerificationChannel.OTP) {
+      ({ session, codeId } = await tryOtp());
+    } else if (livePending?.channel === VerificationChannel.FN) {
+      ({ session, codeId } = await tryFn());
+    } else if (!peeked) {
+      // Нет pending вовсе: different-device / deep-link с auth-code письмом.
+      try {
+        ({ session, codeId } = await tryFn());
+      } catch (fnEx) {
+        if (fnEx?.status === 404 || fnEx?.status === 0) {
+          return {
+            ok: false,
+            message: 'Сервер входа по коду недоступен. Откройте ссылку из письма на этом устройстве или запросите новый код там, где начинали вход.'
+          };
+        }
+        // Код не запрошен на сервере / неверный — дружелюбно.
+        const msg = friendlyAuthError(fnEx);
+        if (/не запрошен|not requested|сначала получите/i.test(String(fnEx?.message || ''))) {
+          return {
+            ok: false,
+            message: 'Код не запрошен или уже недействителен. Запросите новый код на странице входа.'
+          };
+        }
+        return { ok: false, message: msg };
+      }
     } else {
-      const verified = await supabaseApi.verifyLoginCode(e, normalized);
-      session = verified?.session;
-      codeId = verified?.codeId || null;
+      // peeked на другой email, live пуст — не угадываем канал
+      return {
+        ok: false,
+        message: 'Состояние подтверждения кода потеряно или окно ввода истекло. Запросите новый код.'
+      };
     }
   } catch (ex) {
     // Код не погашен (или сервер честно сказал «неверный/истёк») — окно ввода
@@ -341,27 +391,96 @@ export async function completeVerification(email, code, profile = {}, { requireP
   const verified = await verifyVerification(email, code);
   if (!verified.ok) return verified;
 
-  const ensured = ensureAuthenticatedSession(verified.session);
+  return finishAuthenticatedLogin(email, verified.session, profile, { requireProfileFields });
+}
+
+/**
+ * Завершить вход, когда сессия уже получена (код ИЛИ magic-link redirect).
+ * Единая граница: session → persist → claim → load owned profile.
+ */
+export async function finishAuthenticatedLogin(email, session, profile = {}, { requireProfileFields = false } = {}) {
+  const ensured = ensureAuthenticatedSession(session);
   if (!ensured.ok) return ensured;
+
+  const e = normalizeEmail(email);
+  // email из JWT, если форма пуста (клик по ссылке на другом устройстве)
+  const mail = e || emailFromSession(session) || '';
+  if (!mail) {
+    return {
+      ok: false,
+      message: 'Сессия получена, но email не определён. Запросите код снова и введите его на странице входа.'
+    };
+  }
 
   const profileError = validateProfile(profile, { required: requireProfileFields });
   if (profileError) return { ok: false, message: profileError };
 
-  const claimed = await claimOrCreatePsychologist(email, profile);
+  const claimed = await claimOrCreatePsychologist(mail, profile);
   if (!claimed.ok) return claimed;
 
   const loaded = await loadOwnedProfile(claimed.id);
   if (!loaded.ok) return loaded;
 
+  clearPendingVerification();
   return {
     ok: true,
     psychologist: loaded.psychologist,
     created: claimed.created,
     ownerId: claimed.ownerId,
+    email: mail,
     message: loaded.psychologist.keyVerifier
       ? 'Email подтверждён, вход выполнен. Сейф клиентов закрыт — откройте его паролем во вкладке «Клиенты».'
       : 'Email подтверждён, вход выполнен. Задайте пароль сейфа во вкладке «Клиенты».'
   };
+}
+
+/**
+ * Boot-path (issue #23): разобрать Supabase Auth redirect из URL.
+ *
+ * Успех → session → claim/load (login без ручного кода).
+ * Ошибка otp_expired/access_denied → честное сообщение, URL очищен.
+ * Нет Auth-параметров → { ok: false, reason: 'none' } (не ошибка UX).
+ */
+export async function consumeAuthRedirect(profile = {}) {
+  let parsed;
+  try {
+    parsed = await supabaseApi.consumeAuthRedirectFromUrl();
+  } catch (ex) {
+    return { ok: false, reason: 'parse-failed', message: friendlyAuthError(ex) };
+  }
+  if (!parsed || parsed.kind === 'none') return { ok: false, reason: 'none' };
+  if (parsed.kind === 'error') {
+    return {
+      ok: false,
+      reason: 'auth-error',
+      errorCode: parsed.errorCode,
+      message: friendlyAuthError(parsed)
+    };
+  }
+  if (parsed.kind !== 'session' || !parsed.session?.access_token) {
+    return { ok: false, reason: 'no-session', message: 'Ссылка из письма не содержит сессию. Запросите новый код.' };
+  }
+
+  const email = emailFromSession(parsed.session) || readPendingVerification()?.email || '';
+  const finished = await finishAuthenticatedLogin(email, parsed.session, profile, {
+    requireProfileFields: false
+  });
+  if (!finished.ok) return { ...finished, reason: 'login-failed' };
+  return { ...finished, reason: 'session' };
+}
+
+/** email из JWT payload (claim email / user_metadata). Без логирования токена. */
+function emailFromSession(session) {
+  try {
+    const token = session?.access_token || '';
+    const payload = String(token).split('.')[1] || '';
+    if (!payload) return '';
+    const json = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+    const e = json?.email || json?.user_metadata?.email || '';
+    return normalizeEmail(e);
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -487,6 +606,8 @@ export const registration = {
   claimOrCreatePsychologist,
   loadOwnedProfile,
   completeVerification,
+  finishAuthenticatedLogin,
+  consumeAuthRedirect,
   restoreAuthenticatedState,
   signOut,
   currentSession,

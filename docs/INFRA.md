@@ -24,6 +24,7 @@
 | 5 | Edge Function `telegram-notify` | ⏳ задеплоить | то же |
 | 6 | Секрет `RESEND_API_KEY` | ⛔ блокер на владельце | нужен аккаунт Resend + **верифицированный домен** (иначе письма уходят только владельцу аккаунта Resend — блокирует T-15) |
 | 7 | Секрет `MAIL_FROM` | ⏳ после домена | напр. `PsyПортал <login@ваш-домен>`; без домена — `onboarding@resend.dev` (только на email владельца Resend) |
+| 7b | Секрет `APP_URL` + Auth Site URL | ⏳ **обязательно для #23** | `APP_URL=https://a1dmitry.github.io/Psihologist-cabinet/` (без localhost). Dashboard → Authentication → URL Configuration: **Site URL** и **Redirect URLs** = тот же origin. Клиентский канон: `APPLICATION_URL` в `js/services/supabaseConfig.js` |
 | 8 | GitHub Pages CI | ✅ готов (исправлено 2026-09-23) | сборка `_site`, `%BASE%`, статические маршруты (200 для deep-links), `404.html`-fallback, post-deploy смоук. ⚠️ 2026-09-23: PR #9 случайно склеил строки в YAML (`- name: … run: |` в одну строку) — деплой молча падал (0s, workflow file issue), сайт показывал устаревшую сборку PR #6. Проверка YAML теперь часть смоука: `npx js-yaml .github/workflows/*.yml` |
 | 9 | Логирование ошибок фронтенда | ✅ код готов | `js/services/errorLogService.js` → `client_error_logs` (после применения п.2) |
 | 10 | Кастомный домен | ⚪ опционально | инструкция ниже |
@@ -55,8 +56,18 @@
    ```bash
    supabase secrets set RESEND_API_KEY=re_...
    supabase secrets set MAIL_FROM="PsyПортал <login@ваш-домен>"
+   supabase secrets set APP_URL="https://a1dmitry.github.io/Psihologist-cabinet/"
    ```
-   Значения — только здесь. В коде/репозитории секретов не храним.
+   `APP_URL` — куда ведёт кнопка «Открыть страницу входа» в письме `auth-code`
+   (issue #23). **Не** `http://localhost:…`: письмо открывают на телефоне/другом
+   ПК. Если секрет не задан, функция подставляет Pages URL из кода; значение
+   `localhost` в секрете отбрасывается (poka-yoke).
+   Значения — только здесь. В коде/репозитории секретов Resend не храним.
+
+   **Supabase Auth → URL Configuration** (тот же шаг, иначе OTP-fallback снова
+   даст `localhost/#error=otp_expired`):
+   - Site URL = `https://a1dmitry.github.io/Psihologist-cabinet/`
+   - Redirect URLs allowlist: тот же origin + `/**`
 5. **Деплой функций** (один из двух путей):
    - **Из CI (рекомендуется):** в репозитории задать Secret `SUPABASE_ACCESS_TOKEN`
      (supabase.com/dashboard/account/tokens) и Variable `SUPABASE_PROJECT_ID=phiavtroybgwyjdhqqkh`.

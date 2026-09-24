@@ -27,6 +27,9 @@
 //   supabase functions deploy auth-code
 //   supabase secrets set RESEND_API_KEY=re_...          # обязательно
 //   supabase secrets set MAIL_FROM="PsyПортал <код@ваш-домен>"   # опционально
+//   supabase secrets set APP_URL="https://a1dmitry.github.io/Psihologist-cabinet/"
+//     # URL приложения в письме (issue #23). НЕ localhost. Письмо открывают
+//     # на любом устройстве — ссылка должна вести на реальный SPA (#/auth).
 //
 //   POST /functions/v1/auth-code  { action: 'request', email }
 //   POST /functions/v1/auth-code  { action: 'verify',  email, code }        → { hashed_token, code_id }
@@ -275,6 +278,16 @@ Deno.serve(async (req) => {
       if (!ins.ok) return json({ ok: false, error: 'Не удалось сохранить код' }, 500);
 
       const from = Deno.env.get('MAIL_FROM') || 'PsyПортал <onboarding@resend.dev>';
+      // APPLICATION URL for the letter (issue #23). Never invent localhost here:
+      // email is opened on an arbitrary device. Secret APP_URL is canonical;
+      // fallback matches js/services/supabaseConfig.js APPLICATION_URL.
+      const appUrlRaw = String(Deno.env.get('APP_URL') || 'https://a1dmitry.github.io/Psihologist-cabinet/').trim();
+      const appBase = appUrlRaw.replace(/\/?$/, '/');
+      const isLoopback = /^https?:\/\/(localhost|127\.0\.0\.1|\[?::1\]?)(:\d+)?\/?/i.test(appBase);
+      const safeAppBase = isLoopback
+        ? 'https://a1dmitry.github.io/Psihologist-cabinet/'
+        : appBase;
+      const authEntryUrl = `${safeAppBase}#/auth?email=${encodeURIComponent(email)}`;
       const mail = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
@@ -286,8 +299,15 @@ Deno.serve(async (req) => {
             <h2 style="margin-bottom:8px">Код входа в кабинет</h2>
             <p style="font-size:15px;color:#334">Ваш код (действует 2 минуты):</p>
             <p style="font-size:32px;font-weight:bold;letter-spacing:6px;margin:12px 0">${code}</p>
-            <p style="font-size:13px;color:#667">Введите его на странице входа. Никому не сообщайте код —
-            даже поддержке. Если это были не вы, просто проигнорируйте письмо.</p>
+            <p style="font-size:15px;margin:16px 0">
+              <a href="${authEntryUrl}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:12px 18px;border-radius:999px;font-weight:600">
+                Открыть страницу входа
+              </a>
+            </p>
+            <p style="font-size:13px;color:#667">Ссылка ведёт в приложение:
+              <a href="${authEntryUrl}" style="color:#4f46e5;word-break:break-all">${authEntryUrl}</a>.
+              Введите код на открывшейся странице (можно с телефона или другого компьютера).
+              Никому не сообщайте код — даже поддержке. Если это были не вы, просто проигнорируйте письмо.</p>
           </div>`
         })
       });

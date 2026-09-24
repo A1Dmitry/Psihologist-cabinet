@@ -177,7 +177,9 @@ Does not replace schema/deploy/Resend checklist; it is concrete failure evidence
 
 ---
 
-## 8. Main Re-Audit note
+## 8. Implementation (follow-up)
 
-This document is **evidence + coordination**, not a fix.  
-Closing #23 still requires implementation + tests + Challenger + Main Re-Audit on post-fix `main` SHA.
+Code fix for the chain above: **`docs/ISSUE-23-IMPLEMENTATION.md`** (same branch / later PR).  
+PR #24 remains **evidence-only** and must not be treated as DoD.
+
+Closing #23 still requires: production E2E (real mail) + Challenger + Main Re-Audit on post-fix `main` SHA.

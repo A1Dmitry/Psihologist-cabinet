@@ -188,6 +188,7 @@ async function loadHandler(opts = {}) {
         if (name === 'SUPABASE_SERVICE_ROLE_KEY') return 'service_role_test';
         if (name === 'RESEND_API_KEY') return opts.noMail ? undefined : 're_test';
         if (name === 'MAIL_FROM') return 'PsyПортал <code@test.invalid>';
+        if (name === 'APP_URL') return opts.appUrl; // undefined → default Pages URL in function
         return undefined;
       }
     },
@@ -294,6 +295,30 @@ console.log('\n── auth-code (настоящий исходник Edge Functi
   ok('новый код не выпущен и не израсходован (SR-004 поля чистые)', () => {
     eq(codeRow().issued_token_hash, null);
     eq(codeRow().consumed_at, null);
+  });
+  ok('письмо содержит код (не только ссылку)', () => {
+    truthy((sentMail[0]?.html || '').includes(code), 'код отсутствует в html');
+  });
+  ok('письмо содержит ссылку #/auth на приложение (issue #23)', () => {
+    const html = sentMail[0]?.html || '';
+    truthy(/#\/auth/.test(html), html.slice(0, 240));
+    truthy(!/localhost|127\.0\.0\.1/i.test(html), 'localhost в письме запрещён');
+  });
+  ok('ссылка в письме — https Pages origin', () => {
+    const html = sentMail[0]?.html || '';
+    truthy(/https:\/\/a1dmitry\.github\.io\/Psihologist-cabinet\//i.test(html), html.slice(0, 240));
+  });
+}
+
+// 4b. APP_URL=localhost → poka-yoke: всё равно production link (issue #23)
+{
+  freshState();
+  const h = await loadHandler({ appUrl: 'http://localhost:3000/' });
+  await post(h, { action: 'request', email: 'b@test.invalid' });
+  const html = sentMail[0]?.html || '';
+  ok('APP_URL localhost не попадает в письмо', () => {
+    truthy(!/localhost:3000/i.test(html), html.slice(0, 200));
+    truthy(/a1dmitry\.github\.io\/Psihologist-cabinet/i.test(html), html.slice(0, 200));
   });
 }
 

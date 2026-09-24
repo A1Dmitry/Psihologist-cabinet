@@ -15,6 +15,68 @@ export const SUPABASE_URL = 'https://phiavtroybgwyjdhqqkh.supabase.co';
  */
 export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBoaWF2dHJveWJnd3lqZGhxcWtoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5ODc3NDQsImV4cCI6MjEwNTU2Mzc0NH0.ioK3zmYd_CbhXxsN5PbDlNvYSzppHz77fSbZZir8uJQ';
 
+/**
+ * Канонический URL приложения для писем и Auth redirect (issue #23).
+ *
+ * Единственный клиентский source of truth для «куда вести пользователя из email».
+ * НЕ брать window.location при генерации письма на сервере — email открывают
+ * на другом устройстве; localhost из dev-сессии туда попадать не должен.
+ *
+ * GitHub Pages: https://{owner}.github.io/{repo}/
+ * Кастомный домен: заменить на https://ваш-домен/ и Site URL в Supabase Auth.
+ *
+ * Edge Function auth-code читает тот же URL из секрета APP_URL (см. docs/INFRA.md);
+ * если секрет не задан — функция использует это же значение по умолчанию.
+ */
+export const APPLICATION_URL = 'https://a1dmitry.github.io/Psihologist-cabinet/';
+
+/**
+ * URL приложения «здесь и сейчас» для client-side redirect_to.
+ * - на production/preview origin (не loopback) — текущий origin + base path;
+ * - на localhost/127.0.0.1 — всегда APPLICATION_URL (письмо/OTP не должны
+ *   уводить на машину разработчика).
+ */
+export function resolveApplicationUrl() {
+  const fallback = normalizeAppUrl(APPLICATION_URL);
+  try {
+    const loc = globalThis.location;
+    if (!loc?.origin) return fallback;
+    if (isLoopbackHost(loc.hostname || '')) return fallback;
+    const baseEl = globalThis.document?.querySelector?.('base[href]');
+    if (baseEl?.href) return normalizeAppUrl(baseEl.href);
+    // Pages path: /Psihologist-cabinet/… → base = origin + first segment
+    const seg = String(loc.pathname || '/').split('/').filter(Boolean)[0];
+    if (seg && seg !== 'auth' && seg !== 'cabinet' && seg !== 'book' && seg !== 'psy' && seg !== 'reply' && seg !== 'booking-done') {
+      return normalizeAppUrl(`${loc.origin}/${seg}/`);
+    }
+    return normalizeAppUrl(`${loc.origin}/`);
+  } catch {
+    return fallback;
+  }
+}
+
+/** Страница входа для deep-link из письма: …/#/auth */
+export function resolveAuthEntryUrl(query = {}) {
+  const base = resolveApplicationUrl().replace(/\/?$/, '/');
+  const qs = new URLSearchParams();
+  Object.entries(query || {}).forEach(([k, v]) => {
+    if (v != null && String(v) !== '') qs.set(k, String(v));
+  });
+  const q = qs.toString();
+  return `${base}#/auth${q ? `?${q}` : ''}`;
+}
+
+export function isLoopbackHost(hostname) {
+  const h = String(hostname || '').toLowerCase();
+  return h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '::1' || h.endsWith('.localhost');
+}
+
+function normalizeAppUrl(url) {
+  const s = String(url || '').trim();
+  if (!s) return 'https://a1dmitry.github.io/Psihologist-cabinet/';
+  return s.endsWith('/') ? s : `${s}/`;
+}
+
 export function isSupabaseConfigured() {
   return !!(
     SUPABASE_URL &&

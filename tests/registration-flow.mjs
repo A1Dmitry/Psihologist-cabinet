@@ -90,10 +90,12 @@ function uid() {
 
 const sha256Hex = (str) => createHash('sha256').update(String(str), 'utf8').digest('hex');
 
-/** Неподписанный JWT с `sub` — подписи в фейке нет, нам нужен только auth.uid(). */
-function fakeJwt(sub) {
+/** Неподписанный JWT с `sub` (+ email) — подписи в фейке нет, нужен auth.uid() и emailFromSession. */
+function fakeJwt(sub, email = '') {
   const b64 = o => Buffer.from(JSON.stringify(o)).toString('base64url');
-  return `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64({ sub, role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 })}.sig`;
+  const payload = { sub, role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 };
+  if (email) payload.email = email;
+  return `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64(payload)}.sig`;
 }
 
 /** Кто владелец запроса — из Bearer-токена (как это делает PostgREST). */
@@ -204,7 +206,7 @@ globalThis.fetch = async (url, opts = {}) => {
       const email = [...dbState.users.entries()].find(([, v]) => v.id === sub)?.[0];
       if (!email) return resp(400, { msg: 'Invalid token_hash' });
       return resp(200, {
-        access_token: fakeJwt(sub),
+        access_token: fakeJwt(sub, email),
         refresh_token: 'rt_' + sub,
         expires_at: Math.floor(Date.now() / 1000) + 3600,
         token_type: 'bearer'
@@ -218,7 +220,7 @@ globalThis.fetch = async (url, opts = {}) => {
     if (!dbState.users.has(body.email)) dbState.users.set(body.email, { id: uid() });
     const sub = dbState.users.get(body.email).id;
     return resp(200, {
-      access_token: fakeJwt(sub),
+      access_token: fakeJwt(sub, body.email),
       refresh_token: 'rt_' + sub,
       expires_at: Math.floor(Date.now() / 1000) + 3600,
       token_type: 'bearer'
@@ -226,6 +228,8 @@ globalThis.fetch = async (url, opts = {}) => {
   }
   if (u.includes('/auth/v1/otp')) {
     if (!dbState.mailConfigured) return resp(500, { msg: 'mail not configured' });
+    // issue #23: redirect_to must not be localhost
+    dbState.lastOtpBody = body;
     dbState.codes.set(body.email, { code: 'OTP12345', expiresAt: dbState.clock() + TTL_MS, used: false, attempts: 0 });
     dbState.issuedCode = 'OTP12345';
     return resp(200, {});
@@ -479,7 +483,8 @@ const savedClock = dbState.clock;
 dbState.clock = () => Date.now() + TTL_MS + 1000;
 const expired = await otp.registration.completeVerification('expired@example.by', dbState.issuedCode, PROFILE);
 check('просроченный код: вход отклонён', expired.ok === false, expired.message || '');
-check('просроченный код: честное сообщение', /истёк/i.test(expired.message || ''), expired.message);
+check('просроченный код: честное сообщение',
+  /истекл|истёк|новый код/i.test(expired.message || ''), expired.message);
 
 // повторное использование кода: новый код НЕ запрашиваем — проверяем, что уже
 // погашенный код не принимается второй раз
@@ -520,6 +525,101 @@ check('CORS вместо 404: включён запасной канал Supabas
 const corsLogin = await cors.registration.completeVerification('cors@example.by', dbState.issuedCode, PROFILE);
 check('CORS вместо 404: вход через запасной канал выполнен', corsLogin.ok === true, corsLogin.message || '');
 dbState.fnThrows = false;
+
+// issue #23: OTP fallback передаёт emailRedirectTo на реальный APPLICATION_URL (не localhost)
+const otpRedirect = await loadFreshModules();
+dbState.fnDeployed = false;
+dbState.lastOtpBody = null;
+await otpRedirect.registration.requestVerification('redir@example.by');
+const otpBody = dbState.lastOtpBody || {};
+const redirectTarget = String(otpBody.email_redirect_to || otpBody.options?.emailRedirectTo || '');
+check('OTP fallback: email_redirect_to задан', !!redirectTarget, JSON.stringify(otpBody));
+check('OTP fallback: redirect не localhost',
+  redirectTarget && !/localhost|127\.0\.0\.1/i.test(redirectTarget), redirectTarget);
+check('OTP fallback: redirect ведёт на #/auth',
+  /#\/auth/i.test(redirectTarget), redirectTarget);
+dbState.fnDeployed = true;
+
+// issue #23: другое устройство — нет pending, код auth-code всё равно принимается
+const deviceA = await loadFreshModules();
+await deviceA.registration.requestVerification('crossdev@example.by');
+const crossCode = dbState.issuedCode;
+// «устройство B»: чистый storage (как другой браузер), тот же сервер
+lsMap.clear();
+const deviceB = await loadFreshModules();
+deviceB.registration.clearPendingVerification();
+check('другое устройство: pending на B отсутствует',
+  deviceB.registration.pendingVerification() == null
+    && deviceB.registration.peekPendingVerification() == null);
+const crossLogin = await deviceB.registration.completeVerification('crossdev@example.by', crossCode, PROFILE);
+check('другое устройство: код auth-code принят без pending',
+  crossLogin.ok === true, crossLogin.message || '');
+check('другое устройство: session access_token есть',
+  !!deviceB.registration.currentSession()?.access_token
+    || deviceB.supabaseApi.hasSession() === true,
+  String(!!deviceB.registration.currentSession()?.access_token));
+check('другое устройство: owner_id == auth.uid()',
+  crossLogin.ownerId
+    && [...dbState.psychologists.values()].find(p => p.email === 'crossdev@example.by')?.owner_id === crossLogin.ownerId);
+deviceB.registration.signOut();
+
+// issue #23: consumeAuthRedirect — otp_expired hash → честная ошибка, не тихий portal
+const redirErr = await loadFreshModules();
+globalThis.location = {
+  href: 'http://localhost:3000/#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired&sb=',
+  hash: '#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired&sb=',
+  search: '',
+  pathname: '/',
+  hostname: 'localhost',
+  origin: 'http://localhost:3000'
+};
+const replaced = [];
+globalThis.history = { replaceState: (...a) => replaced.push(a) };
+const consumedErr = await redirErr.registration.consumeAuthRedirect();
+check('auth redirect error: ok=false', consumedErr.ok === false, JSON.stringify(consumedErr));
+check('auth redirect error: reason=auth-error', consumedErr.reason === 'auth-error', consumedErr.reason);
+check('auth redirect error: friendly otp_expired message',
+  /истекл|ссылк/i.test(consumedErr.message || ''), consumedErr.message);
+check('auth redirect error: URL очищен (replaceState)', replaced.length >= 1, String(replaced.length));
+
+// issue #23: consumeAuthRedirect — success hash → session → cabinet
+const redirOk = await loadFreshModules();
+const subOk = uid();
+dbState.users.set('linkuser@example.by', { id: subOk });
+const access = fakeJwt(subOk, 'linkuser@example.by');
+globalThis.location = {
+  href: `https://a1dmitry.github.io/Psihologist-cabinet/#access_token=${access}&refresh_token=rt_${subOk}&expires_in=3600&token_type=bearer`,
+  hash: `#access_token=${access}&refresh_token=rt_${subOk}&expires_in=3600&token_type=bearer`,
+  search: '',
+  pathname: '/Psihologist-cabinet/',
+  hostname: 'a1dmitry.github.io',
+  origin: 'https://a1dmitry.github.io'
+};
+const replacedOk = [];
+globalThis.history = { replaceState: (...a) => replacedOk.push(a) };
+const consumedOk = await redirOk.registration.consumeAuthRedirect(PROFILE);
+check('auth redirect success: login ok', consumedOk.ok === true, consumedOk.message || JSON.stringify(consumedOk));
+check('auth redirect success: psychologist привязан',
+  !!consumedOk.psychologist?.id, JSON.stringify(consumedOk.psychologist));
+check('auth redirect success: owner_id == sub JWT',
+  consumedOk.ownerId === subOk, String(consumedOk.ownerId));
+check('auth redirect success: access_token сохранён',
+  !!redirOk.registration.currentSession()?.access_token);
+redirOk.registration.signOut();
+
+// APPLICATION_URL / resolveApplicationUrl: loopback → canonical Pages URL
+const { APPLICATION_URL, resolveApplicationUrl, resolveAuthEntryUrl, isLoopbackHost } =
+  await import('../js/services/supabaseConfig.js');
+check('APPLICATION_URL задан и не localhost',
+  !!APPLICATION_URL && !/localhost|127\.0\.0\.1/i.test(APPLICATION_URL), APPLICATION_URL);
+check('isLoopbackHost(localhost)', isLoopbackHost('localhost') === true);
+check('isLoopbackHost(pages host)', isLoopbackHost('a1dmitry.github.io') === false);
+globalThis.location = { hostname: 'localhost', origin: 'http://localhost:3000', pathname: '/' };
+check('resolveApplicationUrl на localhost → APPLICATION_URL',
+  resolveApplicationUrl() === APPLICATION_URL || resolveApplicationUrl().startsWith('https://'),
+  resolveApplicationUrl());
+check('resolveAuthEntryUrl содержит #/auth',
+  /#\/auth/.test(resolveAuthEntryUrl()), resolveAuthEntryUrl());
 
 const noMail = await loadFreshModules();
 dbState.mailConfigured = false;
@@ -563,16 +663,19 @@ check('одноразовый код не попадает в логи', !logLin
 const pend = await loadFreshModules();
 pend.registration.signOut();
 pend.registration.clearPendingVerification();
-const fnCallsBefore = logCalls.filter(u => u.includes('/functions/v1/auth-code')).length;
-const otpCallsBefore = logCalls.filter(u => u.includes('/auth/v1/otp') || u.includes('/auth/v1/verify')).length;
+const mark = logCalls.length;
 const lostState = await pend.registration.verifyVerification('nobody@example.by', 'ABCD2345');
-check('потерянное состояние: код не проверяется вовсе', lostState.ok === false, lostState.message || '');
+const lostSlice = logCalls.slice(mark);
+check('потерянное состояние: код не принимается', lostState.ok === false, lostState.message || '');
 check('потерянное состояние: понятное сообщение «запросите новый код»',
   /новый код/i.test(lostState.message || ''), lostState.message);
-check('потерянное состояние: на сервер не ушёл ни один запрос (перебор каналов удалён)',
-  logCalls.filter(u => u.includes('/functions/v1/auth-code')).length === fnCallsBefore
-  && logCalls.filter(u => u.includes('/auth/v1/otp') || u.includes('/auth/v1/verify')).length === otpCallsBefore,
-  String(logCalls.length));
+// issue #23: без pending — только auth-code (different-device), OTP-перебор запрещён.
+check('потерянное состояние: OTP-канал не перебирается',
+  !lostSlice.some(u => u.includes('/auth/v1/otp')), lostSlice.join(' | '));
+check('потерянное состояние: ровно один auth-code, без GoTrue verify',
+  lostSlice.filter(u => u.includes('/functions/v1/auth-code')).length === 1
+    && !lostSlice.some(u => u.includes('/auth/v1/verify')),
+  lostSlice.join(' | '));
 
 // код выслан на один email — проверяем другой: транспорт не подменяется
 await pend.registration.requestVerification('owner@example.by');
