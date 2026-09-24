@@ -114,7 +114,9 @@ check('overrideOn: нет → null', overrideOn([], '2026-09-25') === null);
   check('candidates: почасовая сетка 10:00–17:00 = 8 стартов (старт строго до закрытия)',
     g.candidates.length === 8 && g.candidates[0] === '10:00' && g.candidates[7] === '17:00',
     g.candidates.join(','));
-  check('candidates: windowEnd = max(last+step, slotEnd) = 18:00', g.windowEndMin === 1080);
+  // Контракт SR-D1: конец приёма + grace в один шаг (зеркало серверного
+  // v_slot_end_min + v_step, поведение до D1). Старый пин (1080) кодировал расхождение.
+  check('candidates: windowEnd = max(last+step, slotEnd+step) = 19:00', g.windowEndMin === 1140);
   const g15 = generateCandidates({ schedule: { ...baseSchedule }, policy: { slotIncrementMin: 15 } });
   check('candidates: инкремент 15 → 32 старта (10:00–17:45)', g15.candidates.length === 32, String(g15.candidates.length));
   check('candidates: инкремент 15 включает 10:15', g15.candidates.includes('10:15'));
@@ -286,7 +288,14 @@ const winOf = (w = {}) => ({ windowStartMin: 600, windowEndMin: 1140, ...w });
   check('day: 90 мин в 11:00 пересекает 12:00–13:00 → busy', byTime['11:00'].code === 'busy', byTime['11:00'].code);
   check('day: 90 мин в 13:00 свободно → ok', byTime['13:00'].available, byTime['13:00'].code);
   check('day: 18:00 не кандидат (старт в закрытие не предлагается)', byTime['18:00'] === undefined);
-  check('day: 90 мин в 17:00 не влезает → too_long', byTime['17:00'].code === 'too_long', byTime['17:00'].code);
+  // Grace: 17:00+90 = 18:30 ≤ 19:00 (slot_end + шаг) — сервер принимает, engine согласен.
+  check('day: 90 мин в 17:00 влезает в grace → ok', byTime['17:00'].available, byTime['17:00'].code);
+  const rLong = computeBookableSlots({
+    date: '2026-09-24', durationMin: 150, schedule: baseSchedule, clock: fakeClock()
+  });
+  const long1700 = rLong.slots.find(s => s.time === '17:00');
+  check('day: 150 мин в 17:00 (конец 19:30 > grace 19:00) → too_long',
+    long1700 && !long1700.available && long1700.code === 'too_long', long1700?.code);
   const rSvc = computeBookableSlots({
     date: '2026-09-24', durationMin: 60, schedule: baseSchedule, clock: fakeClock(),
     serviceAvailability: { days: [2], start: '12:00', end: '14:00' }

@@ -185,9 +185,11 @@ export function generateCandidates({ schedule, override = null, policy = {} } = 
     const lastStartMin = candidates.length
       ? Math.max(...candidates.map(parseTimeToMinutes))
       : null;
+    // Контракт SR-D1: сессия обязана закончиться не позже slot_end + шаг
+    // (grace, как в T-02) — зеркало серверного greatest(last+step, slot_end+step).
     const windowEndMin = lastStartMin === null
       ? slotEndMin
-      : Math.max(lastStartMin + stepMin, slotEndMin);
+      : Math.max(lastStartMin + stepMin, slotEndMin + stepMin);
     return { candidates, windowStartMin, windowEndMin, lastStartMin };
   }
   const inc = asOptionalLimit(policy.slotIncrementMin) || stepMin;
@@ -197,7 +199,10 @@ export function generateCandidates({ schedule, override = null, policy = {} } = 
     candidates.push(minutesToTimeLabel(m));
   }
   const lastStartMin = candidates.length ? parseTimeToMinutes(candidates[candidates.length - 1]) : null;
-  const windowEndMin = lastStartMin === null ? slotEndMin : Math.max(lastStartMin + stepMin, slotEndMin);
+  // Здесь slotEndMin не null (иначе — ранний возврат выше): зеркало серверного
+  // v_slot_end_min + v_step (поведение до D1, main). Без grace engine отвергал
+  // то, что сервер принимает (полоса расхождения шириной в шаг).
+  const windowEndMin = lastStartMin === null ? slotEndMin : Math.max(lastStartMin + stepMin, slotEndMin + stepMin);
   return { candidates, windowStartMin, windowEndMin, lastStartMin };
 }
 

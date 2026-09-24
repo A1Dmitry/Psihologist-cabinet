@@ -403,6 +403,12 @@
   Проверено: `node tests/availability-policy.mjs` (домен), `node tests/availability-db.mjs`
   (сервер на реальном PostgreSQL), `npm run verify` 17/17.
   **В проде требует переприменения `schema.sql`** (как все DDL-изменения).
+- **Addendum (recovery PR32, issue #33, 2026-09-24):** клиентский engine
+  приведён к зафиксированному здесь контракту grace (`end ≤ slot_end + шаг` —
+  раньше engine требовал `end ≤ slot_end` и расходился с сервером) и к
+  серверному клампу длительности кандидата (0,480]. Схема НЕ менялась
+  (фиксы — клиент/engine/тесты). Паритет покрыт дифференциальной матрицей
+  `tests/availability-parity.mjs`, E2E — `tests/booking-e2e.mjs`.
 
 ### Не заявки (рекомендации Агенту 1, без изменения схемы)
 1. **sitemap.xml:** CI генерирует `/psy/{slug}`, но не `/book/{slug}`, хотя Pages отдаёт оба маршрута с HTTP 200. Предлагаю добавить `/book/{slug}` в sitemap (или, наоборот, поставить на `/book/{slug}` canonical → `/psy/{slug}` — тогда в sitemap они не нужны). Сейчас canonical на странице записи — собственный.

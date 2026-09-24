@@ -64,8 +64,12 @@ const s90 = suggestSlots({ psychologistId: PSY, days: 6, limit: 50, durationMin:
 const onD1_90 = s90.filter(s => s.date === D1).map(s => s.time);
 check('suggest: 90 мин в 10:00 пересекает 11:00 → исключено', !onD1_90.includes('10:00'), onD1_90.join(','));
 check('suggest: 90 мин в 12:00 свободно → есть', onD1_90.includes('12:00'), onD1_90.join(','));
-// windowEnd = max(last(13:00)+60, 14:00) = 14:00; 13:00+90=14:30 > 14:00 → исключено:
-check('suggest: 90 мин в 13:00 (конец 14:30 > 14:00) → исключено', !onD1_90.includes('13:00'), onD1_90.join(','));
+// Контракт SR-D1: grace = slot_end + шаг = 15:00; 13:00+90 = 14:30 ≤ 15:00 → сервер принимает:
+check('suggest: 90 мин в 13:00 (конец 14:30 ≤ grace 15:00) → есть', onD1_90.includes('13:00'), onD1_90.join(','));
+// Grace соблюдается и сверху: перенос не предлагает выход за grace.
+const s150 = suggestSlots({ psychologistId: PSY, days: 6, limit: 50, durationMin: 150 });
+const onD1_150 = s150.filter(s => s.date === D1).map(s => s.time);
+check('suggest: 150 мин в 13:00 (конец 15:30 > grace 15:00) → исключено', !onD1_150.includes('13:00'), onD1_150.join(','));
 
 // --- лимит выдачи ---
 const sLim = suggestSlots({ psychologistId: PSY, days: 6, limit: 3, durationMin: 60 });

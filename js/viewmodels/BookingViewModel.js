@@ -15,7 +15,7 @@ import {
   timeToMinutes, minutesToTime, addMinutesToTime, formatTimeRange,
   todayStr, daysFromToday, weekdayOf, DEFAULT_TIMEZONE
 } from '../services/timezoneService.js';
-import { resolveDurationMinutes, formatDuration as fmtDuration } from '../domain/duration.js';
+import { resolveDurationMinutes, resolveCandidateDurationMinutes, formatDuration as fmtDuration } from '../domain/duration.js';
 import {
   computeBookableSlots, isoWeekStartOf, addDaysIso
 } from '../domain/availability.js';
@@ -220,10 +220,17 @@ export class BookingViewModel extends BaseViewModel {
   // T-02 — сетка слотов под длительность услуги
   // ==========================================================================
 
-  /** Длительность выбранной услуги в минутах (fallback — 60). */
+  /**
+   * Длительность кандидата для сетки — через канонический резолвер
+   * (услуга → шаг сетки → дефолт + серверный кламп 480). Раньше геттер
+   * дублировал часть резолвера (услуга → 60) и расходился с сервером
+   * при пустой длительности услуги + шаге ≠ 60 и при длительности > 480.
+   */
   get durationMinutes() {
-    const d = Number(this.selectedService?.duration);
-    return d > 0 ? d : 60;
+    return resolveCandidateDurationMinutes({
+      service: this.selectedService,
+      slotStepMin: this.slotStepMinutes
+    });
   }
 
   get slotTimes() {
@@ -932,8 +939,10 @@ export class BookingViewModel extends BaseViewModel {
     // строкой в sessions.note, а поле timezoneOffset вообще не заполнялось.
     const clientTimezone = this.isForeignTimeZone ? this.clientTimeZone : '';
     const clientUtcOffsetMin = this.isForeignTimeZone ? this.clientUtcOffsetAtSlot : null;
-    // снимок длительности услуги: если услугу позже изменят, запись не «поедет»
-    const durationMin = resolveDurationMinutes({ service: svc, slotStepMin: this.slotStepMinutes });
+    // снимок длительности услуги: если услугу позже изменят, запись не «поедет».
+    // Кандидатный резолвер с серверным клампом — иначе локальный снимок
+    // расходился бы с duration_min, который сервер выведет сам (p_duration_min игнорируется).
+    const durationMin = resolveCandidateDurationMinutes({ service: svc, slotStepMin: this.slotStepMinutes });
 
     const session = db.addSession({
       psychologistId: this.psychologist.id,

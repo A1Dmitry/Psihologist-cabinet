@@ -88,7 +88,15 @@ export class TestDatabase {
       port: this.port,
       user: 'postgres',
       password: 'postgres',
-      database: 'postgres'
+      database: 'postgres',
+      // Poka-Yoke (recovery PR32, D1-QG-004): без таймаутов коннект/
+      // запрос к чёрной дыре (чужой процесс на порту, зависший PG)
+      // ждёт вечно и вешает гейт. Таймауты превращают вис в rejection →
+      // catch-fatal → красный детерминированный выход. Запасы щедрые:
+      // обычные запросы наборов — миллисекунды.
+      connectionTimeoutMillis: 15000,
+      query_timeout: 120000,
+      statement_timeout: 120000
     });
     await this.pool.query(SUPABASE_ENV);
     return this;
@@ -182,6 +190,23 @@ export async function startTestDatabase(opts = {}) {
   await db.start();
   await db.applySchema(opts);
   return db;
+}
+
+/**
+ * startTestDatabase с детерминированным провалом: если БД не поднялась,
+ * выйти с кодом 2 СРАЗУ. Без этого стартовый throw уходил в
+ * unhandledRejection (exitCode=1), а async-exit-hook форсил exit 0 —
+ * набор «проходил», не выполнив ни одной проверки (дыра найдена
+ * parity-набором при recovery PR32, D1-QG-004).
+ */
+export async function startTestDatabaseOrExit(opts = {}) {
+  try {
+    return await startTestDatabase(opts);
+  } catch (e) {
+    console.error('FATAL: cannot start test database:', e?.message ?? e ?? '(no reason given)');
+    await new Promise(r => setTimeout(r, 100));
+    process.exit(2);
+  }
 }
 
 /**

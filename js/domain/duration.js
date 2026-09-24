@@ -16,6 +16,14 @@
 
 export const DEFAULT_DURATION_MIN = 60;
 
+/**
+ * Верхняя граница осмысленной длительности сессии (8 часов).
+ * Зеркало серверного клампа `if v_new_dur <= 0 or v_new_dur > 480`
+ * в public.create_booking — поведение до D1 (main, T-02/T-04), D1 его
+ * сохранила. Менять только парой со schema.sql.
+ */
+export const MAX_DURATION_MIN = 480;
+
 /** Число минут из произвольного входа: ''/null/0/NaN → null («не задано»). */
 export function toDurationMinutes(value) {
   const n = Number(value);
@@ -35,6 +43,22 @@ export function resolveDurationMinutes({ durationMin = null, service = null, slo
     ?? DEFAULT_DURATION_MIN;
 }
 
+/**
+ * Длительность КАНДИДАТА (новая запись / перенос / сетка под услугу).
+ * Тот же приоритет источников, что resolveDurationMinutes, плюс серверный
+ * кламп (0,480] → дефолт. Точное зеркало серверного v_new_dur в
+ * public.create_booking (coalesce + clamp, поведение до D1); менять парой.
+ *
+ * Для чужих (уже созданных) записей сервер кламп НЕ применяет — там
+ * resolveDurationMinutes без клампа (снимки duration_min уже прокламплены
+ * сервером в момент их создания).
+ */
+export function resolveCandidateDurationMinutes({ durationMin = null, service = null, slotStepMin = null } = {}) {
+  const r = resolveDurationMinutes({ durationMin, service, slotStepMin });
+  if (r <= 0 || r > MAX_DURATION_MIN) return DEFAULT_DURATION_MIN;
+  return r;
+}
+
 /** «90» → «1,5 ч», «60» → «1 ч», «45» → «45 мин» */
 export function formatDuration(min) {
   const m = toDurationMinutes(min) ?? DEFAULT_DURATION_MIN;
@@ -45,7 +69,9 @@ export function formatDuration(min) {
 
 export const duration = {
   DEFAULT_DURATION_MIN,
+  MAX_DURATION_MIN,
   toDurationMinutes,
   resolveDurationMinutes,
+  resolveCandidateDurationMinutes,
   formatDuration
 };

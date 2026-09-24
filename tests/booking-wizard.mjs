@@ -6,7 +6,7 @@
  *
  * Покрывает:
  *   T-01 wizard: шаги «Услуга → Время → Контакт», назад/вперёд без потери данных;
- *   T-02 слоты под длительность услуги (90 мин не влезает в окно до 19:00) +
+ *   T-02 слоты под длительность услуги (150 мин не влезает в grace до 20:00) +
  *        пересечение с чужой записью;
  *   T-03 часовой пояс клиента: подпись, конверсия слотов, фиксация пояса в заявке;
  *   T-04 «услуга → сразу окна» (клик по услуге и ссылка /book/{slug}?service=).
@@ -95,7 +95,7 @@ globalThis.alert = () => {};
 globalThis.prompt = () => 'x';
 globalThis.FileReader = class {};
 
-// —— мок «сервера»: профиль + услуги 60/90 мин + настройки (Europe/Minsk, 10:00–19:00) ——
+// —— мок «сервера»: профиль + услуги 60/90/150 мин + настройки (Europe/Minsk, 10:00–19:00) ——
 const PSY_ID = 'psy_catalog_19';
 const PSY_ROW = {
   id: PSY_ID, email: 'catalog+natalia@example.invalid', full_name: 'Наталия Михайловская',
@@ -109,7 +109,8 @@ const PSY_ROW = {
 };
 const SVC_ROWS = [
   { id: 'svc60', psychologist_id: PSY_ID, title: 'Консультация 60 мин', description: '', duration_min: 60, price: 80, currency: 'BYN', format: 'offline', platforms: [], pay_url: '', sort_order: 1 },
-  { id: 'svc90', psychologist_id: PSY_ID, title: 'Глубокая сессия 90 мин', description: 'расширенный формат', duration_min: 90, price: 120, currency: 'BYN', format: 'online', platforms: ['zoom'], pay_url: '', sort_order: 2 }
+  { id: 'svc90', psychologist_id: PSY_ID, title: 'Глубокая сессия 90 мин', description: 'расширенный формат', duration_min: 90, price: 120, currency: 'BYN', format: 'online', platforms: ['zoom'], pay_url: '', sort_order: 2 },
+  { id: 'svc150', psychologist_id: PSY_ID, title: 'Марафон 150 мин', description: '', duration_min: 150, price: 200, currency: 'BYN', format: 'offline', platforms: [], pay_url: '', sort_order: 3 }
 ];
 const SETTINGS_ROW = {
   psychologist_id: PSY_ID, work_hours: 'Пн–Пт 10:00–19:00', timezone: 'Europe/Minsk',
@@ -179,9 +180,15 @@ check('в шаге 2 видна длительность выбранной ус
 bookingVm.selectDate(DATE);
 render();
 check('T-02: 90-мин услуга — сетка отрисована', /data-time="17:00"/.test(el('#book-slots')._html));
-check('T-02: 18:00 недоступен (18:00+90 мин > 19:00)', /disabled/.test(slotBtn('18:00')), slotBtn('18:00'));
-check('T-02: 17:00 доступен (17:00+90 мин = 18:30 ≤ 19:00)', slotBtn('17:00') && !/disabled/.test(slotBtn('17:00')));
-check('T-02: причина недоступности подписана (title)', /не хватает 90 мин/.test(el('#book-slots')._html));
+// Контракт SR-D1: grace = slot_end + шаг = 20:00 (сервер принимает с T-04); engine согласен.
+check('T-02: 18:00 доступен (18:00+90 мин = 19:30 ≤ grace 20:00)', slotBtn('18:00') && !/disabled/.test(slotBtn('18:00')), slotBtn('18:00'));
+check('T-02: 17:00 доступен (17:00+90 мин = 18:30 ≤ grace 20:00)', slotBtn('17:00') && !/disabled/.test(slotBtn('17:00')));
+bookingVm.selectService('svc150');
+render();
+check('T-02: 150 мин в 18:00 не влезает в grace (конец 20:30 > 20:00)', /disabled/.test(slotBtn('18:00')), slotBtn('18:00'));
+check('T-02: причина недоступности подписана (title)', /не хватает 150 мин/.test(el('#book-slots')._html));
+bookingVm.selectService('svc90');
+render();
 
 bookingVm.selectService('svc60');
 render();

@@ -13,7 +13,7 @@
  */
 import { db } from '../core/dbContext.js';
 import { safeStorage } from '../core/safeStorage.js';
-import { resolveDurationMinutes, DEFAULT_DURATION_MIN } from '../domain/duration.js';
+import { resolveDurationMinutes, resolveCandidateDurationMinutes, DEFAULT_DURATION_MIN } from '../domain/duration.js';
 import { supabaseApi } from './supabaseApi.js';
 import { cabinetApi } from './cabinetApi.js';
 import {
@@ -670,9 +670,11 @@ export function suggestSlots({ psychologistId, days = 10, limit = 12, durationMi
   const psyToday = (instantToZoned(now, psyTz) || {}).date || todayStr();
   const stepMin = Number(settings.slotStepMin) || DEFAULT_DURATION_MIN;
   const service = serviceId ? db.services.find(s => s.id === serviceId) || null : null;
+  // Кандидатный резолвер (услуга/явная длительность → шаг → дефолт + серверный
+  // кламп 480): перенос предлагает то, что сервер примет (см. v_new_dur).
   const dur = service
-    ? resolveDurationMinutes({ service, slotStepMin: stepMin })
-    : (Number(durationMin) || DEFAULT_DURATION_MIN);
+    ? resolveCandidateDurationMinutes({ service, slotStepMin: stepMin })
+    : resolveCandidateDurationMinutes({ durationMin });
   const clock = {
     nowMs: now.getTime(),
     today: psyToday,

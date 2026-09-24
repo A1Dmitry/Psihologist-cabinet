@@ -11,7 +11,7 @@
  *
  * Клиентский близнец правил — js/domain/availability.js (+ tests/availability-policy.mjs).
  */
-import { startTestDatabase, finishSuite } from '../tools/dbtest/index.mjs';
+import { startTestDatabaseOrExit, finishSuite } from '../tools/dbtest/index.mjs';
 
 const isTeardownNoise = (e) => /terminating connection|57P01/.test(String(e?.message || e));
 process.on('uncaughtException', (e) => { if (isTeardownNoise(e)) return; console.error(e); process.exitCode = 1; });
@@ -40,7 +40,7 @@ const addDays = (iso, n) => {
 let phoneSeq = 3000000;
 const phone = () => `+37529${String(phoneSeq++).padStart(7, '0')}`;
 
-const db = await startTestDatabase({ port: Number(process.env.DB_PORT || 55435) });
+const db = await startTestDatabaseOrExit({ port: Number(process.env.DB_PORT || 55435) });
 console.log('=== D1 availability/policy server suite ===');
 
 try {
@@ -286,6 +286,11 @@ try {
       `engine=${eng.code}/${eng.reason} server=${JSON.stringify(srv)}`);
     parityN++;
   }
+} catch (e) {
+  // Любой крэш основного потока — красный чек, иначе хвост пропускается
+  // и async-exit-hook форсит exit 0 (маскировка провала, D1-QG-004).
+  results.push(['FATAL: suite crashed: ' + (e?.message || e), false]);
+  console.error('FATAL:', e);
 } finally {
   await db.stop();
 }

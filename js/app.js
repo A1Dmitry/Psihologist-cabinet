@@ -1912,7 +1912,7 @@ function renderSuccess() {
       title: `${sv?.name || 'Консультация'} · ${p.fullName}`,
       date: s.date,
       time: s.time,
-      durationMin: sv?.duration || 60,
+      durationMin: resolveDurationMinutes({ durationMin: s.durationMin, service: sv }),
       location: s.meetLink || '',
       details: p.greeting || '',
       timezone: bookingVm.settings?.timezone || 'Europe/Minsk'
