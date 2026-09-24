@@ -1,5 +1,10 @@
 # Issue #23 — Implementation report (P0 Registration/Login E2E)
 
+> **HISTORICAL REPORT — NOT CURRENT MAIN STATE.** Документ описывает снимок цикла «issue #23 (Producer implementation)»
+> (2026-09-24, 2026-09-24) и сохранён как история — не переписывается.
+> Актуальное состояние — [`CURRENT-STATE.md`](CURRENT-STATE.md).
+
+
 **АУДИТОР: САМ** (Producer of this fix), 2026-09-24.  
 Независимый Challenger + production Main Re-Audit — **ещё не выполнены**.
 

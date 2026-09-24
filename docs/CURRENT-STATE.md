@@ -1,206 +1,152 @@
 # CURRENT-STATE — canonical current-state (audited)
 
-> **АУДИТОР: САМ** (Producer of this remediation cycle, 2026-09-24).  
-> Independent Challenger and Main Re-Audit are documented below as **OPEN** until merge.
+> Единственный current-state source of truth по issue #19. Все остальные
+> документы описывают снимки прошлых циклов (см. раздел «Исторические
+> документы»). Конфликт с этим файлом решается в пользу настоящего файла
+> до новой аудированной правки.
+>
+> **АУДИТОР: САМ** (сессия исполнения #19, Producer + self-check, 2026-09-24 UTC).
+> Независимый Challenger по этому документационному циклу и Main Re-Audit —
+> **OPEN** (следующий независимый агент; см. `docs/ISSUE-19-REPORT.md`).
 
 ## Main SHA
 
-- **Baseline main SHA (G0):** `c20caafc6aac5ed8a50d96f35ea177657ea35511` (origin/main at start of cycle)
-- **Current working branch:** `arena/01a0d31a-psihologist-cabinet` (commit will be recorded after merge)
-- **Schema file:** `supabase/schema.sql` (modified for T02/T03/T04)
-- **Tests:** `npm run verify` → 15/15 green (including new security-regression suite)
+- **Актуальный `main` (origin/main):** `87e3951241fd18f2cc24afa2b6502247a7fee73b`
+  (merge PR #37, 2026-09-24 14:25 UTC). Рабочая копия чистая:
+  `HEAD == origin/main`, `git status` — без локальных изменений.
+- **Проверено в этой сессии:** `git rev-parse HEAD origin/main` (оба = `87e3951`),
+  `npm run verify` → **22/22 набора зелёные, exit 0**,
+  `verify_pages.py` против живого `devserver.py :8765` → **ALL PASS (12/12 маршрутов)**.
 
-## Production authentication status (T01 / #18 / #23)
+## Фактически merged изменения (по PR, до `87e3951` включительно)
 
-**Status:** CODE FIXED, PRODUCTION E2E BLOCKED (environment, not code)
+| PR | Дата | Что вошло в main |
+|----|------|------------------|
+| #20 | 2026-09-24 | fix(auth): пароль сейфа применяется к сейфу, `key_verifier` синхронизируется с сервером (issue #14, challenger-находки) |
+| #24 | 2026-09-24 | docs: evidence `otp_expired` + localhost URL (issue #23) |
+| #25 | 2026-09-24 | **fix: server-authoritative booking** — `create_booking` не принимает клиентские `p_status`/`p_payment_*`/`p_amount_*`/`p_duration_min`; серверная деривация оплаты, `hold_expires_at`; **tenant isolation** — `client_risks` только `service_role`/security definer; **anti-spam по `created_at`** (не `session_date`); **domain validation** — дата/время/прошлое/service ownership/schedule (issues #21, #22, #23) |
+| #26 | 2026-09-24 | docs: Toyota Quality Gate final report + синхронизация CURRENT-STATE (тогдашний main `8d64d94`) |
+| #32 | 2026-09-24 | **D1: Availability + Booking Policy Engine** (issue #31/D1): `js/domain/availability.js` — канонический engine; серверный близнец в `create_booking` (min-notice, max-advance, буферы, slot-increment, service availability, `schedule_overrides`, дневные/недельные лимиты, advisory lock); SR-D1 в `schema.sql`; recovery (issue #33): grace `end ≤ slot_end + шаг`, кламп длительности (0,480], parity-матрица, E2E, harness-guard |
+| #37 | 2026-09-24 | docs(issue-34): независимый Challenger-аудит main @ `4d490d2e` — отчёт + карта доказательств (только документы; код не менялся) |
 
-- **Code fixes (proven locally):**
-  - `js/services/supabaseConfig.js`: `APPLICATION_URL = https://a1dmitry.github.io/Psihologist-cabinet/` canonical; `resolveApplicationUrl()` forbids loopback (`localhost`, `127.0.0.1`, `::1`, `*.localhost`); `resolveAuthEntryUrl()` builds `#/auth?email=…` deep-link.
-  - `js/services/supabaseApi.js`: `requestEmailOtp` sends `email_redirect_to = resolveAuthEntryUrl({via:'otp'})` → real app URL, not localhost; `consumeAuthRedirectFromUrl()` parses `#error=otp_expired` / `#access_token=` / PKCE `?code=` and strips auth params; `exchangeCodeForSession` handles PKCE.
-  - `js/domain/registration.js`: `consumeAuthRedirect()` / `finishAuthenticatedLogin()` handle magic-link redirect without manual code; cross-device FN verify without pending; expired local pending ≠ other device; `friendlyAuthError` maps `otp_expired` → user message.
-  - `js/app.js` boot: **before** routing, calls `consumeAuthRedirect()` → cabinet or auth error UI; no silent portal on `#error=…`.
-  - `js/viewmodels/AuthViewModel.js`: deep-link `#/auth?email=` → code step on other device.
-  - `supabase/functions/auth-code/index.ts`: letter contains code + button to `APP_URL#/auth?email=…`; loopback `APP_URL` rejected → fallback to Pages URL (poka-yoke). No localhost in email.
-  - Tests: `tests/registration-flow.mjs` cross-device, redirect error/success, OTP redirect; `tests/auth-code-edge.mjs` letter URL + localhost poka-yoke (71 checks).
+## Production: что доведено (честно)
 
-- **Production unknowns (remain UNKNOWN, not proven):**
-  - Supabase Auth Dashboard → URL Configuration: **Site URL** and **Redirect URLs** actual value in prod project `phiavtroybgwyjdhqqkh` → **UNKNOWN** (needs owner to set to `https://a1dmitry.github.io/Psihologist-cabinet/` per `docs/INFRA.md`).
-  - Edge Function `auth-code` deployed in prod → **UNKNOWN** (CI `supabase-deploy.yml` requires `SUPABASE_ACCESS_TOKEN` + `SUPABASE_PROJECT_ID`; last run before this cycle was skipped).
-  - `RESEND_API_KEY`, `MAIL_FROM`, `APP_URL` secrets set → **UNKNOWN** (owner action).
-  - Real email delivery + different-device click → **NOT RUN** from sandbox (no network to `supabase.co`).
+**Ничего не подтверждено production-контуром из этой сессии.**
 
-- **Evidence:**
-  - Local tests green; no `localhost` in code-generated email (proven by grep and auth-code-edge tests).
-  - `docs/ISSUE-23-EVIDENCE.md` documents observed `http://localhost:3000/#error=otp_expired` symptom and root cause (OTP fallback + Site URL = localhost).
-  - `docs/ISSUE-23-IMPLEMENTATION.md` documents fix chain.
-  - Production E2E script `tools/prod-e2e.mjs` exists for owner to run: `node tools/prod-e2e.mjs --email <test>`.
+- Из песочницы нет egress до `*.supabase.co` / `*.github.io` (доказано в #34, E1:
+  TLS-обрыв на handshake; в этой сессии не повторялось, но сетевая конфигурация
+  не менялась). Live-пробы «A-пакета» предыдущей сессии остаются **заявленными**
+  (AUDITOR: САМ того конвейера), не подтверждёнными.
+- **Production schema: UNKNOWN.** В репозитории `supabase/schema.sql` содержит
+  SR-001…SR-004, SR-108, SR-D1 и фиксы #21/#22 — владелец обязан **переприменить
+  файл целиком** в SQL Editor (чек-лист `docs/INFRA.md`, п.2). Факт применения
+  не проверен.
+- **Edge Functions `auth-code` / `telegram-notify` в проде: не задеплоены**
+  (CI `supabase-deploy.yml` — `deploy=skipped` во всех прогонах: нет
+  `SUPABASE_ACCESS_TOKEN`/`SUPABASE_PROJECT_ID`; issue #35, P1).
+- **Resend/APP_URL/Auth Site URL: UNKNOWN** (блокеры на владельце, `docs/INFRA.md`
+  п.6–7b; issue #18).
 
-- **Stop-the-line:** Production auth remains unproven → T01 cannot be DONE until owner runs real E2E and provides evidence.
+## Только локально верифицировано (этой сессией, main @ `87e3951`)
 
-## Authentication architecture status
+- `npm run verify` → 22/22 (домены, D1 engine/parity/E2E/cabinet-policy, wizard,
+  регистрация, auth-code edge, SQL-контракт на встроенном PostgreSQL 18.4,
+  security-regression, harness-guard, кабинет, UI, роутер, Tailwind, SPA).
+- `verify_pages.py` → ALL PASS против живого `devserver.py :8765` (12/12).
+- Схема применяется вербатим к настоящему PostgreSQL (идемпотентно, через
+  `tests/db-contract.mjs` / `tests/availability-db.mjs`).
+- `create_booking` читан целиком: серверная деривация оплаты/длительности/hold,
+  anti-spam по `created_at`, D1-политика — как в main (совпадает с выводами
+  независимого аудита #34, TASK 2/8).
 
-- **Single auth boundary preserved:** `auth-code` → `hashed_token` → `POST /auth/v1/verify` → JWT → `auth.uid()` → `claim_psychologist_profile` → RLS `owner_id = auth.uid()`. No parallel auth system introduced.
-- **Identity rule:** Authenticated identity derived from Supabase token, not from client-supplied `psychologist_id`. `fetchOwnedPsychologist(ownerId)` and `fetchOwnPsychologist(id)` use RLS owner check.
-- **key_verifier/vault:** Not used as login credential; only `pushKeyVerifier` writes verifier, `pushProfile` explicitly excludes it. Vault password validation canonicalized in `cryptoService.js`.
+## Открытые issue (P0/P1/P2), по состоянию 2026-09-24
 
-## Booking security status (T02 / #21)
+| Issue | Приоритет | Статус по фактам |
+|-------|-----------|------------------|
+| #18 | P0 | Production activation + real registration E2E — **ЗАБЛОКИРОВАНО доступами владельца** (секреты, deploy функций, re-apply schema, Resend). Кодовая часть готова |
+| #35 | P1 | Edge Functions не задеплоены (child of #34) — **ЗАБЛОКИРОВАНО владельцем** (CI secrets) |
+| #33 | P1 | PR32 Recovery — локальные гейты закрыты (recovery + parity-матрица + E2E + harness-guard; независимый Challenger #34 выполнен по repo-части), **Main Re-Audit production не выполнен**; Stop-the-Line держится через #35 |
+| #21 | P1 | Код merged (#25); независимый Challenger repo-части — в отчёте #34 (TASK 8); **production re-apply + закрытие гейтов — не выполнены** |
+| #22 | P1 | Код merged (#25); repo-проверки зелёные (security-regression, db-contract); **Main Re-Audit/production — не выполнены** |
+| #19 | P1 | Этот цикл (docs sync) — см. `docs/ISSUE-19-REPORT.md` |
+| #36 | P2 | Harness: каналы ложного зелёного (async-крах → exit 0; `verify_app` без красного канала) — child of #34 |
+| #27–#31 | BA | Backlog продуктовых требований (не дефекты); #31 — delta после #30 |
+| #15 | P1 (процесс) | Toyota Quality Gate формализован (PR #17); Main Re-Audit выполнен независимым агентом (триаж 2026-09-24) — ожидается закрытие на GitHub (нет прав Issues: write в токене сессии) |
 
-**Status:** FIXED (server-authoritative), proven by DB tests
+## Активные schema-requests (SR)
 
-- **Previous defect (proven):** `create_booking` trusted client `p_status`, `p_payment_status`, `p_amount_due`, `p_amount_paid`, `p_currency`, `p_duration_min`, `p_payment_policy`; hold expiration not server-controlled; indefinite hold possible.
-- **Fix (schema.sql):**
-  - RPC now **ignores** client payment/status/currency/duration fields; derives authoritative values:
-    - `duration` from service `duration_min` → settings `slot_step_min` → default 60 (mirror `js/domain/duration.js`).
-    - `payment_policy`, `price`, `currency`, `deposit` from service + `session_settings`; `amount_due` calculated server-side; `amount_paid=0`, `payment_status='unpaid'`, `status='held'` if payment required else `'confirmed'`, `hold_expires_at = now() + hold_minutes`.
-    - Hold expiration server-controlled, no indefinite hold.
-  - Expired holds already excluded in `public_booked_slots` view (`hold_expires_at > now()`).
-  - Advisory lock `pg_advisory_xact_lock` preserves atomicity (concurrency protection).
-- **Evidence:**
-  - `tests/security-regression.mjs` T02 checks: paid-state injection → normalized to unpaid, amount_paid=0, currency=BYN, duration=60, etc.
-  - `tests/db-contract.mjs` still green (36 checks) including race condition (2 parallel tx → 1 row).
-  - `tests/booking-wizard.mjs` green (server-first success).
+- **Applied в `supabase/schema.sql` (проверено grep по main @ `87e3951`, 2026-09-24):**
+  SR-001 (`sessions.client_timezone`/`client_utc_offset_min`/`duration_min`),
+  SR-002 (интервальный overlap + advisory lock в `create_booking`),
+  SR-003 (`public_booked_slots.duration_min`), SR-004
+  (`auth_login_codes.issued_token_hash`/`issues`/`consumed_at`), SR-108
+  (закрыт единым контрактом с SR-001), SR-D1 (политика D1 + `schedule_overrides`
+  + `public_schedule_overrides`). **В проде НЕ подтверждено — требуется
+  переприменение `schema.sql` целиком** (INFRA п.2).
+- **Открытые (ждут Агента 1):** SR-101…SR-107, SR-109 (кабинет/клиенты, T-05…T-24),
+  SR-002-«Google Meet» (Агент 1) — design-only.
 
-## Tenant isolation status (T03 / #22)
+## Исторические документы (не переписывать; помечены баннером)
 
-**Status:** FIXED (cross-tenant read blocked)
+Описывают старые SHA/циклы; актуальное состояние — только этот файл:
 
-- **Previous defect (proven):** `client_risks` policy `using (true)` allowed any authenticated to SELECT all `phone_key`, `no_show_total`, etc. — cross-tenant PII leak.
-- **Fix:**
-  - Dropped `owner_read` policy; enabled RLS with **no** anon/authenticated policies → only `service_role` can read (bypasses RLS). `create_booking` (security definer) checks `client_risks.blocked` server-side.
-  - `booking_attempts` already tenant-scoped via `owner_all` policy on `psychologist_id`.
-- **Evidence:**
-  - `tests/security-regression.mjs` T03: authenticated SELECT from `client_risks` → permission denied (proven).
-  - `tests/db-contract.mjs` RLS checks still green (anon cannot read sessions/clients, owner sees own, stranger sees none).
+- `docs/FULL-AUDIT-REPORT.md` — аудит AUDIT-REG-DRY-001 (main @ `e7cc194`).
+- `docs/ISSUE-14-REPORT.md` — Producer-отчёт #14 (main @ `998561d`).
+- `docs/ISSUE-14-CHALLENGER.md` — Challenger #14 (main @ `d578c08`).
+- `docs/ISSUE-15-REPORT.md` — Producer-отчёт #15 (до merge PR #17).
+- `docs/AGENT-1-REPORT.md`, `docs/AGENT-2-REPORT.md`, `docs/AGENT-3-REPORT.md` —
+  циклы 2026-09-23 (PR #2/#4/#3).
+- `docs/QUALITY-GATE-REPORT.md` — T07 final report (baseline `c20caaf`, после PR #25).
+- `docs/D1-REPORT.md` — recovery-отчёт PR #32 (ветка, до merge; независимый
+  challenger — `docs/ISSUE-34-REPORT.md`).
+- `docs/ISSUE-23-EVIDENCE.md`, `docs/ISSUE-23-IMPLEMENTATION.md` — цикл #23
+  (main @ `d41dd35c`).
+- `docs/PLAN-AUDIT-REG-DRY-001.md` — план цикла AUDIT-REG-DRY-001.
+- `docs/ISSUE-TRIAGE-2026-09-24.md` — триаж против main @ `d578c08`;
+  рекомендации по закрытию #7/#11/#15/#8 остаются исполнимыми, статусы сверять
+  с этим файлом.
+- `docs/ISSUE-34-REPORT.md` / `docs/ISSUE-34-TRIAGE.md` — независимый аудит
+  main @ `4d490d2e`; актуален для repo-выводов (PR #37 добавил только эти
+  документы), production-выводы — UNKNOWN/BLOCKED.
 
-## Anti-spam status (T03 / #22)
+## Статус регистрации (T-01 / #18 / #23)
 
-**Status:** FIXED (creation-time window)
+- **Код: готов.** Единый use case (`js/domain/registration.js`), канал OTP
+  переживает reload, атомарное погашение кода (SR-004), `email_redirect_to` на
+  реальный URL (без localhost), deep-link `#/auth?email=`, применение пароля
+  сейфа, синхронизация `key_verifier` (PR #20).
+- **Production: НЕ подтверждена.** Реальный сценарий
+  `new email → real email → OTP → Auth → claim → cabinet → reload` **не выполнен**
+  (нет deploy `auth-code`, нет Resend, Site URL/Redirect URLs — UNKNOWN).
+  Инструмент владельца: `node tools/prod-e2e.mjs --email <тестовый@email>`.
+  Регистрация **не** помечена production-ready.
 
-- **Previous defect (proven):** `create_booking` counted `session_date = current_date` → future bookings bypass daily limit.
-- **Fix:**
-  - Now counts `sessions.created_at >= current_date` with deterministic phone normalization (last 9 digits, matching `fraudProtectionService.normalizePhone`).
-  - Phone normalization deterministic: digits only, last 9 if length>=9, else digits.
-  - `booking_attempts` insert added for audit (best-effort, exception swallowed).
-- **Evidence:**
-  - `tests/security-regression.mjs` T03: 4 future bookings same phone same creation day → 4th blocked (PASS), first 3 succeed (PASS). Previously would allow N future bookings.
-  - `tests/db-contract.mjs` anti-spam still green (4th today blocked).
+## Статус Toyota Quality Gate
 
-## Domain validation status (T04)
+- Канон: `docs/RULES.md` §6 (единый источник правил). `AGENTS.md` — краткая
+  входная точка, не расходит с §6. Issue Form
+  (`.github/ISSUE_TEMPLATE/significant-defect.yml`) реализует §6.9.
+  (Сверка выполнена в этом цикле — `docs/ISSUE-19-REPORT.md`, раздел ПРОВЕРКА.)
+- #15 (процесс) — исполнен (PR #17), независимый Main Re-Audit — в триаже 2026-09-24.
+- **Открытые гейты:** P0 #18 (production), P1 #35 (deploy функций) держат
+  Stop-the-Line на production-контуре; #33 закрыт локально, ждёт production
+  Main Re-Audit; #36 (harness-каналы ложного зелёного) — open P2; независимый
+  Challenger по настоящему документационному циклу — open.
 
-**Status:** FIXED (server-side domain boundary)
+## Next actions (без дублей)
 
-- **Previous defect:** `create_booking` only checked psychologist exists/active and slot overlap; did not validate service existence/ownership/active, date/time validity, past-date, schedule rules, duration.
-- **Fix (schema.sql):**
-  - Date format `YYYY-MM-DD` validated, invalid rejected; time `HH:MM` validated.
-  - Past-date rejection: `session_date < current_date` or today + time < now() → reject.
-  - Service: if `p_service_id` provided, must exist, belong to psychologist, active.
-  - Psychologist: must exist and active (already).
-  - Schedule: `work_days` (jsonb) check `isodow` in array; `slot_start`/`slot_end` + `slot_step_min` check time within work window and duration not exceed `slot_end + step`.
-  - `schedule_blocks` interval overlap (already).
-  - Sessions interval overlap (already).
-  - Duration server-derived (T02).
-- **Evidence:**
-  - `tests/security-regression.mjs` T04: wrong owner, inactive service, nonexistent service, inactive psychologist, invalid date/time, past booking, outside working hours, duration injection all rejected (PASS).
-  - Existing booking flow still works (`tests/booking-wizard.mjs`).
-
-## Adversarial test status (T05)
-
-**Status:** GREEN (new suite)
-
-- **Suite:** `tests/security-regression.mjs` (25+ checks) + existing `tests/auth-code-edge.mjs` (71), `tests/registration-flow.mjs` (105), `tests/db-contract.mjs` (47).
-- **Mandatory attacks covered:**
-  - User A token + User B psychologist_id → RLS blocks (PASS)
-  - anonymous booking with forged business state → normalized (PASS)
-  - paid-state, payment-status, amount_due, amount_paid, duration injection → server-derived (PASS)
-  - invalid service ownership, inactive service → rejected (PASS)
-  - cross-tenant client_risks SELECT → permission denied (PASS)
-  - future-date anti-spam bypass → blocked (PASS)
-  - expired-hold reuse → allowed (PASS, expired holds don't block)
-  - credential replay, expired, malformed → covered in `auth-code-edge.mjs` (PASS)
-- **Clean checkout:** `npm run verify` runs all suites from clean state, deterministic.
-- **CI gate:** `tools/verify_all.mjs` includes security-regression; fails build on any FAIL.
-
-## Open risks
-
-- **P0 Production auth unproven:** Real email delivery, Site URL, Resend secrets, Edge Function deploy remain UNKNOWN until owner runs `tools/prod-e2e.mjs`. Task T01 cannot be DONE.
-- **P1 Booking payment webhook:** Demo payment is local-only (`paymentService.paySession` writes to `db.payments` only, not server). Real payment status authority is server for initial state, but paid transition is still client-side. Needs server-side payment confirmation via Edge Function/webhook (future).
-- **P2 client_risks empty:** Table may be empty in prod, but policy fix prevents future leak. No global fraud sync yet.
-- **P2 Telegram spam:** `telegram-notify` accepts arbitrary `text` from anon (known observation in INFRA.md), mitigated by rate-limit suggestion but not fixed in this cycle.
-- **P2 Timezone display:** Client timezone stored, but notifications (T-15) not yet sign time in client timezone.
-
-## Remaining unknowns (explicit)
-
-- Supabase Auth Site URL actual value in prod → UNKNOWN
-- Supabase Auth Redirect URLs allowlist → UNKNOWN
-- Edge Function `auth-code` deployed version SHA → UNKNOWN
-- `RESEND_API_KEY` set → UNKNOWN
-- `MAIL_FROM` set → UNKNOWN
-- `APP_URL` secret set → UNKNOWN
-- Real prod `supabase/schema.sql` applied version → UNKNOWN (needs owner to re-apply after T02/T03/T04 fixes)
-- Real prod `public_profiles` content → UNKNOWN (seed may not be applied)
-- Real email inbox for E2E → UNKNOWN
-
-## Challenger status
-
-- **Self-Challenger (AUDITOR: SAM):** This cycle performed self-review:
-  - Verified `create_booking` no longer trusts client payment fields (grep + DB tests).
-  - Attempted cross-tenant `client_risks` read as authenticated → blocked (proven).
-  - Attempted future-date anti-spam bypass → now blocked (proven).
-  - Attempted service ownership bypass → rejected (proven).
-  - Checked `APPLICATION_URL` never emits localhost (code + tests).
-  - Checked `key_verifier` not used as auth credential.
-  - Negative tests attempted for all mandatory attacks.
-- **Independent Challenger (AUDITOR: EXTERNAL):** Not yet performed for this cycle — requires second agent/session. Previous cycles had external challenger for #14 (`docs/ISSUE-14-CHALLENGER.md`). For T02-T05, external challenger should repeat security-regression suite on merged main SHA.
-
-## Main Re-Audit status
-
-- **Baseline main:** `c20caaf` audited via `npm run verify` (14/15 green before this cycle, 15/15 after).
-- **This branch:** `arena/01a0d31a-psihologist-cabinet` — fixes applied, `npm run verify` 15/15 green, `npm run verify:db` 44 PASS, `security-regression` ALL PASS.
-- **Merged main Re-Audit:** **PENDING** — must be performed after merge of this branch to main: checkout origin/main, record new SHA, run `npm run verify`, verify `supabase/schema.sql` contains server-authoritative `create_booking` and `client_risks` RLS fix, run `tests/security-regression.mjs`, check no regression.
-
-## Historical reports (explicitly historical)
-
-- `docs/FULL-AUDIT-REPORT.md` — 2026-09-23 audit, status ЧАСТИЧНО ЗАВЕРШЕНО, prod not verified.
-- `docs/ISSUE-14-REPORT.md` — 2026-09-23, AUDITOR: SAM, prod activation blocked.
-- `docs/ISSUE-14-CHALLENGER.md` — 2026-09-24 external challenger, found vault password loss, fixed.
-- `docs/ISSUE-23-EVIDENCE.md` — 2026-09-24 external evidence, localhost + otp_expired observed.
-- `docs/ISSUE-23-IMPLEMENTATION.md` — 2026-09-24 Producer implementation, AUDITOR: SAM.
-- `docs/AGENT-1-REPORT.md`, `AGENT-2-REPORT.md`, `AGENT-3-REPORT.md` — earlier cycles, historical.
-
-These are **not** current runtime facts; they are preserved as historical context.
-
-## Definition of Done (final per orchestration)
-
-| Invariant | Status |
-|-----------|--------|
-| production_authentication | PROVEN_OR_EXPLICITLY_BLOCKED_WITH_REMAINING_RISK → **BLOCKED_WITH_RISK** (code fixed, prod unknown) |
-| authentication_session | PROVEN (local) |
-| cross_device_login | PROVEN (local, tests) |
-| private_data_boundary | PROVEN (RLS tests) |
-| tenant_boundary | PROVEN (client_risks RLS + sessions RLS) |
-| booking_authority | SERVER |
-| payment_authority | SERVER (initial state) |
-| amount_authority | SERVER |
-| duration_authority | SERVER |
-| booking_status_authority | SERVER |
-| hold_expiration | SERVER |
-| anti_spam | SERVER (creation-time) |
-| service_validation | SERVER |
-| schedule_validation | SERVER |
-| adversarial_regression | GREEN (15 suites) |
-| current_state_docs | SYNCHRONIZED (this file) |
-| challenger | PASSED_FOR_EVERY_TASK (self) / EXTERNAL PENDING |
-| main_reaudit | PENDING_AFTER_MERGE |
-| toyota_quality_gate | OPEN (awaiting final merge + external challenger + prod E2E) |
-
-## Next backlog
-
-1. Owner: set `SUPABASE_ACCESS_TOKEN` + `SUPABASE_PROJECT_ID`, deploy Edge Functions, set `RESEND_API_KEY`, `MAIL_FROM`, `APP_URL`, set Auth Site URL = `https://a1dmitry.github.io/Psihologist-cabinet/`, apply `supabase/schema.sql` to prod, run `node tools/prod-e2e.mjs --email <test>`, attach evidence to #18.
-2. Independent Challenger: repeat security-regression on merged main SHA, publish report with AUDITOR: EXTERNAL.
-3. Main Re-Audit: after merge, verify main SHA, run `npm run verify`, check `client_risks` RLS, `create_booking` authority.
-4. Payment webhook: server-side paid transition (Edge Function) to close local-only demo pay gap.
-5. Telegram rate-limit / validation for `telegram-notify` (spam observation).
-6. Close issues #18, #21, #22, #19, #15 after evidence + challenger + re-audit.
+1. Владелец: secrets CI (`SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`),
+   deploy `auth-code`/`telegram-notify`, Resend (`RESEND_API_KEY`, `MAIL_FROM`),
+   `APP_URL` + Auth Site URL/Redirect URLs, **ре-apply `schema.sql` + `seed.sql`
+   целиком**, затем `node tools/prod-e2e.mjs` → evidence в #18 (закрывает #35
+   и production-ногу #18/#21/#22/#33).
+2. Независимый Challenger: повторить `npm run verify` + `verify_pages.py` на
+   main после этого цикла, сверить настоящий файл с кодом, опубликовать отчёт
+   с `АУДИТОР: ВНЕШНИЙ`.
+3. Main Re-Audit: проверить актуальный `main` SHA и факт применения schema в
+   проде после п.1.
+4. #36: закрыть каналы ложного зелёного в харнесе (child of #34).
 
 ---
-*Generated: 2026-09-24, branch arena/01a0d31a-psihologist-cabinet, baseline c20caaf*
+*Синхронизировано: 2026-09-24 (UTC), main @ `87e3951241fd18f2cc24afa2b6502247a7fee73b`,
+цикл #19 (ветка `arena/01a0d3db-psihologist-cabinet`).*

@@ -2,6 +2,11 @@
 
 Цель этого документа — не просто перечислить функции, а организовать работы **по зависимостям**, чтобы параллельные работы не конфликтовали, не создавали вторые реализации одного домена и не опережали серверные инварианты.
 
+> **Статус сверки (issue #19, 2026-09-24, main @ `87e3951`):** статусы ниже
+> проверены против текущего кода/`schema.sql` (grep + `npm run verify` 22/22).
+> Production-статус любого ✅ не означает production deployment — production
+> только по фактическому evidence (`docs/INFRA.md`, `docs/CURRENT-STATE.md`).
+
 > **Правило:** порядок ниже — dependency order, а не порядок номеров T-01…T-26.
 > Реализация каждой существенной задачи: **Producer → Challenger → Merge → Main Re-Audit**.
 > P0/P1 дефект останавливает затронутый контур до устранения или явного containment.
@@ -18,23 +23,24 @@
 | Service → windows | ✅ T-04 |
 | Public free/busy | ✅ |
 | Google Calendar iCal groundwork | ✅ |
-| Payment policy groundwork | ⚠️ server authority требует #21 |
+| Payment policy groundwork | ✅ server authority в main (PR #25; #21 — код closed, гейты/production открыты) |
 | Client reply token | ✅ / расширяется T-12 |
-| Telegram psychologist notifications | ✅ T-16 |
-| Consent checkbox | ⚠️ хранение факта — T-25 |
+| Telegram psychologist notifications | ✅ T-16 (код; production-деплой функции — #35) |
+| Consent checkbox | ✅ T-25: факт + `consent_at` на сервере (`clients`, `booking_attempts`, PR #9); версия текста — #29 |
 | Waitlist storage | ⚠️ T-24 |
 | Client portal | ⚠️ T-12 |
 | Real client email delivery | ⬜ T-15 |
 | Calendar event lifecycle | ⬜ D4 |
-| Server booking policy engine | ⬜ D1 |
+| Server booking policy engine | ✅ D1 в main (PR #32 + recovery #33; parity-матрица + E2E) |
 
 ## 2. Обязательный порядок выполнения
 
 ### PHASE 0 — Process / Quality Gate
 
-**0. #15 — Toyota Quality Gate**
+**0. #15 — Toyota Quality Gate — ✅ формализован (PR #17; канон — `docs/RULES.md` §6)**
 
-Общий процесс для всех следующих работ:
+Общий процесс для всех следующих работ (сокращённая запись цикла; единый
+канон — `docs/RULES.md` §6, входная точка `AGENTS.md`):
 
 `MAIN → AUDIT → DEFECT/REQUIREMENT → ISSUE → PRODUCER → TESTS → CHALLENGER → MERGE → MAIN RE-AUDIT → STANDARDIZE`
 
@@ -48,19 +54,36 @@
 
 `real email → OTP → Auth → owner_id=auth.uid() → cabinet → reload`
 
+Статус (2026-09-24): код готов (PR #20/#25); production — ЗАБЛОКИРОВАНО
+доступами владельца (см. `docs/CURRENT-STATE.md`).
+
 **2. #21 — Server-authoritative Booking — P1**
 
 Сделать сервер единственным источником истины для booking status, payment state, amount, duration, hold expiry и booking-time validation.
 
+Статус (2026-09-24): **код merged в main (PR #25)** — `create_booking` деривирует
+оплату/длительность/hold серверно, anti-spam по `created_at`; независимый
+Challenger repo-части — в отчёте #34 (TASK 8). Открыто: production re-apply
+`schema.sql` + Main Re-Audit + server-side paid transition (T-17, demo-pay
+local-only).
+
 **3. #22 — Tenant Isolation / Anti-spam — P1**
 
 Закрыть cross-tenant reads, ownership, anti-spam и server-side identity.
+
+Статус (2026-09-24): **код merged в main (PR #25)** — `client_risks`
+без политик для `anon`/`authenticated` (только `service_role`/security definer),
+`booking_attempts` tenant-scoped. Открыто: Main Re-Audit/production (как #21).
 
 #18, #21 и #22 могут выполняться параллельно **только если они не изменяют один и тот же участок schema/RPC без координации**. Перед следующим phase обязателен Main Re-Audit.
 
 **4. #19 — Current-State Documentation**
 
 После #18/#21/#22 обновить единственный current-state source of truth. Исторические отчёты не переписывать.
+
+Статус (2026-09-24): цикл #19 выполнен по фактам main @ `87e3951`
+(`docs/CURRENT-STATE.md`, баннеры historical, сверка ROADMAP/SR/RULES —
+`docs/ISSUE-19-REPORT.md`). Независимый Challenger по циклу — open.
 
 ### PHASE 2 — Existing Booking Foundation
 
@@ -77,9 +100,15 @@
 
 ### PHASE 3 — Canonical Availability + Booking Policy Engine
 
-**9. #31 / D1 — Availability + Booking Policy Engine — P1**
+**9. #31 / D1 — Availability + Booking Policy Engine — P1 — ✅ в main (2026-09-24)**
 
-Это **главный следующий архитектурный узел**.
+Статус: реализовано PR #32 (+ recovery #33): канонический клиентский engine
+`js/domain/availability.js`, серверный близнец в `create_booking` (min-notice,
+max-advance, буферы, increment, service availability, `schedule_overrides`,
+дневные/недельные лимиты), SR-D1 в `schema.sql`; регрессия —
+`tests/availability-policy.mjs`, `tests/availability-db.mjs`,
+`tests/availability-parity.mjs`, `tests/booking-e2e.mjs`.
+Production: re-apply `schema.sql` — pending (INFRA п.2).
 
 Канонический контракт:
 
@@ -317,8 +346,10 @@ Local/PostgreSQL/CI ≠ production. Production-ready только после ф�
 
 **Номер задачи не определяет порядок. Зависимость определяет порядок.**
 
-Главный следующий архитектурный узел после production/security foundation:
+D1 (единый Availability + Booking Policy Engine) — **реализован в main**
+(PR #32 + recovery #33, 2026-09-24). Следующие архитектурные узлы по
+dependency order: **D5** (server-enforced cancellation/reschedule policy) и
+**D2** (waitlist matching + exclusive claim); production-нога (#18/#35) остаётся
+P0 и держит Stop-the-Line до фактического production evidence.
 
-**D1 — единый Availability + Booking Policy Engine.**
-
-Все остальные booking-capabilities должны потреблять его, а не реализовывать собственную копию.
+Все остальные booking-capabilities должны потреблять D1, а не реализовывать собственную копию.

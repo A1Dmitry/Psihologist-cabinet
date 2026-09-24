@@ -1,5 +1,10 @@
 # D1 — Availability + Booking Policy Engine: recovery-отчёт
 
+> **HISTORICAL REPORT — NOT CURRENT MAIN STATE.** Документ описывает снимок цикла «recovery PR #32 / issue #33 (до merge PR #32)»
+> (ветка `arena/01a0d32e`, 2026-09-24) и сохранён как история — не переписывается.
+> Актуальное состояние — [`CURRENT-STATE.md`](CURRENT-STATE.md).
+
+
 Миссия: PR32_RECOVERY_AND_REVALIDATION. PR #32, issue #33 (STOP THE LINE).
 Дата: 2026-09-24. Ветка: `arena/01a0d32e-psihologist-cabinet`.
 **АУДИТОР: САМ** — single-agent сессия: Producer, adversarial self-review

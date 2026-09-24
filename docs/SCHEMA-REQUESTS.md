@@ -2,6 +2,15 @@
 
 Очередь изменений, которые должен интегрировать Агент 1 (или владелец БД). До применения миграции клиентская часть не полагается на новые колонки как на обязательные: публичная запись сохраняет совместимость с текущим контрактом.
 
+> **Контекст (issue #19, 2026-09-24, main @ `87e3951`):** нижепервая секция
+> (SR-001/SR-002 в редакции Агента 1) — первоначальные черновики, **superseded**:
+> итоговый контракт — таблица «Очередь» и детальные разделы SR-001/002/003/004/108/SR-D1
+> (редакция Агента 2 + issue #14 + D1) ниже по файлу. Все SR с пометкой
+> «applied» сверены с фактическим `supabase/schema.sql` main @ `87e3951`
+> (grep, 2026-09-24). **Production-статус у каждого applied SR указан отдельно:
+> в проде `schema.sql` НЕ подтверждено применённым** (INFRA п.2 — нужен
+> re-apply целиком; актуальное состояние — `docs/CURRENT-STATE.md`).
+
 ## SR-001 — часовой пояс клиента в `sessions`
 
 - **Что:** добавить `client_timezone text` и `client_timezone_offset_min integer` в `sessions`; желательно также вычисляемое/заполняемое сервером `scheduled_at timestamptz` для однозначного момента начала.
@@ -124,8 +133,8 @@
 | ID | Дата | От | Что | Куда | Приоритет | Статус |
 |----|------|----|-----|------|-----------|--------|
 | SR-001 | 2026-09-23 | Агент 2 (запись/SEO) | Часовой пояс клиента в записи: `sessions.client_timezone`, `sessions.client_utc_offset_min` (+ снимок `duration_min`) | `schema.sql` → sessions + RPC `create_booking`; `entities.js` → `Session` | обычный | **✅ применено 2026-09-23** (AUDIT-REG-DRY-001); в проде требует переприменения `schema.sql` |
-| SR-002 | 2026-09-23 | Агент 2 (запись/SEO) | RPC `create_booking`: проверка занятости по интервалу (длительность услуги), а не по точному совпадению времени | `schema.sql` → RPC `create_booking` | обычный (до реального трафика) | **✅ применено 2026-09-23** + атомарность (advisory lock); тест `tests/db-contract.mjs` |
-| SR-003 | 2026-09-23 | Агент 2 (запись/SEO) | `public_booked_slots`: отдать `duration_min` чужой записи | `schema.sql` → view; `supabaseApi.listBookedSlots`; `BookingViewModel._bookingDurationAt` | обычный | **✅ применено 2026-09-23** (view был, клиент не запрашивал колонку — исправлено) |
+| SR-002 | 2026-09-23 | Агент 2 (запись/SEO) | RPC `create_booking`: проверка занятости по интервалу (длительность услуги), а не по точному совпадению времени | `schema.sql` → RPC `create_booking` | обычный (до реального трафика) | **✅ применено 2026-09-23** + атомарность (advisory lock); тест `tests/db-contract.mjs`. **Production: НЕ подтверждено** (re-apply `schema.sql`, INFRA п.2) |
+| SR-003 | 2026-09-23 | Агент 2 (запись/SEO) | `public_booked_slots`: отдать `duration_min` чужой записи | `schema.sql` → view; `supabaseApi.listBookedSlots`; `BookingViewModel._bookingDurationAt` | обычный | **✅ применено 2026-09-23** (view был, клиент не запрашивал колонку — исправлено). **Production: НЕ подтверждено** (re-apply `schema.sql`, INFRA п.2) |
 | SR-101 | 2026-09-23 | Агент 3 (кабинет/клиенты) | таблица `session_series` + `sessions.series_id` | schema.sql, entities.js, cabinetApi.js | обычный (фича работает локально) | ждёт Агента 1 |
 | SR-102 | 2026-09-23 | Агент 3 | `clients`: `price_override`, `currency`, `payment_method`, `meet_link`, `payment_url` | schema.sql, entities.js, cabinetApi.js | обычный | ждёт Агента 1 |
 | SR-103 | 2026-09-23 | Агент 3 | таблица `client_access_tokens` + публичный RPC `client_cabinet(p_token)` | schema.sql | блокер для кросс-девайс мини-кабинета (T-12) | ждёт Агента 1 |
@@ -133,7 +142,7 @@
 | SR-105 | 2026-09-23 | Агент 3 | таблица `client_requests` + RPC `client_cabinet_action(p_token, p_action, p_payload)` | schema.sql | обычный (T-08/T-12/T-24) | ждёт Агента 1 |
 | SR-106 | 2026-09-23 | Агент 3 (совместно с Агентом 2 по форме записи) | `waiting_items`: `desired_date`, `desired_time`, `recurring`, `weekday`, `session_id`, `status` | schema.sql, entities.js, cabinetApi.js | обычный (T-08/T-24) | ждёт Агента 1 |
 | SR-107 | 2026-09-23 | Агент 3 | таблица `client_documents` (подпись клиента) | schema.sql | можно позже (T-14) | ждёт Агента 1 |
-| SR-108 | 2026-09-23 | Агент 3 (синхронизация с T-03 Агента 2) | `sessions.client_timezone` (`client_utc_offset_min` при необходимости) | schema.sql, entities.js, cabinetApi.js | обычный (T-23) | **✅ применено 2026-09-23** — закрыто вместе с SR-001 единым контрактом (дубль поля не создавался) |
+| SR-108 | 2026-09-23 | Агент 3 (синхронизация с T-03 Агента 2) | `sessions.client_timezone` (`client_utc_offset_min` при необходимости) | schema.sql, entities.js, cabinetApi.js | обычный (T-23) | **✅ применено 2026-09-23** — закрыто вместе с SR-001 единым контрактом (дубль поля не создавался). **Production: НЕ подтверждено** (вместе с SR-001, INFRA п.2) |
 | SR-109 | 2026-09-23 | Агент 3 | маппинг новых полей в `cabinetApi.mapSession/sessRow/applyPull` (клиенты/сессии/ожидание) | cabinetApi.js | обычный | ⚠️ частично: сессии — через канонический `sessionMapper.js` (SR-001/108 закрыты); клиенты/ожидание ждут SR-102/106 |
 
 ## Детали заявок Агента 3 (кабинет и клиенты, задачи T-05…T-24)
@@ -399,10 +408,14 @@
   - «сегодня»/«прошлое»/горизонт — в поясе специалиста (`session_settings.timezone`),
     а не сервера (заменяет crude same-day check по серверному времени).
 - **Приоритет:** P1 (архитектурный узел фазы 3; блокирует D5/T-05/D2/T-12/T-26).
-- **Статус:** `applied` в репозитории 2026-09-24 (ветка `arena/01a0d32e-psihologist-cabinet`).
-  Проверено: `node tests/availability-policy.mjs` (домен), `node tests/availability-db.mjs`
-  (сервер на реальном PostgreSQL), `npm run verify` 17/17.
-  **В проде требует переприменения `schema.sql`** (как все DDL-изменения).
+- **Статус:** `applied` в репозитории 2026-09-24 (ветка `arena/01a0d32e-psihologist-cabinet`,
+  merged PR #32). Проверено: `node tests/availability-policy.mjs` (домен), `node tests/availability-db.mjs`
+  (сервер на реальном PostgreSQL), `npm run verify` 17/17. **Production: НЕ подтверждено** —
+  в проде требует переприменения `schema.sql` (как все DDL-изменения; INFRA п.2).
+  Сверено с фактическим `schema.sql` main @ `87e3951` (grep, 2026-09-24):
+  `min_notice_minutes`, `max_advance_days`, `buffer_*`, `slot_increment_min`,
+  `max_bookings_per_day/week`, `services.availability`, `schedule_overrides`,
+  `public_schedule_overrides` — на месте.
 - **Addendum (recovery PR32, issue #33, 2026-09-24):** клиентский engine
   приведён к зафиксированному здесь контракту grace (`end ≤ slot_end + шаг` —
   раньше engine требовал `end ≤ slot_end` и расходился с сервером) и к

@@ -1,5 +1,10 @@
 # Полный технический аудит — AUDIT-REG-DRY-001
 
+> **HISTORICAL REPORT — NOT CURRENT MAIN STATE.** Документ описывает снимок цикла «AUDIT-REG-DRY-001»
+> (main @ `e7cc194`, 2026-09-23) и сохранён как история — не переписывается.
+> Актуальное состояние — [`CURRENT-STATE.md`](CURRENT-STATE.md).
+
+
 **Дата:** 2026-09-23 · **Ветка:** `arena/01a0cf7a-psihologist-cabinet` (от `main` @ `e7cc194`)
 **Объект:** весь `main` — 64 файла, ~17.1k строк (код + доки), а не только файлы предыдущего агента.
 **Правила:** `AGENTS.md`, `docs/RULES.md`. План работ — `docs/PLAN-AUDIT-REG-DRY-001.md`.

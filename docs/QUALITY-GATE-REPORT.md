@@ -1,5 +1,10 @@
 # Toyota Quality Gate — Final Report (T07)
 
+> **HISTORICAL REPORT — NOT CURRENT MAIN STATE.** Документ описывает снимок цикла «T07 final report»
+> (baseline `c20caaf`, после PR #25, 2026-09-24) и сохранён как история — не переписывается.
+> Актуальное состояние — [`CURRENT-STATE.md`](CURRENT-STATE.md).
+
+
 > **АУДИТОР: САМ** (Producer of remediation cycle 2026-09-24)  
 > **Main SHA baseline:** `c20caafc6aac5ed8a50d96f35ea177657ea35511`  
 > **Main SHA after merges:** `8d64d94456008c5e033323352405abe2df7d962d` (PR #25 merged)  

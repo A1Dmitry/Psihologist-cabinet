@@ -1,5 +1,10 @@
 # Issue #23 — evidence sync: `otp_expired` + localhost email link
 
+> **HISTORICAL REPORT — NOT CURRENT MAIN STATE.** Документ описывает снимок цикла «issue #23 (evidence)»
+> (main @ `d41dd35c`, 2026-09-24) и сохранён как история — не переписывается.
+> Актуальное состояние — [`CURRENT-STATE.md`](CURRENT-STATE.md).
+
+
 **АУДИТОР: ВНЕШНИЙ** — Challenger session, 2026-09-24.  
 **main SHA:** `d41dd35c12535b17909903665feb55c9530e31a0`  
 **Issue:** [#23](https://github.com/A1Dmitry/Psihologist-cabinet/issues/23) (P0 email application URL + session token E2E)  
