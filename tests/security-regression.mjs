@@ -5,7 +5,7 @@
  * Uses embedded PostgreSQL + real schema.sql
  */
 
-import { startTestDatabase } from '../tools/dbtest/index.mjs';
+import { startTestDatabaseOrExit, finishSuite } from '../tools/dbtest/index.mjs';
 
 let teardownNoise = false;
 const isTeardownNoise = (e) => /terminating connection|57P01/.test(String(e?.message || e));
@@ -18,7 +18,7 @@ const check = (name, cond, extra = '') => {
   console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${cond || !extra ? '' : ` → ${extra}`}`);
 };
 
-const db = await startTestDatabase({ port: Number(process.env.DB_PORT || 55434) });
+const db = await startTestDatabaseOrExit({ port: Number(process.env.DB_PORT || 55434) });
 console.log('=== Security regression suite ===');
 
 try {
@@ -362,6 +362,11 @@ try {
   // Anonymous booking with forged business state already covered by T02 injection tests
 
   console.log('\n-- Summary --');
+} catch (e) {
+  // Любой крэш основного потока — красный чек, иначе хвост пропускается
+  // и async-exit-hook форсит exit 0 (маскировка провала, D1-QG-004).
+  results.push(['FATAL: suite crashed: ' + (e?.message || e), false]);
+  console.error('FATAL:', e);
 } finally {
   await db.stop();
 }
@@ -369,5 +374,4 @@ try {
 const failed = results.filter(r => !r[1]).length;
 console.log(failed ? `\n${failed} FAILED` : '\nALL PASS');
 if (teardownNoise) console.log('(teardown noise ignored)');
-process.exitCode = failed ? 1 : 0;
-setTimeout(() => process.exit(process.exitCode || 0), 200).unref?.();
+await finishSuite(failed);

@@ -11,11 +11,14 @@ import { telegramService } from '../services/telegramService.js';
 import { supabaseSync } from '../services/supabaseSync.js';
 import {
   browserZone, offsetMinutes, convertWallClock, formatUtcOffset,
-  zonedToInstant, isPastMoment, instantToZoned,
+  zonedToInstant, instantToZoned,
   timeToMinutes, minutesToTime, addMinutesToTime, formatTimeRange,
   todayStr, daysFromToday, weekdayOf, DEFAULT_TIMEZONE
 } from '../services/timezoneService.js';
-import { resolveDurationMinutes, formatDuration as fmtDuration } from '../domain/duration.js';
+import { resolveDurationMinutes, resolveCandidateDurationMinutes, formatDuration as fmtDuration } from '../domain/duration.js';
+import {
+  computeBookableSlots, isoWeekStartOf, addDaysIso
+} from '../domain/availability.js';
 
 /** Шаги wizard'а записи (T-01): Услуга → Время → Контакт. */
 export const BookingSteps = {
@@ -48,29 +51,6 @@ function formatDay(iso) {
  * арифметика доступности считается в этом поясе, а в пояс клиента переводятся
  * только подпись и то, что уходит в API записи.
  */
-
-/** Покрывает ли блокировку весь день/точку времени (legacy helper). */
-function blockCovers(b, date, time) {
-  const from = b.dateFrom || '';
-  const to = b.dateTo || b.dateFrom || '';
-  if (!from || date < from || date > to) return false;
-  if (!b.timeFrom && !b.timeTo) return true;
-  const start = timeToMinutes(time);
-  const fromMin = timeToMinutes(b.timeFrom || '00:00');
-  const toMin = timeToMinutes(b.timeTo || '24:00') ?? 1440;
-  return start != null && fromMin != null && start >= fromMin && start < toMin;
-}
-
-/** Does a schedule block intersect [start, end) in the psychologist's day? */
-function blockOverlaps(b, date, start, end) {
-  const from = b.dateFrom || '';
-  const to = b.dateTo || b.dateFrom || '';
-  if (!from || date < from || date > to) return false;
-  if (!b.timeFrom && !b.timeTo) return true;
-  const fromMin = timeToMinutes(b.timeFrom || '00:00') ?? 0;
-  const toMin = timeToMinutes(b.timeTo || '24:00') ?? 1440;
-  return start < toMin && end > fromMin;
-}
 
 /**
  * ViewModel публичной записи + предоплата + антиспам.
@@ -112,6 +92,7 @@ export class BookingViewModel extends BaseViewModel {
     /** публичная доступность (free/busy) с сервера */
     this.remoteBusy = {};   // { 'YYYY-MM-DD': { 'HH:MM': durationMin } }
     this.remoteBlocks = []; // [{dateFrom, dateTo, timeFrom, timeTo, kind, title}]
+    this.remoteOverrides = []; // D1: [{date, isClosed, openFrom, openTo, title}]
     this.onAvailability = null; // колбэк после async-обновления занятости
     /** wizard: текущий шаг и максимальный достигнутый (для индикатора прогресса) */
     this.step = BookingSteps.SERVICE;
@@ -160,9 +141,10 @@ export class BookingViewModel extends BaseViewModel {
     if (!psyId || !supabaseApi.configured()) return;
     try {
       const [fromDate, toDate] = [todayStr(), daysFromToday(this.dateRange === 'month' ? 30 : 7)];
-      const [slots, blocks] = await Promise.all([
+      const [slots, blocks, overrides] = await Promise.all([
         supabaseApi.listBookedSlots(psyId, fromDate, toDate).catch(() => []),
-        supabaseApi.listBusyBlocks(psyId, fromDate, toDate).catch(() => [])
+        supabaseApi.listBusyBlocks(psyId, fromDate, toDate).catch(() => []),
+        supabaseApi.listOverrides(psyId, fromDate, toDate).catch(() => [])
       ]);
       this.remoteBusy = {};
       // SR-003: сервер отдаёт длительность чужой записи — без неё при шаге сетки
@@ -177,6 +159,13 @@ export class BookingViewModel extends BaseViewModel {
         timeTo: b.time_to || '',
         kind: b.kind || 'busy',
         title: b.title || ''
+      }));
+      this.remoteOverrides = (overrides || []).map(o => ({
+        date: o.date,
+        isClosed: !!o.is_closed,
+        openFrom: o.open_from || '',
+        openTo: o.open_to || '',
+        title: o.title || ''
       }));
       this._dropUnavailableSelection();
       this.onAvailability && this.onAvailability();
@@ -231,10 +220,17 @@ export class BookingViewModel extends BaseViewModel {
   // T-02 — сетка слотов под длительность услуги
   // ==========================================================================
 
-  /** Длительность выбранной услуги в минутах (fallback — 60). */
+  /**
+   * Длительность кандидата для сетки — через канонический резолвер
+   * (услуга → шаг сетки → дефолт + серверный кламп 480). Раньше геттер
+   * дублировал часть резолвера (услуга → 60) и расходился с сервером
+   * при пустой длительности услуги + шаге ≠ 60 и при длительности > 480.
+   */
   get durationMinutes() {
-    const d = Number(this.selectedService?.duration);
-    return d > 0 ? d : 60;
+    return resolveCandidateDurationMinutes({
+      service: this.selectedService,
+      slotStepMin: this.slotStepMinutes
+    });
   }
 
   get slotTimes() {
@@ -340,47 +336,106 @@ export class BookingViewModel extends BaseViewModel {
   }
 
   /**
-   * Слоты на дату с учётом длительности услуги (T-02) и «прошедшего» времени.
-   * Слот недоступен, если:
-   *   • он пересекается с чужой записью/блокировкой;
-   *   • до конца рабочего окна не хватает времени под услугу
-   *     (90-минутная услуга не предлагает 18:00 при закрытии в 19:00);
-   *   • время уже прошло.
+   * Слоты на дату — через канонический D1 engine (js/domain/availability.js).
+   * ViewModel только собирает входы (расписание + политика + занятость) и
+   * дорисовывает подпись в поясе клиента (T-03). Собственной логики
+   * доступности здесь нет: решение принимает engine, сервер перепроверяет.
    */
   _slotsFor(date) {
     paymentService.expireStaleHolds(this.psychologist?.id);
     const dur = this.durationMinutes;
-    const windowEnd = this.dayWindowEndMinutes;
-    const intervals = this._busyIntervalsFor(date);
     const psyTz = this.psychologistTimeZone;
     const foreign = this.isForeignTimeZone;
+    const settings = this.settings || {};
     const now = new Date();
+    const psyToday = (instantToZoned(now, psyTz) || {}).date || todayStr();
+    const result = computeBookableSlots({
+      date,
+      durationMin: dur,
+      schedule: {
+        workDays: settings.workDays || [1, 2, 3, 4, 5],
+        slotStart: settings.slotStart || '10:00',
+        slotEnd: settings.slotEnd || '18:00',
+        slotTimes: Array.isArray(settings.slotTimes) && settings.slotTimes.length
+          ? settings.slotTimes
+          : null,
+        stepMin: this.slotStepMinutes,
+        timezone: psyTz
+      },
+      policy: {
+        minNoticeMinutes: settings.minNoticeMinutes ?? 0,
+        maxAdvanceDays: settings.maxAdvanceDays ?? null,
+        bufferBeforeMin: settings.bufferBeforeMin ?? 0,
+        bufferAfterMin: settings.bufferAfterMin ?? 0,
+        slotIncrementMin: settings.slotIncrementMin ?? null,
+        maxBookingsPerDay: settings.maxBookingsPerDay ?? null,
+        maxBookingsPerWeek: settings.maxBookingsPerWeek ?? null
+      },
+      serviceAvailability: this.selectedService?.availability || null,
+      overrides: [...db.overridesOf(this.psychologist?.id), ...this.remoteOverrides],
+      busy: this._busyIntervalsFor(date),
+      counts: { day: this._bookedCountOn(date), week: this._bookedCountInWeek(date) },
+      clock: {
+        nowMs: now.getTime(),
+        today: psyToday,
+        slotMs: (d, t) => {
+          const z = zonedToInstant(d, t, psyTz);
+          return z ? z.getTime() : null;
+        }
+      }
+    });
 
-    return this.slotTimes.map(t => {
-      const start = timeToMinutes(t);
+    return result.slots.map(s => {
+      const start = timeToMinutes(s.time);
       const end = start + dur;
-      const overlap = intervals.find(iv => start < iv.to && iv.from < end);
-      const tooLong = end > windowEnd;
-      const past = isPastMoment(date, t, psyTz, now);
-      const available = !overlap && !tooLong && !past;
-      let reason = '';
-      if (overlap) reason = overlap.title || 'Время занято';
-      else if (tooLong) reason = `не хватает ${dur} мин до конца приёма`;
-      else if (past) reason = 'время уже прошло';
-      const client = foreign ? convertWallClock(date, t, psyTz, this.clientTimeZone) : null;
+      const client = foreign ? convertWallClock(date, s.time, psyTz, this.clientTimeZone) : null;
       return {
-        time: t,
+        time: s.time,
         endTime: minutesToTime(end),
-        available,
-        busy: !available,
-        reason,
+        available: s.available,
+        busy: !s.available,
+        reason: s.reason || '',
+        code: s.code,
         // T-03: то же мгновение в поясе клиента
-        clientTime: client ? client.time : t,
+        clientTime: client ? client.time : s.time,
         clientEndTime: client ? minutesToTime(timeToMinutes(client.time) + dur) : minutesToTime(end),
         clientDate: client ? client.date : date,
         clientDayShift: client ? client.dayShift : 0
       };
     });
+  }
+
+  /**
+   * Занятых мест на дату (для дневного лимита D1): объединение локальных
+   * блокирующих сессий и серверного free/busy по времени старта.
+   * Advisory-оценка: сервер считает авторитетно и может отклонить.
+   */
+  _bookedCountOn(date) {
+    const psyId = this.psychologist?.id;
+    const times = new Set(Object.keys(this.remoteBusy[date] || {}));
+    db.sessions.forEach(s => {
+      if (s.psychologistId !== psyId || s.date !== date) return;
+      if (['cancelled', 'expired', 'no_show'].includes(s.status)) return;
+      if (s.status === 'held' && s.holdExpiresAt && new Date(s.holdExpiresAt) < new Date()) return;
+      times.add(s.time);
+    });
+    return times.size;
+  }
+
+  /** Занятых мест в ISO-неделе даты (для недельного лимита D1). */
+  _bookedCountInWeek(date) {
+    const monday = isoWeekStartOf(date);
+    if (!monday) return 0;
+    let n = 0;
+    for (let i = 0; i < 7; i++) n += this._bookedCountOn(addDaysIso(monday, i));
+    return n;
+  }
+
+  /** Эффективные рабочие дни: услуга может сузить дни настроек (D1). */
+  get effectiveWorkDays() {
+    const svcDays = this.selectedService?.availability?.days;
+    if (Array.isArray(svcDays) && svcDays.length) return svcDays.map(Number);
+    return this.settings?.workDays || [1, 2, 3, 4, 5];
   }
 
   get slots() {
@@ -402,9 +457,11 @@ export class BookingViewModel extends BaseViewModel {
 
   /** Сколько свободных окон в диапазоне N дней (счётчики на табах периода, как у ОКОН) */
   freeCountInRange(days) {
-    const workDays = this.settings?.workDays || [1, 2, 3, 4, 5];
+    const workDays = this.effectiveWorkDays;
+    const horizon = this.settings?.maxAdvanceDays;
+    const total = horizon === null || horizon === undefined ? days : Math.min(days, horizon + 1);
     let count = 0;
-    for (let i = 0; i < days; i++) {
+    for (let i = 0; i < total; i++) {
       const date = daysFromToday(i);
       if (!workDays.includes(weekdayOf(date))) continue;
       count += this.freeCountOnDate(date);
@@ -662,8 +719,10 @@ export class BookingViewModel extends BaseViewModel {
 
   get availableDays() {
     const opt = this.dateRangeOptions.find(o => o.id === this.dateRange) || this.dateRangeOptions[2];
-    const workDays = this.settings?.workDays || [1, 2, 3, 4, 5]; // ISO: 1=Пн … 7=Вс
-    return Array.from({ length: opt.days }, (_, i) => daysFromToday(i))
+    const workDays = this.effectiveWorkDays; // ISO: 1=Пн … 7=Вс
+    const horizon = this.settings?.maxAdvanceDays;
+    const total = horizon === null || horizon === undefined ? opt.days : Math.min(opt.days, horizon + 1);
+    return Array.from({ length: total }, (_, i) => daysFromToday(i))
       .filter(iso => workDays.includes(weekdayOf(iso)));
   }
 
@@ -685,7 +744,12 @@ export class BookingViewModel extends BaseViewModel {
     const blocks = [...db.blocksOf(this.psychologist?.id), ...this.remoteBlocks];
     const b = blocks.find(x => !x.timeFrom && !x.timeTo
       && date >= (x.dateFrom || '') && date <= (x.dateTo || x.dateFrom || ''));
-    return b ? (b.title || 'Закрыто') : null;
+    if (b) return b.title || 'Закрыто';
+    // D1: закрытый день через override
+    const o = db.overrideOn(this.psychologist?.id, date)
+      || this.remoteOverrides.find(x => x.date === date);
+    if (o?.isClosed) return o.title || 'Закрыто';
+    return null;
   }
 
   _refreshPaymentInfo() {
@@ -875,8 +939,10 @@ export class BookingViewModel extends BaseViewModel {
     // строкой в sessions.note, а поле timezoneOffset вообще не заполнялось.
     const clientTimezone = this.isForeignTimeZone ? this.clientTimeZone : '';
     const clientUtcOffsetMin = this.isForeignTimeZone ? this.clientUtcOffsetAtSlot : null;
-    // снимок длительности услуги: если услугу позже изменят, запись не «поедет»
-    const durationMin = resolveDurationMinutes({ service: svc, slotStepMin: this.slotStepMinutes });
+    // снимок длительности услуги: если услугу позже изменят, запись не «поедет».
+    // Кандидатный резолвер с серверным клампом — иначе локальный снимок
+    // расходился бы с duration_min, который сервер выведет сам (p_duration_min игнорируется).
+    const durationMin = resolveCandidateDurationMinutes({ service: svc, slotStepMin: this.slotStepMinutes });
 
     const session = db.addSession({
       psychologistId: this.psychologist.id,

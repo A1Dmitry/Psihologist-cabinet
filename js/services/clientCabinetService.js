@@ -13,13 +13,15 @@
  */
 import { db } from '../core/dbContext.js';
 import { safeStorage } from '../core/safeStorage.js';
-import { resolveDurationMinutes, DEFAULT_DURATION_MIN } from '../domain/duration.js';
+import { resolveDurationMinutes, resolveCandidateDurationMinutes, DEFAULT_DURATION_MIN } from '../domain/duration.js';
 import { supabaseApi } from './supabaseApi.js';
 import { cabinetApi } from './cabinetApi.js';
 import {
   addDaysStr, todayStr, isValidZone, DEFAULT_TIMEZONE, zoneCity, zoneLabel,
-  convertWallClock, sessionZoneHint, weekdayOf
+  convertWallClock, sessionZoneHint,
+  instantToZoned, zonedToInstant, timeToMinutes
 } from './timezoneService.js';
+import { computeBookableSlots, isoWeekStartOf, addDaysIso } from '../domain/availability.js';
 
 const KEYS = {
   tokens: 'psy_client_tokens_v1',
@@ -655,40 +657,98 @@ export function weekdayOfLabel(weekday) {
   return ['', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'][Number(weekday)] || '';
 }
 
-/** Ближайшие свободные варианты для «предложить другое время» (клиентский выбор) */
-export function suggestSlots({ psychologistId, days = 10, limit = 12 }) {
-  const settings = db.settingsOf(psychologistId);
-  const workDays = settings.workDays?.length ? settings.workDays : [1, 2, 3, 4, 5];
-  const times = settings.slotTimes?.length ? settings.slotTimes : buildTimes(settings);
+/**
+ * Ближайшие свободные варианты для «предложить другое время» (перенос).
+ * D1: тот же канонический engine, что у публичной записи — второго
+ * калькулятора доступности здесь больше нет (duration/buffers/policy/limits
+ * учитываются, а не только точное совпадение времени).
+ */
+export function suggestSlots({ psychologistId, days = 10, limit = 12, durationMin = 60, serviceId = null }) {
+  const settings = db.settingsOf(psychologistId) || {};
+  const psyTz = settings.timezone || DEFAULT_TIMEZONE;
+  const now = new Date();
+  const psyToday = (instantToZoned(now, psyTz) || {}).date || todayStr();
+  const stepMin = Number(settings.slotStepMin) || DEFAULT_DURATION_MIN;
+  const service = serviceId ? db.services.find(s => s.id === serviceId) || null : null;
+  // Кандидатный резолвер (услуга/явная длительность → шаг → дефолт + серверный
+  // кламп 480): перенос предлагает то, что сервер примет (см. v_new_dur).
+  const dur = service
+    ? resolveCandidateDurationMinutes({ service, slotStepMin: stepMin })
+    : resolveCandidateDurationMinutes({ durationMin });
+  const clock = {
+    nowMs: now.getTime(),
+    today: psyToday,
+    slotMs: (d, t) => {
+      const z = zonedToInstant(d, t, psyTz);
+      return z ? z.getTime() : null;
+    }
+  };
+  const schedule = {
+    workDays: settings.workDays?.length ? settings.workDays : [1, 2, 3, 4, 5],
+    slotStart: settings.slotStart || '10:00',
+    slotEnd: settings.slotEnd || '18:00',
+    slotTimes: Array.isArray(settings.slotTimes) && settings.slotTimes.length ? settings.slotTimes : null,
+    stepMin,
+    timezone: psyTz
+  };
+  const policy = {
+    minNoticeMinutes: settings.minNoticeMinutes ?? 0,
+    maxAdvanceDays: settings.maxAdvanceDays ?? null,
+    bufferBeforeMin: settings.bufferBeforeMin ?? 0,
+    bufferAfterMin: settings.bufferAfterMin ?? 0,
+    slotIncrementMin: settings.slotIncrementMin ?? null,
+    maxBookingsPerDay: settings.maxBookingsPerDay ?? null,
+    maxBookingsPerWeek: settings.maxBookingsPerWeek ?? null
+  };
+  const overrides = db.overridesOf(psychologistId);
+  const blocking = s => s.psychologistId === psychologistId
+    && !['cancelled', 'expired', 'no_show'].includes(s.status)
+    && !(s.status === 'held' && s.holdExpiresAt && new Date(s.holdExpiresAt) < now);
   const out = [];
   for (let i = 0; i < days && out.length < limit; i++) {
-    const date = addDaysStr(todayStr(), i);
-    if (!workDays.includes(weekdayOf(date))) continue;
-    for (const time of times) {
-      if (out.length >= limit) break;
-      const busy = db.sessions.some(s =>
-        s.psychologistId === psychologistId && s.date === date && s.time === time &&
-        !['cancelled', 'expired', 'no_show'].includes(s.status)
-      );
-      if (busy) continue;
-      if (db.isSlotBlocked(psychologistId, date, time)) continue;
-      out.push({ date, time });
+    const date = addDaysStr(psyToday, i);
+    const busy = [];
+    db.sessions.forEach(s => {
+      if (!blocking(s) || s.date !== date) return;
+      const from = timeToMinutes(s.time);
+      if (from === null) return;
+      const svc = s.serviceId ? db.services.find(x => x.id === s.serviceId) : null;
+      busy.push({
+        from,
+        to: from + resolveDurationMinutes({ durationMin: s.durationMin, service: svc, slotStepMin: stepMin }),
+        kind: 'booked',
+        title: 'Время занято'
+      });
+    });
+    db.blocksOf(psychologistId).forEach(b => {
+      const from = b.dateFrom || '';
+      const to = b.dateTo || b.dateFrom || '';
+      if (!from || date < from || date > to) return;
+      if (!b.timeFrom && !b.timeTo) busy.push({ from: 0, to: 24 * 60, kind: 'block', title: b.title || 'Закрыто' });
+      else {
+        const f = timeToMinutes(b.timeFrom || '00:00');
+        const t = timeToMinutes(b.timeTo || '23:59');
+        if (f !== null && t !== null && t > f) busy.push({ from: f, to: t, kind: 'block', title: b.title || 'Закрыто' });
+      }
+    });
+    const dayCount = db.sessions.filter(s => blocking(s) && s.date === date).length;
+    const monday = isoWeekStartOf(date);
+    let weekCount = 0;
+    if (monday) {
+      for (let k = 0; k < 7; k++) {
+        const wd = addDaysIso(monday, k);
+        weekCount += db.sessions.filter(s => blocking(s) && s.date === wd).length;
+      }
     }
-  }
-  return out;
-}
-
-function buildTimes(settings) {
-  const toMin = t => {
-    const [h, m] = String(t || '10:00').split(':').map(Number);
-    return h * 60 + (m || 0);
-  };
-  const start = toMin(settings.slotStart || '10:00');
-  const end = toMin(settings.slotEnd || '18:00');
-  const step = Number(settings.slotStepMin) || DEFAULT_DURATION_MIN;
-  const out = [];
-  for (let m = start; m <= end; m += step) {
-    out.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
+    const r = computeBookableSlots({
+      date, durationMin: dur, schedule, policy,
+      serviceAvailability: service?.availability || null,
+      overrides, busy, counts: { day: dayCount, week: weekCount }, clock
+    });
+    for (const s of r.slots) {
+      if (out.length >= limit) break;
+      if (s.available) out.push({ date, time: s.time });
+    }
   }
   return out;
 }

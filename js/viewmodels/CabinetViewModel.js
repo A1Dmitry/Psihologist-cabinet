@@ -373,13 +373,24 @@ export class CabinetViewModel extends BaseViewModel {
 
   addService(form) {
     if (!this.psyId || !form.name?.trim()) return false;
+    // D1: доступность услуги (days/start/end; пусто = наследовать расписание)
+    let availability = null;
+    const days = String(form.days || '').split(',')
+      .map(x => Number(x.trim())).filter(n => n >= 1 && n <= 7);
+    const hm = s => (/^\d{1,2}:\d{2}$/.test(String(s || '').trim()) ? String(s).trim() : null);
+    const start = hm(form.start);
+    const end = hm(form.end);
+    if (days.length || start || end) {
+      availability = { days: days.length ? [...new Set(days)] : null, start, end };
+    }
     const created = db.addService({
       psychologistId: this.psyId,
       name: form.name.trim(),
       price: form.price,
       currency: form.currency || 'BYN',
       duration: form.duration || DEFAULT_DURATION_MIN,
-      format: form.format || 'offline'
+      format: form.format || 'offline',
+      availability
     });
     cabinetApi.pushService(this.psyId, created);
     this.showToast('Услуга добавлена');
@@ -480,6 +491,7 @@ export class CabinetViewModel extends BaseViewModel {
   savePaymentSettings(form) {
     const st = this.settings;
     if (!st) return;
+    const optLimit = v => (v === '' || v === null || v === undefined ? null : Math.max(0, Math.floor(Number(v) || 0)));
     Object.assign(st, {
       paymentPolicy: form.paymentPolicy,
       depositPercent: Number(form.depositPercent) || 30,
@@ -491,7 +503,16 @@ export class CabinetViewModel extends BaseViewModel {
       reminderHoursBefore: Number(form.reminderHoursBefore) || 24,
       reminderSecondHoursBefore: form.reminderSecondHoursBefore === '' || form.reminderSecondHoursBefore == null
         ? 0
-        : Number(form.reminderSecondHoursBefore)
+        : Number(form.reminderSecondHoursBefore),
+      // D1: политика доступности
+      minNoticeMinutes: Math.max(0, Math.floor(Number(form.minNoticeMinutes) || 0)),
+      maxAdvanceDays: optLimit(form.maxAdvanceDays),
+      bufferBeforeMin: Math.max(0, Math.floor(Number(form.bufferBeforeMin) || 0)),
+      bufferAfterMin: Math.max(0, Math.floor(Number(form.bufferAfterMin) || 0)),
+      slotIncrementMin: form.slotIncrementMin === '' || form.slotIncrementMin === null || form.slotIncrementMin === undefined
+        ? null : (Math.max(1, Math.floor(Number(form.slotIncrementMin) || 0)) || null),
+      maxBookingsPerDay: optLimit(form.maxBookingsPerDay),
+      maxBookingsPerWeek: optLimit(form.maxBookingsPerWeek)
     });
     db.saveChanges();
     cabinetApi.pushSettings(this.psyId, st);
@@ -556,6 +577,36 @@ export class CabinetViewModel extends BaseViewModel {
     db.removeScheduleBlock(id);
     cabinetApi.pushBlockDelete(id);
     this.showToast('Блокировка снята');
+    this.notify();
+  }
+
+  // ——— D1: особые дни (override расписания на дату) ———
+
+  get overrides() {
+    return this.psyId ? db.overridesOf(this.psyId) : [];
+  }
+
+  addOverride(form) {
+    if (!this.psyId || !form.date) return false;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(form.date)) return false;
+    const created = db.addScheduleOverride({
+      psychologistId: this.psyId,
+      date: form.date,
+      isClosed: !!form.isClosed,
+      openFrom: form.isClosed ? '' : (form.openFrom || ''),
+      openTo: form.isClosed ? '' : (form.openTo || ''),
+      title: form.title || (form.isClosed ? 'Закрыто' : 'Особый день')
+    });
+    cabinetApi.pushOverride(this.psyId, created);
+    this.showToast('Особый день сохранён');
+    this.notify();
+    return true;
+  }
+
+  removeOverride(id) {
+    db.removeScheduleOverride(id);
+    cabinetApi.pushOverrideDelete(id);
+    this.showToast('Особый день удалён');
     this.notify();
   }
 

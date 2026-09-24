@@ -180,6 +180,14 @@ export const supabaseApi = {
     return request(q);
   },
 
+  /** D1: переопределения расписания на дату (закрытые дни / особые окна) */
+  async listOverrides(psychologistId, fromDate, toDate) {
+    let q = `public_schedule_overrides?psychologist_id=eq.${psychologistId}&select=*&order=date.asc`;
+    if (fromDate) q += `&date=gte.${fromDate}`;
+    if (toDate) q += `&date=lte.${toDate}`;
+    return request(q);
+  },
+
   /** Запись клиента — только через RPC (анти-спам + проверка слота на сервере) */
   async createBooking(payload) {
     const rows = await request('rpc/create_booking', { method: 'POST', body: JSON.stringify(payload) });
@@ -641,6 +649,13 @@ export const supabaseApi = {
       }
       // 400 «Подтверждение не найдено» — норма: схема на месте, кода такого нет
       return `колонки SR-004 на месте (HTTP ${r.status})`;
+    });
+    // SR-D1: без полей политики публичный engine считает по дефолтам (fail-open),
+    // а сервер не enforce'ит notice/буферы/лимиты. Проверка — чтением view.
+    await check('Политика доступности (SR-D1: notice/буферы/лимиты/overrides)', 'Перепримените supabase/schema.sql в SQL Editor (п.2 docs/INFRA.md)', async () => {
+      await request('public_settings?select=min_notice_minutes,max_advance_days,buffer_before_min,buffer_after_min,slot_increment_min,max_bookings_per_day,max_bookings_per_week&limit=1');
+      await request('public_schedule_overrides?select=id&limit=1');
+      return 'поля политики и overrides на месте';
     });
     return out;
   }

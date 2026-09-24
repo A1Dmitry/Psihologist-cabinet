@@ -20,11 +20,18 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SUITES = [
   ['Доменные правила: пояс, календарь, длительность', 'node', ['tests/timezone-domain.mjs']],
   ['Канонический маппер сессий', 'node', ['tests/session-mapper.mjs']],
+  ['D1: Availability + Booking Policy Engine (домен)', 'node', ['tests/availability-policy.mjs']],
+  ['D1: перенос на каноническом engine (suggestSlots)', 'node', ['tests/suggest-slots.mjs']],
+  ['D1: кабинет политики (overrides, лимиты, доступность услуги)', 'node', ['tests/cabinet-policy.mjs']],
   ['Воронка записи (wizard, слоты, пояса, server-first success)', 'node', ['tests/booking-wizard.mjs']],
   ['Регистрация и вход специалиста (E2E-контракт)', 'node', ['tests/registration-flow.mjs']],
   ['OTP: одноразовость, TTL, лимит попыток (настоящий auth-code)', 'node', ['--no-warnings', 'tests/auth-code-edge.mjs']],
   ['SQL-контракт schema.sql на настоящем PostgreSQL', 'node', ['tests/db-contract.mjs']],
   ['Security regression (booking authority, tenant isolation, domain validation)', 'node', ['tests/security-regression.mjs']],
+  ['D1: Booking Policy enforcement на настоящем PostgreSQL', 'node', ['tests/availability-db.mjs']],
+  ['D1 recovery: parity-матрица client↔server', 'node', ['tests/availability-parity.mjs']],
+  ['D1 recovery: E2E записи (valid/blocked/unauthorized)', 'node', ['tests/booking-e2e.mjs']],
+  ['Poka-Yoke тест-харнеса (детерминированные выходы)', 'node', ['tests/harness-guard.mjs']],
   ['Кабинет: серии, условия, мини-кабинет, пояса', 'node', ['tools/verify_cabinet.mjs']],
   ['Авторизация: каналы кода, сессия, write-through', 'node', ['verify_auth.mjs']],
   ['UI входа: ожидание кода переживает перезагрузку', 'node', ['tests/auth-ui-pending.mjs']],
@@ -35,13 +42,25 @@ const SUITES = [
   ['Загрузка SPA', 'node', ['verify_app.mjs']]
 ];
 
+// Poka-Yoke (recovery PR32): зависший набор не должен вешать весь гейт.
+// Лимит щедрый (обычные наборы — секунды); превышение = красный набор.
+const SUITE_TIMEOUT_MS = Number(process.env.VERIFY_SUITE_TIMEOUT_MS || 300000);
+
 function run(cmd, args) {
   return new Promise(resolve => {
     const child = spawn(cmd, args, { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
+    let done = false;
+    const finish = (code) => { if (!done) { done = true; resolve({ code, out }); } };
+    const timer = setTimeout(() => {
+      out += `\nTIMEOUT: набор превысил ${SUITE_TIMEOUT_MS} мс и был убит\n`;
+      child.kill('SIGKILL');
+      finish(124);
+    }, SUITE_TIMEOUT_MS);
     child.stdout.on('data', d => { out += d; });
     child.stderr.on('data', d => { out += d; });
-    child.on('close', code => resolve({ code, out }));
+    child.on('close', code => { clearTimeout(timer); finish(code); });
+    child.on('error', () => { clearTimeout(timer); finish(1); });
   });
 }
 

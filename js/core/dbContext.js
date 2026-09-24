@@ -4,7 +4,7 @@
  */
 import {
   Psychologist, EmailCode, Service, Client, Session, WaitingItem, SessionSettings,
-  Payment, BookingAttempt, ClientRisk, PaymentPolicy, SessionReminder, ScheduleBlock,
+  Payment, BookingAttempt, ClientRisk, PaymentPolicy, SessionReminder, ScheduleBlock, ScheduleOverride,
   Task, PsyNote, ClientEntry
 } from '../models/entities.js';
 import { safeStorage } from './safeStorage.js';
@@ -33,6 +33,7 @@ export class DbContext {
     this.clientRisks = [];
     this.reminders = [];
     this.scheduleBlocks = [];
+    this.scheduleOverrides = [];
     this.currentPsychologistId = null;
     this._load();
   }
@@ -52,6 +53,7 @@ export class DbContext {
       clientRisks: this.clientRisks,
       reminders: this.reminders,
       scheduleBlocks: this.scheduleBlocks,
+      scheduleOverrides: this.scheduleOverrides,
       tasks: this.tasks,
       notes: this.notes,
       clientEntries: this.clientEntries,
@@ -83,6 +85,7 @@ export class DbContext {
       this.clientRisks = (data.clientRisks || []).map(x => new ClientRisk(x));
       this.reminders = (data.reminders || []).map(x => new SessionReminder(x));
       this.scheduleBlocks = (data.scheduleBlocks || []).map(x => new ScheduleBlock(x));
+      this.scheduleOverrides = (data.scheduleOverrides || []).map(x => new ScheduleOverride(x));
       this.currentPsychologistId = data.currentPsychologistId || null;
       if (!this.psychologists.length) this._seed();
     } catch {
@@ -207,6 +210,7 @@ export class DbContext {
     this.clientRisks = [];
     this.reminders = [];
     this.scheduleBlocks = [];
+    this.scheduleOverrides = [];
     this.tasks = [];
     this.notes = [];
     this.clientEntries = [];
@@ -229,6 +233,7 @@ export class DbContext {
     this.clientRisks = [];
     this.reminders = [];
     this.scheduleBlocks = [];
+    this.scheduleOverrides = [];
     this.tasks = [];
     this.notes = [];
     this.clientEntries = [];
@@ -394,6 +399,30 @@ export class DbContext {
   /** Занят ли слот блокировкой (выходной/занят/отпуск…) */
   isSlotBlocked(psychologistId, date, time) {
     return this.scheduleBlocks.some(b => b.psychologistId === psychologistId && b.covers(date, time));
+  }
+
+  // ——— D1: переопределения расписания на дату (закрытые дни / особые окна) ———
+  overridesOf(psychologistId) {
+    return (this.scheduleOverrides || [])
+      .filter(o => o.psychologistId === psychologistId)
+      .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  }
+
+  overrideOn(psychologistId, date) {
+    return (this.scheduleOverrides || []).find(o => o.psychologistId === psychologistId && o.date === date) || null;
+  }
+
+  addScheduleOverride(data) {
+    const o = new ScheduleOverride({ ...data, id: data.id || uid('ovr') });
+    this.scheduleOverrides = (this.scheduleOverrides || []).filter(x => !(x.psychologistId === o.psychologistId && x.date === o.date));
+    this.scheduleOverrides.push(o);
+    this.saveChanges();
+    return o;
+  }
+
+  removeScheduleOverride(id) {
+    this.scheduleOverrides = (this.scheduleOverrides || []).filter(o => o.id !== id);
+    this.saveChanges();
   }
 
   // ——— Задачи (кабинет) ———

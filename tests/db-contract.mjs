@@ -17,7 +17,7 @@
  *   • ГОНКА: две параллельные транзакции на один слот → ровно одна запись;
  *   • RLS: аноним не видит клиентов и сессии, владелец видит свои.
  */
-import { startTestDatabase } from '../tools/dbtest/index.mjs';
+import { startTestDatabaseOrExit, finishSuite } from '../tools/dbtest/index.mjs';
 
 /**
  * Гонка при остановке PostgreSQL: pg_ctl гасит сервер, а «спящий» клиент пула
@@ -47,7 +47,7 @@ const check = (name, cond, extra = '') => {
   console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${cond || !extra ? '' : ` → ${extra}`}`);
 };
 
-const db = await startTestDatabase({ port: Number(process.env.DB_PORT || 55432) });
+const db = await startTestDatabaseOrExit({ port: Number(process.env.DB_PORT || 55432) });
 check('schema.sql применён к пустой БД без ошибок', true);
 
 try {
@@ -292,6 +292,11 @@ try {
     publicSlots.some(r => r.duration_min === 90), JSON.stringify(publicSlots));
   check('public_booked_slots: не раскрывает данные клиента',
     !JSON.stringify(publicSlots).includes('Анна'), JSON.stringify(publicSlots));
+} catch (e) {
+  // Любой крэш основного потока — красный чек, иначе хвост пропускается
+  // и async-exit-hook форсит exit 0 (маскировка провала, D1-QG-004).
+  results.push(['FATAL: suite crashed: ' + (e?.message || e), false]);
+  console.error('FATAL:', e);
 } finally {
   await db.stop();
 }
@@ -299,5 +304,4 @@ try {
 const failed = results.filter(r => !r[1]).length;
 console.log(failed ? `\n${failed} FAILED` : '\nALL PASS');
 if (teardownNoise) console.log('(шум остановки PostgreSQL проигнорирован: 57P01 на закрытии соединения)');
-process.exitCode = failed ? 1 : 0;
-setTimeout(() => process.exit(process.exitCode || 0), 200).unref?.();
+await finishSuite(failed);

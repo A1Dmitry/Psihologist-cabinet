@@ -880,6 +880,29 @@ function renderCabBlocks() {
   box.querySelectorAll('[data-del-block]').forEach(btn => {
     btn.onclick = () => { cabinetVm.removeBlock(btn.dataset.delBlock); renderCabinet(); };
   });
+  renderCabOverrides();
+}
+
+function renderCabOverrides() {
+  const box = $('#overrides-list');
+  if (!box) return;
+  const list = cabinetVm.overrides;
+  if (!list.length) {
+    box.innerHTML = '<div class="p-6 text-center text-slate-400 text-sm">Нет особых дней.</div>';
+    return;
+  }
+  box.innerHTML = list.map(o => `
+    <div class="p-3 border-b last:border-0 flex items-center gap-3 text-sm">
+      <span class="text-xs px-2 py-1 rounded-full bg-slate-100 shrink-0">${o.isClosed ? 'Закрыто' : 'Особое окно'}</span>
+      <div class="flex-1 min-w-0">
+        <div class="font-medium">${esc(o.title || (o.isClosed ? 'Закрыто' : 'Особый день'))}</div>
+        <div class="text-slate-500 text-xs">${esc(o.date)}${!o.isClosed && (o.openFrom || o.openTo) ? ' · ' + esc(o.openFrom || '…') + '–' + esc(o.openTo || '…') : ''}</div>
+      </div>
+      <button data-del-override="${esc(o.id)}" class="text-rose-500 shrink-0">Удалить</button>
+    </div>`).join('');
+  box.querySelectorAll('[data-del-override]').forEach(btn => {
+    btn.onclick = () => { cabinetVm.removeOverride(btn.dataset.delOverride); renderCabinet(); };
+  });
 }
 
 function renderCabClients() {
@@ -1186,15 +1209,23 @@ function renderClientDetail() {
 function renderCabServices() {
   const box = $('#services-list');
   if (!box) return;
-  box.innerHTML = cabinetVm.services.map(s => `
+  const dayShort = ['', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+  box.innerHTML = cabinetVm.services.map(s => {
+    const av = s.availability;
+    const avLabel = av ? `<div class="text-xs text-slate-400">доступность: ${
+      [av.days?.length ? av.days.map(d => dayShort[d] || d).join(',') : null,
+       (av.start || av.end) ? `${av.start || '…'}–${av.end || '…'}` : null].filter(Boolean).join(' · ')
+    }</div>` : '';
+    return `
     <div class="bg-white rounded-xl border p-4 flex justify-between items-center">
       <div><div class="font-medium">${s.name}</div>
-      <div class="text-sm text-slate-500">${s.duration} мин · ${s.format === 'online' ? 'онлайн · Google Meet' : 'очно'}</div></div>
+      <div class="text-sm text-slate-500">${s.duration} мин · ${s.format === 'online' ? 'онлайн · Google Meet' : 'очно'}</div>${avLabel}</div>
       <div class="flex items-center gap-4">
         <span class="font-semibold text-indigo-700">${s.priceLabel()}</span>
         <button data-del-service="${s.id}" class="text-sm text-rose-500">Удалить</button>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 function renderCabWaiting() {
@@ -1262,6 +1293,14 @@ function renderCabPayments() {
   $('#set-block-noshow') && ($('#set-block-noshow').value = st.blockAfterNoShows ?? 2);
   $('#set-reminder-hours') && ($('#set-reminder-hours').value = st.reminderHoursBefore ?? 24);
   $('#set-reminder-second') && ($('#set-reminder-second').value = st.reminderSecondHoursBefore ?? 12);
+  // D1: политика доступности
+  $('#set-min-notice') && ($('#set-min-notice').value = st.minNoticeMinutes ?? 0);
+  $('#set-max-advance') && ($('#set-max-advance').value = st.maxAdvanceDays ?? '');
+  $('#set-buf-before') && ($('#set-buf-before').value = st.bufferBeforeMin ?? 0);
+  $('#set-buf-after') && ($('#set-buf-after').value = st.bufferAfterMin ?? 0);
+  $('#set-increment') && ($('#set-increment').value = st.slotIncrementMin ?? '');
+  $('#set-max-day-cap') && ($('#set-max-day-cap').value = st.maxBookingsPerDay ?? '');
+  $('#set-max-week-cap') && ($('#set-max-week-cap').value = st.maxBookingsPerWeek ?? '');
   const held = cabinetVm.heldUnpaid;
   const box = $('#held-list');
   if (box) {
@@ -1873,7 +1912,7 @@ function renderSuccess() {
       title: `${sv?.name || 'Консультация'} · ${p.fullName}`,
       date: s.date,
       time: s.time,
-      durationMin: sv?.duration || 60,
+      durationMin: resolveDurationMinutes({ durationMin: s.durationMin, service: sv }),
       location: s.meetLink || '',
       details: p.greeting || '',
       timezone: bookingVm.settings?.timezone || 'Europe/Minsk'
@@ -2130,6 +2169,24 @@ function bindEvents() {
     renderCabinet();
   });
 
+  // D1: особые дни (override расписания на дату)
+  $('#btn-add-override')?.addEventListener('click', () => {
+    const ok = cabinetVm.addOverride({
+      date: $('#ovr-date')?.value,
+      isClosed: $('#ovr-closed')?.checked !== false,
+      openFrom: $('#ovr-from')?.value,
+      openTo: $('#ovr-to')?.value,
+      title: $('#ovr-title')?.value
+    });
+    if (ok) {
+      ['#ovr-date', '#ovr-from', '#ovr-to', '#ovr-title']
+        .forEach(sel => { const el = $(sel); if (el) el.value = ''; });
+      const closed = $('#ovr-closed');
+      if (closed) closed.checked = true;
+    }
+    renderCabinet();
+  });
+
   $('#btn-save-gcal')?.addEventListener('click', () => {
     cabinetVm.saveCalendarSettings({
       googleCalendarIcalUrl: $('#set-gcal-url')?.value,
@@ -2206,8 +2263,13 @@ function bindEvents() {
       price: parseFloat($('#sv-price')?.value) || 0,
       currency: $('#sv-currency')?.value,
       duration: parseInt($('#sv-duration')?.value, 10) || DEFAULT_DURATION_MIN,
-      format: $('#sv-format')?.value
+      format: $('#sv-format')?.value,
+      days: $('#sv-days')?.value,
+      start: $('#sv-start')?.value,
+      end: $('#sv-end')?.value
     });
+    ['#sv-name', '#sv-price', '#sv-days', '#sv-start', '#sv-end']
+      .forEach(sel => { const el = $(sel); if (el) el.value = ''; });
     closeModal('modal-service');
     renderCabinet();
   });
@@ -2342,7 +2404,15 @@ function bindEvents() {
       blockAfterNoShows: $('#set-block-noshow')?.value,
       reminderEnabled: true,
       reminderHoursBefore: $('#set-reminder-hours')?.value,
-      reminderSecondHoursBefore: $('#set-reminder-second')?.value
+      reminderSecondHoursBefore: $('#set-reminder-second')?.value,
+      // D1: политика доступности
+      minNoticeMinutes: $('#set-min-notice')?.value,
+      maxAdvanceDays: $('#set-max-advance')?.value,
+      bufferBeforeMin: $('#set-buf-before')?.value,
+      bufferAfterMin: $('#set-buf-after')?.value,
+      slotIncrementMin: $('#set-increment')?.value,
+      maxBookingsPerDay: $('#set-max-day-cap')?.value,
+      maxBookingsPerWeek: $('#set-max-week-cap')?.value
     });
     renderCabinet();
   });

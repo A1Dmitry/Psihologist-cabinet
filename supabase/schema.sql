@@ -177,6 +177,24 @@ create table if not exists schedule_blocks (
 
 create index if not exists schedule_blocks_psy_idx on schedule_blocks (psychologist_id, date_from);
 
+-- ——— Переопределения расписания на конкретную дату (D1 / SR-D1) ———
+-- Закрытые дни (праздники/исключения) и особые окна приёма. В отличие от
+-- schedule_blocks (блокировки занятости), override может не только закрыть
+-- день, но и задать другое окно (open_from/open_to) вместо slot_start/slot_end.
+create table if not exists schedule_overrides (
+  id               text primary key default ('ovr_' || extract(epoch from now())::bigint::text || '_' || substr(md5(random()::text), 1, 6)),
+  psychologist_id  text not null references psychologists(id) on delete cascade,
+  date             text not null,                                  -- YYYY-MM-DD
+  is_closed        boolean not null default false,                 -- true = в этот день записи нет
+  open_from        text not null default '',                       -- HH:MM, пусто = из настроек
+  open_to          text not null default '',                       -- HH:MM, пусто = из настроек
+  title            text not null default '',                       -- «8 марта», «Приём до обеда» — видно публично
+  created_at       timestamptz not null default now()
+);
+
+create unique index if not exists schedule_overrides_psy_date_uidx
+  on schedule_overrides (psychologist_id, date);
+
 -- ——— Задачи кабинета (список дел; опционально связаны с клиентом) ———
 create table if not exists tasks (
   id              text primary key default ('task_' || extract(epoch from now())::bigint::text || '_' || substr(md5(random()::text), 1, 6)),
@@ -256,6 +274,21 @@ alter table session_settings add column if not exists telegram_notify_booking   
 alter table session_settings add column if not exists telegram_notify_reminders boolean not null default true;
 alter table session_settings add column if not exists telegram_notify_payments  boolean not null default true;
 alter table session_settings add column if not exists last_notified_session_at  timestamptz;
+
+-- D1 / SR-D1 — Booking Policy: правила доступности, проверяемые сервером.
+-- Дефолты сохраняют поведение до D1: notice/буферы = 0, лимиты/горизонт/
+-- инкремент = NULL (без ограничения / шаг сетки).
+alter table session_settings add column if not exists min_notice_minutes   integer not null default 0;
+alter table session_settings add column if not exists max_advance_days     integer;
+alter table session_settings add column if not exists buffer_before_min    integer not null default 0;
+alter table session_settings add column if not exists buffer_after_min     integer not null default 0;
+alter table session_settings add column if not exists slot_increment_min   integer;
+alter table session_settings add column if not exists max_bookings_per_day  integer;
+alter table session_settings add column if not exists max_bookings_per_week integer;
+
+-- D1 / SR-D1 — service-specific availability: {"days":[1,2,3],"start":"12:00","end":"16:00"}.
+-- NULL = наследовать расписание из session_settings; частичный объект = перекрыть часть.
+alter table services add column if not exists availability jsonb;
 
 -- chat_id клиента для напоминаний (подключение бота по /start <clientId>)
 alter table clients add column if not exists telegram_chat text not null default '';
@@ -397,7 +430,7 @@ declare t text;
 begin
   foreach t in array array['psychologists','services','clients','sessions','session_settings',
                            'payments','email_codes','waiting_items','booking_attempts','client_risks',
-                           'session_reminders','schedule_blocks','tasks','psy_notes','client_entries']
+                           'session_reminders','schedule_blocks','schedule_overrides','tasks','psy_notes','client_entries']
   loop
     execute format('drop policy if exists anon_all on %I', t);
     execute format('alter table %I enable row level security', t);
@@ -414,7 +447,7 @@ declare t text;
 begin
   foreach t in array array['psychologists','services','clients','sessions','session_settings',
                            'payments','waiting_items','booking_attempts','session_reminders','schedule_blocks',
-                           'tasks','psy_notes','client_entries']
+                           'schedule_overrides','tasks','psy_notes','client_entries']
   loop
     execute format('drop policy if exists owner_all on %I', t);
   end loop;
@@ -470,6 +503,11 @@ create policy owner_all on schedule_blocks
   using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
   with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
 
+create policy owner_all on schedule_overrides
+  for all to authenticated
+  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
+  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+
 create policy owner_all on tasks
   for all to authenticated
   using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
@@ -506,6 +544,7 @@ revoke all on client_risks from anon, authenticated;
 drop view if exists public_profiles;
 drop view if exists public_settings;
 drop view if exists public_schedule_blocks;
+drop view if exists public_schedule_overrides;
 drop view if exists public_booked_slots;
 
 -- 1) Публичный профиль (без email-учётки и key_verifier — они приватны)
@@ -516,17 +555,26 @@ create or replace view public_profiles as
          is_active, created_at
   from psychologists;
 
--- 2) Условия записи: часы/слоты/оплата (без антиспам-настроек и iCal-секрета)
+-- 2) Условия записи: часы/слоты/оплата/политика доступности
+--    (без антиспам-настроек и iCal-секрета; поля политики не секретны —
+--    они нужны публичному engine для расчёта BookableSlots)
 create or replace view public_settings as
   select psychologist_id, work_hours, work_days, timezone, default_video_platform,
          slot_times, slot_start, slot_end, slot_step_min,
-         payment_policy, deposit_percent, deposit_amount, hold_minutes
+         payment_policy, deposit_percent, deposit_amount, hold_minutes,
+         min_notice_minutes, max_advance_days, buffer_before_min, buffer_after_min,
+         slot_increment_min, max_bookings_per_day, max_bookings_per_week
   from session_settings;
 
 -- 3) Free/busy блокировки (без приватных заметок)
 create or replace view public_schedule_blocks as
   select id, psychologist_id, date_from, date_to, time_from, time_to, kind, title, source
   from schedule_blocks;
+
+-- 3b) Переопределения расписания на дату (D1): закрытые дни и особые окна
+create or replace view public_schedule_overrides as
+  select id, psychologist_id, date, is_closed, open_from, open_to, title
+  from schedule_overrides;
 
 -- 4) Занятые слоты (дата/время — без данных клиентов)
 --    duration_min — длительность занятой записи: 90-минутная сессия закрывает на
@@ -544,6 +592,7 @@ create or replace view public_booked_slots as
 grant select on public_profiles        to anon, authenticated;
 grant select on public_settings        to anon, authenticated;
 grant select on public_schedule_blocks to anon, authenticated;
+grant select on public_schedule_overrides to anon, authenticated;
 grant select on public_booked_slots    to anon, authenticated;
 grant select on services               to anon, authenticated;
 
@@ -621,6 +670,27 @@ declare
   v_time_valid boolean;
   v_date_valid boolean;
   v_blocked boolean;
+  -- D1 (SR-D1): Booking Policy / Availability (зеркало js/domain/availability.js)
+  v_tz text := 'UTC';
+  v_today date;
+  v_slot_ts timestamptz;
+  v_min_notice int := 0;
+  v_max_advance int := null;
+  v_buf_before int := 0;
+  v_buf_after int := 0;
+  v_increment int := null;
+  v_max_day int := null;
+  v_max_week int := null;
+  v_eff_days jsonb := null;
+  v_win_start_min int := null;
+  v_win_grace_min int := null;
+  v_last_slot_min int := null;
+  v_has_slot_list boolean := false;
+  v_cand_from int;
+  v_cand_to int;
+  v_day_count bigint;
+  v_week_count bigint;
+  v_override_row schedule_overrides%rowtype;
 begin
   -- ——— 0. Базовая валидация формата даты/времени (T04) ———
   -- Дата: YYYY-MM-DD
@@ -656,13 +726,34 @@ begin
     return jsonb_build_object('ok', false, 'error', 'Неверное время');
   end if;
 
+  -- D1: «сегодня» и «прошлое» — в поясе специалиста, а не сервера.
+  -- (Раньше same-day сравнивался с серверным временем — для поясов позади
+  -- UTC это ложно отклоняло будущие слоты.)
+  begin
+    select timezone into v_tz from session_settings where psychologist_id = p_psychologist_id;
+    if v_tz is null or v_tz = '' then v_tz := 'UTC'; end if;
+    v_today := (now() at time zone v_tz)::date;
+  exception when others then
+    v_tz := 'UTC';
+    v_today := current_date;
+  end;
+
   -- Past-date rejection (T04): нельзя в прошлом
-  if v_date < current_date then
+  if v_date < v_today then
     return jsonb_build_object('ok', false, 'error', 'Нельзя записаться в прошлое');
   end if;
-  if v_date = current_date then
-    -- если сегодня и время уже прошло по серверному времени — отклоняем
-    if p_session_time < to_char(now(), 'HH24:MI') then
+  -- Момент слота в поясе специалиста; при битом поясе — fail-safe crude check.
+  begin
+    v_slot_ts := (p_session_date || ' ' || p_session_time)::timestamp at time zone v_tz;
+  exception when others then
+    v_slot_ts := null;
+  end;
+  if v_slot_ts is null then
+    if v_date = v_today and p_session_time < to_char(now(), 'HH24:MI') then
+      return jsonb_build_object('ok', false, 'error', 'Это время уже прошло');
+    end if;
+  else
+    if v_slot_ts < now() then
       return jsonb_build_object('ok', false, 'error', 'Это время уже прошло');
     end if;
   end if;
@@ -712,22 +803,95 @@ begin
     v_new_dur := v_default_dur;
   end if;
 
-  -- ——— 5. Schedule validation (T04): work_days + work_hours ———
-  if v_work_days is not null then
+  -- ——— 4b. D1: Booking Policy — загрузка и проверки уровня даты ———
+  v_min_notice := greatest(coalesce(v_settings_row.min_notice_minutes, 0), 0);
+  v_max_advance := v_settings_row.max_advance_days;
+  if v_max_advance is not null and v_max_advance < 0 then v_max_advance := null; end if;
+  v_buf_before := greatest(coalesce(v_settings_row.buffer_before_min, 0), 0);
+  v_buf_after := greatest(coalesce(v_settings_row.buffer_after_min, 0), 0);
+  v_increment := v_settings_row.slot_increment_min;
+  if v_increment is not null and v_increment <= 0 then v_increment := null; end if;
+  v_max_day := v_settings_row.max_bookings_per_day;
+  if v_max_day is not null and v_max_day < 0 then v_max_day := null; end if;
+  v_max_week := v_settings_row.max_bookings_per_week;
+  if v_max_week is not null and v_max_week < 0 then v_max_week := null; end if;
+
+  -- Minimum scheduling notice (зеркало engine: slotMs < nowMs + notice).
+  -- Формат длительности — тот же, что formatNotice в js/domain/availability.js.
+  if v_min_notice > 0 and v_slot_ts is not null
+     and v_slot_ts < now() + (v_min_notice || ' minutes')::interval then
+    return jsonb_build_object('ok', false, 'error',
+      'Записаться можно минимум за ' ||
+      case when v_min_notice >= 60 and v_min_notice % 60 = 0
+        then (v_min_notice / 60) || ' ч' else v_min_notice || ' мин' end ||
+      ' до начала');
+  end if;
+
+  -- Maximum advance booking window.
+  if v_max_advance is not null and v_date > v_today + v_max_advance then
+    return jsonb_build_object('ok', false, 'error',
+      'Запись открыта только на ' || v_max_advance || ' дн вперёд');
+  end if;
+
+  -- Override на дату: закрытый день отклоняется сразу; особое окно применяется ниже.
+  select * into v_override_row from schedule_overrides
+  where psychologist_id = p_psychologist_id and date = p_session_date;
+  if v_override_row.id is not null and v_override_row.is_closed then
+    if coalesce(v_override_row.title, '') <> '' then
+      return jsonb_build_object('ok', false, 'error',
+        'В этот день записи нет (' || v_override_row.title || ')');
+    else
+      return jsonb_build_object('ok', false, 'error', 'В этот день записи нет');
+    end if;
+  end if;
+
+  -- Service-specific availability перекрывает дни/окно настроек (частично).
+  -- Битый JSON игнорируется (fail-open к настройкам).
+  v_eff_days := v_work_days;
+  begin
+    if v_service_row.availability is not null
+       and jsonb_typeof(v_service_row.availability) = 'object' then
+      if jsonb_typeof(v_service_row.availability -> 'days') = 'array'
+         and jsonb_array_length(v_service_row.availability -> 'days') > 0 then
+        v_eff_days := v_service_row.availability -> 'days';
+      end if;
+      if (v_service_row.availability ->> 'start') ~ '^\d{2}:\d{2}$' then
+        v_slot_start := v_service_row.availability ->> 'start';
+      end if;
+      if (v_service_row.availability ->> 'end') ~ '^\d{2}:\d{2}$' then
+        v_slot_end := v_service_row.availability ->> 'end';
+      end if;
+    end if;
+  exception when others then
+    v_eff_days := v_work_days;
+  end;
+
+  -- Override-окно перекрывает окно (пустые границы наследуются из настроек/услуги).
+  if v_override_row.id is not null then
+    if v_override_row.open_from ~ '^\d{2}:\d{2}$' then
+      v_slot_start := v_override_row.open_from;
+    end if;
+    if v_override_row.open_to ~ '^\d{2}:\d{2}$' then
+      v_slot_end := v_override_row.open_to;
+    end if;
+  end if;
+
+  -- ——— 5. Schedule validation (T04 + D1): work_days + work_hours ———
+  if v_eff_days is not null then
     begin
       v_isodow := extract(isodow from v_date)::int;
       -- work_days is jsonb array like [1,2,3,4,5]; check containment
-      if not (v_work_days ? v_isodow::text) and not (v_work_days @> to_jsonb(v_isodow)) then
+      if not (v_eff_days ? v_isodow::text) and not (v_eff_days @> to_jsonb(v_isodow)) then
         -- try both text and int containment for compatibility
         -- if work_days contains numbers, the @> check above works; if strings, first check
         -- For safety, also check if array contains isodow as int via jsonb_array_elements
-        if exists (select 1 where jsonb_typeof(v_work_days) = 'array') then
+        if exists (select 1 where jsonb_typeof(v_eff_days) = 'array') then
           -- if no match found via @> and ?, do explicit check
           if not exists (
-            select 1 from jsonb_array_elements(v_work_days) as elem
+            select 1 from jsonb_array_elements(v_eff_days) as elem
             where (elem::text)::int = v_isodow or elem::text = v_isodow::text
           ) then
-            return jsonb_build_object('ok', false, 'error', 'В этот день недели специалист не принимает');
+            return jsonb_build_object('ok', false, 'error', 'В этот день недели приёма нет');
           end if;
         end if;
       end if;
@@ -737,7 +901,8 @@ begin
     end;
   end if;
 
-  -- work hours: start <= time < end, and time+duration <= end + step (allow last slot)
+  -- work hours: start >= window start, and start+duration <= window end + step (grace).
+  -- Тексты ошибок — те же, что у js/domain/availability.js (единый контракт).
   begin
     declare
       v_slot_start_min int := null;
@@ -750,16 +915,49 @@ begin
         v_slot_end_min := substr(v_slot_end,1,2)::int*60 + substr(v_slot_end,4,2)::int;
       end if;
       if v_slot_start_min is not null and v_slot_end_min is not null then
-        if v_new_start < v_slot_start_min then
-          return jsonb_build_object('ok', false, 'error', 'Время вне рабочих часов');
+        v_win_start_min := v_slot_start_min;
+        -- Явный slot_times: grace учитывает последний старт сетки, но никогда
+        -- не строже прежнего поведения (fail-open для прямых RPC).
+        v_win_grace_min := v_slot_end_min + v_step;
+        v_has_slot_list := false;
+        begin
+          if jsonb_typeof(v_settings_row.slot_times) = 'array'
+             and jsonb_array_length(v_settings_row.slot_times) > 0 then
+            select max(substr(e, 1, 2)::int * 60 + substr(e, 4, 2)::int) into v_last_slot_min
+            from jsonb_array_elements_text(v_settings_row.slot_times) as e
+            where e ~ '^\d{2}:\d{2}$';
+            if v_last_slot_min is not null then
+              v_has_slot_list := true;
+              v_win_grace_min := greatest(v_last_slot_min + v_step, v_win_grace_min);
+            end if;
+          end if;
+        exception when others then
+          v_has_slot_list := false;
+        end;
+        if v_new_start < v_win_start_min then
+          return jsonb_build_object('ok', false, 'error', 'Время вне часов приёма');
         end if;
-        -- allow up to slot_end inclusive for start, but end must not exceed slot_end + step
-        if v_new_start + v_new_dur > v_slot_end_min + v_step then
-          return jsonb_build_object('ok', false, 'error', 'Время выходит за рабочие часы');
+        if v_new_start + v_new_dur > v_win_grace_min then
+          return jsonb_build_object('ok', false, 'error',
+            'не хватает ' || v_new_dur || ' мин до конца приёма');
+        end if;
+        -- Slot start increment — только для сгенерированной сетки
+        -- (явный slot_times побеждает, как в engine).
+        if v_increment is not null and not v_has_slot_list then
+          if ((v_new_start - v_win_start_min) % v_increment) <> 0 then
+            return jsonb_build_object('ok', false, 'error',
+              'Начало записи — каждые ' ||
+              case when v_increment >= 60 and v_increment % 60 = 0
+                then (v_increment / 60) || ' ч' else v_increment || ' мин' end);
+          end if;
         end if;
       end if;
     end;
   exception when others then null; end;
+
+  -- D1: кандидат с буферами занимает [start - buf_before, start + dur + buf_after).
+  v_cand_from := v_new_start - v_buf_before;
+  v_cand_to := v_new_start + v_new_dur + v_buf_after;
 
   -- ============================================================
   -- Атомарность (SR-002). Проверка занятости и INSERT ниже — одна транзакция,
@@ -778,9 +976,10 @@ begin
     end if;
   end if;
 
-  -- ——— 7. Занятость по ИНТЕРВАЛАМ: новый [start, start+dur) не должен пересекаться
-  -- ни с одной существующей записью [s, s+dur_s). Длительность чужой записи —
-  -- её снимок, иначе услуга, иначе шаг сетки, иначе дефолт.
+  -- ——— 7. Занятость по ИНТЕРВАЛАМ с буферами (D1): кандидат занимает
+  -- [start - buf_before, start + dur + buf_after), чужие записи — тоже
+  -- с буферами (симметрично engine). При нулевых буферах — как раньше.
+  -- Длительность чужой записи — её снимок, иначе услуга, иначе шаг сетки, иначе дефолт.
   if exists (
     select 1 from sessions s
     left join services sv on sv.id = s.service_id
@@ -789,14 +988,15 @@ begin
       and s.session_date = p_session_date
       and s.status not in ('cancelled', 'expired', 'no_show')
       and (s.status <> 'held' or s.hold_expires_at is null or s.hold_expires_at > now())
-      and (substr(s.session_time, 1, 2)::int * 60 + substr(s.session_time, 4, 2)::int) < v_new_start + v_new_dur
+      and (substr(s.session_time, 1, 2)::int * 60 + substr(s.session_time, 4, 2)::int) - v_buf_before < v_cand_to
       and (substr(s.session_time, 1, 2)::int * 60 + substr(s.session_time, 4, 2)::int)
-            + coalesce(s.duration_min, sv.duration_min, ss.slot_step_min, v_default_dur) > v_new_start
+            + coalesce(s.duration_min, sv.duration_min, ss.slot_step_min, v_default_dur) + v_buf_after > v_cand_from
   ) then
     return jsonb_build_object('ok', false, 'error', 'Это время только что заняли — выберите другое');
   end if;
 
-  -- Блокировки занятости — тоже по интервалам (раньше сравнивался только старт слота)
+  -- Блокировки занятости — по интервалам против кандидата с буферами
+  -- (сами блокировки жёсткие, буферами не расширяются — как в engine).
   if exists (
     select 1 from schedule_blocks b
     where b.psychologist_id = p_psychologist_id
@@ -804,14 +1004,44 @@ begin
       and (
         (b.time_from = '' and b.time_to = '')
         or (
-          v_new_start < (substr(coalesce(nullif(b.time_to, ''), '23:59'), 1, 2)::int * 60
+          v_cand_from < (substr(coalesce(nullif(b.time_to, ''), '23:59'), 1, 2)::int * 60
                          + substr(coalesce(nullif(b.time_to, ''), '23:59'), 4, 2)::int)
           and (substr(coalesce(nullif(b.time_from, ''), '00:00'), 1, 2)::int * 60
-               + substr(coalesce(nullif(b.time_from, ''), '00:00'), 4, 2)::int) < v_new_start + v_new_dur
+               + substr(coalesce(nullif(b.time_from, ''), '00:00'), 4, 2)::int) < v_cand_to
         )
       )
   ) then
     return jsonb_build_object('ok', false, 'error', 'В это время специалист не принимает');
+  end if;
+
+  -- D1: недельный лимит считает чужие даты той же недели — для него нужен
+  -- lock уровня недели (дневной lock гонку между днями не закрывает).
+  -- Порядок всегда один (день → неделя), дедлока между транзакциями нет.
+  if v_max_week is not null then
+    perform pg_advisory_xact_lock(hashtext('bookingw:' || p_psychologist_id || ':' || date_trunc('week', v_date)::date::text));
+  end if;
+
+  -- ——— 7b. Лимиты мест в день / неделю (D1) ———
+  if v_max_day is not null then
+    select count(*) into v_day_count from sessions s
+    where s.psychologist_id = p_psychologist_id
+      and s.session_date = p_session_date
+      and s.status not in ('cancelled', 'expired', 'no_show')
+      and (s.status <> 'held' or s.hold_expires_at is null or s.hold_expires_at > now());
+    if v_day_count >= v_max_day then
+      return jsonb_build_object('ok', false, 'error', 'На этот день мест больше нет');
+    end if;
+  end if;
+
+  if v_max_week is not null then
+    select count(*) into v_week_count from sessions s
+    where s.psychologist_id = p_psychologist_id
+      and date_trunc('week', s.session_date::date) = date_trunc('week', v_date)
+      and s.status not in ('cancelled', 'expired', 'no_show')
+      and (s.status <> 'held' or s.hold_expires_at is null or s.hold_expires_at > now());
+    if v_week_count >= v_max_week then
+      return jsonb_build_object('ok', false, 'error', 'На эту неделю мест больше нет');
+    end if;
   end if;
 
   -- ——— 8. Анти-спам по времени СОЗДАНИЯ (T03) ———
