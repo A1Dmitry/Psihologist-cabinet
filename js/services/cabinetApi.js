@@ -12,7 +12,7 @@
  */
 import { supabaseApi } from './supabaseApi.js';
 import { db } from '../core/dbContext.js';
-import { Client, SessionSettings, WaitingItem, ScheduleBlock, Task, PsyNote, ClientEntry } from '../models/entities.js';
+import { Client, SessionSettings, WaitingItem, ScheduleBlock, ScheduleOverride, Task, PsyNote, ClientEntry } from '../models/entities.js';
 import { sessionFromRow, sessionToRow } from './sessionMapper.js';
 import { DEFAULT_DURATION_MIN } from '../domain/duration.js';
 
@@ -44,6 +44,15 @@ const blockRow = b => ({
   note: b.note || '',
   source: b.source || 'manual',
   google_event_id: b.googleEventId || ''
+});
+
+// D1: переопределение расписания на дату
+const overrideRow = o => ({
+  date: o.date,
+  is_closed: !!o.isClosed,
+  open_from: o.openFrom || '',
+  open_to: o.openTo || '',
+  title: o.title || ''
 });
 
 const taskRow = t => ({
@@ -103,6 +112,12 @@ export const cabinetApi = {
         kind: row.kind || 'busy', title: row.title || '', note: row.note || '',
         source: row.source || 'manual', googleEventId: row.google_event_id || '', createdAt: row.created_at
       })));
+    db.scheduleOverrides = (db.scheduleOverrides || []).filter(x => x.psychologistId !== psyId)
+      .concat((r.overrides || []).map(row => new ScheduleOverride({
+        id: row.id, psychologistId: row.psychologist_id, date: row.date || '',
+        isClosed: !!row.is_closed, openFrom: row.open_from || '', openTo: row.open_to || '',
+        title: row.title || '', createdAt: row.created_at
+      })));
     db.tasks = db.tasks.filter(x => x.psychologistId !== psyId)
       .concat((r.tasks || []).map(row => new Task({
         id: row.id, psychologistId: row.psychologist_id, title: row.title || '',
@@ -137,6 +152,13 @@ export const cabinetApi = {
         slotEnd: r.settings.slot_end || '18:00',
         slotStepMin: r.settings.slot_step_min || DEFAULT_DURATION_MIN,
         defaultVideoPlatform: r.settings.default_video_platform || 'google_meet',
+        minNoticeMinutes: r.settings.min_notice_minutes ?? 0,
+        maxAdvanceDays: r.settings.max_advance_days ?? null,
+        bufferBeforeMin: r.settings.buffer_before_min ?? 0,
+        bufferAfterMin: r.settings.buffer_after_min ?? 0,
+        slotIncrementMin: r.settings.slot_increment_min ?? null,
+        maxBookingsPerDay: r.settings.max_bookings_per_day ?? null,
+        maxBookingsPerWeek: r.settings.max_bookings_per_week ?? null,
         paymentPolicy: r.settings.payment_policy || 'none',
         depositPercent: Number(r.settings.deposit_percent) || 30,
         holdMinutes: r.settings.hold_minutes || 30,
@@ -170,18 +192,19 @@ export const cabinetApi = {
     if (!on() || !psychologistId) return { ok: false };
     const pid = psychologistId;
 
-    const [clients, sessions, settings, blocks, tasks, notes, entries, waiting] = await Promise.all([
+    const [clients, sessions, settings, blocks, overrides, tasks, notes, entries, waiting] = await Promise.all([
       supabaseApi.request(`clients?psychologist_id=eq.${pid}&select=*`).catch(() => []),
       supabaseApi.request(`sessions?psychologist_id=eq.${pid}&select=*&order=session_date.asc`).catch(() => []),
       supabaseApi.request(`session_settings?psychologist_id=eq.${pid}&select=*&limit=1`).catch(() => []),
       supabaseApi.request(`schedule_blocks?psychologist_id=eq.${pid}&select=*&order=date_from.asc`).catch(() => []),
+      supabaseApi.request(`schedule_overrides?psychologist_id=eq.${pid}&select=*&order=date.asc`).catch(() => []),
       supabaseApi.request(`tasks?psychologist_id=eq.${pid}&select=*&order=created_at.asc`).catch(() => []),
       supabaseApi.request(`psy_notes?psychologist_id=eq.${pid}&select=*&order=created_at.desc`).catch(() => []),
       supabaseApi.request(`client_entries?psychologist_id=eq.${pid}&select=*&order=date.desc`).catch(() => []),
       supabaseApi.request(`waiting_items?psychologist_id=eq.${pid}&select=*&order=created_at.asc`).catch(() => [])
     ]);
 
-    return { ok: true, clients, sessions, settings: settings?.[0] || null, blocks, tasks, notes, entries, waiting };
+    return { ok: true, clients, sessions, settings: settings?.[0] || null, blocks, overrides, tasks, notes, entries, waiting };
   },
 
   // ——— Клиенты (привязочные строки; PII в сейфе) ———
@@ -252,6 +275,13 @@ export const cabinetApi = {
       slot_start: st.slotStart || '10:00',
       slot_end: st.slotEnd || '18:00',
       slot_step_min: st.slotStepMin || DEFAULT_DURATION_MIN,
+      min_notice_minutes: st.minNoticeMinutes ?? 0,
+      max_advance_days: st.maxAdvanceDays ?? null,
+      buffer_before_min: st.bufferBeforeMin ?? 0,
+      buffer_after_min: st.bufferAfterMin ?? 0,
+      slot_increment_min: st.slotIncrementMin ?? null,
+      max_bookings_per_day: st.maxBookingsPerDay ?? null,
+      max_bookings_per_week: st.maxBookingsPerWeek ?? null,
       default_video_platform: st.defaultVideoPlatform || 'google_meet',
       payment_policy: st.paymentPolicy || 'none',
       deposit_percent: st.depositPercent ?? 30,
@@ -281,7 +311,8 @@ export const cabinetApi = {
       body: JSON.stringify({
         psychologist_id: psyId, title: x.name, duration_min: x.duration || DEFAULT_DURATION_MIN,
         price: x.price || 0, currency: x.currency || 'BYN', format: x.format || 'offline',
-        sort_order: x.sortOrder || 0
+        sort_order: x.sortOrder || 0,
+        availability: x.availability || null
       })
     }).then(rows => {
       const row = Array.isArray(rows) ? rows[0] : rows;
@@ -307,6 +338,23 @@ export const cabinetApi = {
 
   pushBlockDelete(id) {
     push('block:delete', () => supabaseApi.request(`schedule_blocks?id=eq.${id}`, { method: 'DELETE' }));
+  },
+
+  // ——— D1: переопределения расписания ———
+  pushOverride(psyId, o) {
+    push('override', () => supabaseApi.request('schedule_overrides?on_conflict=psychologist_id,date', {
+      method: 'POST',
+      headers: { Prefer: 'return=representation,resolution=merge-duplicates' },
+      body: JSON.stringify({ psychologist_id: psyId, ...overrideRow(o) })
+    }).then(rows => {
+      const row = Array.isArray(rows) ? rows[0] : rows;
+      if (row?.id) o.id = row.id;
+      return row;
+    }));
+  },
+
+  pushOverrideDelete(id) {
+    push('override:delete', () => supabaseApi.request(`schedule_overrides?id=eq.${id}`, { method: 'DELETE' }));
   },
 
   // ——— Задачи / Блокнот / Записи о клиентах ———

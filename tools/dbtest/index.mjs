@@ -183,3 +183,24 @@ export async function startTestDatabase(opts = {}) {
   await db.applySchema(opts);
   return db;
 }
+
+/**
+ * Завершить DB-набор с детерминированным кодом выхода.
+ *
+ * Почему нельзя `process.exitCode = …` + естественный выход: embedded-postgres
+ * тянет зависимость async-exit-hook, которая перехватывает событие `beforeExit`
+ * и завершает процесс кодом 0 ВНЕ зависимости от process.exitCode — провалы
+ * проверок маскировались под успех (найдено Challenger-аудитом D1 2026-09-24:
+ * форсированный FAIL в db-contract печатал FAILED, но выходил с кодом 0).
+ * Явный process.exit() событие beforeExit НЕ триггерит, поэтому код выхода
+ * сохраняется. Пауза 100 мс — чтобы pipe stdout успел сбросить последние
+ * строки (process.exit может обрезать асинхронные записи в pipe).
+ *
+ * @param {number} failedCount — число проваленных проверок (0 = успех).
+ */
+export async function finishSuite(failedCount) {
+  const code = failedCount ? 1 : 0;
+  process.exitCode = code;
+  await new Promise(r => setTimeout(r, 100));
+  process.exit(code);
+}

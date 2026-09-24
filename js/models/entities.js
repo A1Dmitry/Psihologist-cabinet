@@ -18,6 +18,7 @@ export const EntityNames = {
   ClientRisk: 'ClientRisks',
   SessionReminder: 'SessionReminders',
   ScheduleBlock: 'ScheduleBlocks',
+  ScheduleOverride: 'ScheduleOverrides',
   Task: 'Tasks',
   PsyNote: 'PsyNotes',
   ClientEntry: 'ClientEntries',
@@ -235,7 +236,9 @@ export class Service {
     /** переопределение политики оплаты для услуги (null = из настроек кабинета) */
     paymentPolicy = null,
     depositPercent = null,
-    depositAmount = null
+    depositAmount = null,
+    /** D1: доступность услуги {days:[1..7], start:'HH:MM', end:'HH:MM'} (null = из настроек) */
+    availability = null
   } = {}) {
     this.id = id;
     this.psychologistId = psychologistId;
@@ -252,11 +255,31 @@ export class Service {
     this.paymentPolicy = paymentPolicy;
     this.depositPercent = depositPercent;
     this.depositAmount = depositAmount;
+    this.availability = normalizeAvailabilityField(availability);
   }
 
   priceLabel() {
     return this.currency === 'RUB' ? `${this.price} рос. руб.` : `${this.price} бел. руб.`;
   }
+}
+
+/** D1: нормализация service availability (принимает объект или JSON-строку из БД). */
+export function normalizeAvailabilityField(value) {
+  let v = value;
+  if (typeof v === 'string') {
+    try { v = JSON.parse(v); } catch { return null; }
+  }
+  if (!v || typeof v !== 'object') return null;
+  let days = null;
+  if (Array.isArray(v.days)) {
+    const clean = [...new Set(v.days.map(Number).filter(n => n >= 1 && n <= 7))];
+    if (clean.length) days = clean;
+  }
+  const hm = s => (/^\d{1,2}:\d{2}$/.test(String(s || '').trim()) ? String(s).trim() : null);
+  const start = hm(v.start);
+  const end = hm(v.end);
+  if (!days && !start && !end) return null;
+  return { days, start, end };
 }
 
 /** Клиент */
@@ -453,6 +476,14 @@ export class SessionSettings {
     slotStart = '10:00',
     slotEnd = '18:00',
     slotStepMin = 60,
+    // —— D1: Booking Policy / Availability (null = без ограничения) ——
+    minNoticeMinutes = 0,
+    maxAdvanceDays = null,
+    bufferBeforeMin = 0,
+    bufferAfterMin = 0,
+    slotIncrementMin = null,
+    maxBookingsPerDay = null,
+    maxBookingsPerWeek = null,
     // —— оплата ——
     paymentPolicy = PaymentPolicy.DEPOSIT,
     depositPercent = 30,
@@ -489,10 +520,22 @@ export class SessionSettings {
     this.workDays = Array.isArray(workDays) ? workDays.map(Number) : [1, 2, 3, 4, 5];
     this.timezone = timezone;
     this.defaultVideoPlatform = defaultVideoPlatform;
-    this.slotTimes = slotTimes || ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
+    // D1: сырое значение slot_times (null = сетка генерируется engine из
+    // slotStart/slotEnd/инкремента). Дефолтный список для отображения дают
+    // потребители (BookingViewModel.slotTimes и др.), а не сущность.
+    this.slotTimes = Array.isArray(slotTimes) && slotTimes.length ? slotTimes.slice() : null;
     this.slotStart = slotStart || '10:00';
     this.slotEnd = slotEnd || '18:00';
     this.slotStepMin = Number(slotStepMin) || DEFAULT_DURATION_MIN;
+    const optLimit = v => (v === null || v === undefined || v === '' ? null : Math.max(0, Math.floor(Number(v) || 0)));
+    this.minNoticeMinutes = Math.max(0, Math.floor(Number(minNoticeMinutes) || 0));
+    this.maxAdvanceDays = optLimit(maxAdvanceDays);
+    this.bufferBeforeMin = Math.max(0, Math.floor(Number(bufferBeforeMin) || 0));
+    this.bufferAfterMin = Math.max(0, Math.floor(Number(bufferAfterMin) || 0));
+    this.slotIncrementMin = slotIncrementMin === null || slotIncrementMin === undefined || slotIncrementMin === ''
+      ? null : Math.max(1, Math.floor(Number(slotIncrementMin) || 0)) || null;
+    this.maxBookingsPerDay = optLimit(maxBookingsPerDay);
+    this.maxBookingsPerWeek = optLimit(maxBookingsPerWeek);
     this.paymentPolicy = paymentPolicy;
     this.depositPercent = Number(depositPercent) || 30;
     this.depositAmount = depositAmount != null ? Number(depositAmount) : null;
@@ -561,6 +604,33 @@ export class ScheduleBlock {
     const from = this.timeFrom || '00:00';
     const to = this.timeTo || '23:59';
     return time >= from && time < to;
+  }
+}
+
+/**
+ * D1: переопределение расписания на конкретную дату (закрытый день
+ * или особое окно приёма). В отличие от ScheduleBlock, может не только
+ * закрыть день, но и задать другое окно вместо slot_start/slot_end.
+ */
+export class ScheduleOverride {
+  constructor({
+    id = null,
+    psychologistId = null,
+    date = '',               // YYYY-MM-DD
+    isClosed = false,        // true = в этот день записи нет
+    openFrom = '',           // HH:MM, пусто = из настроек
+    openTo = '',             // HH:MM, пусто = из настроек
+    title = '',              // «8 марта», «Приём до обеда» — видно публично
+    createdAt = null
+  } = {}) {
+    this.id = id;
+    this.psychologistId = psychologistId;
+    this.date = date || '';
+    this.isClosed = !!isClosed;
+    this.openFrom = openFrom || '';
+    this.openTo = openTo || '';
+    this.title = title || '';
+    this.createdAt = createdAt || new Date().toISOString();
   }
 }
 

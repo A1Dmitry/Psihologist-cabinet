@@ -5,7 +5,7 @@
  * Uses embedded PostgreSQL + real schema.sql
  */
 
-import { startTestDatabase } from '../tools/dbtest/index.mjs';
+import { startTestDatabase, finishSuite } from '../tools/dbtest/index.mjs';
 
 let teardownNoise = false;
 const isTeardownNoise = (e) => /terminating connection|57P01/.test(String(e?.message || e));
@@ -369,5 +369,4 @@ try {
 const failed = results.filter(r => !r[1]).length;
 console.log(failed ? `\n${failed} FAILED` : '\nALL PASS');
 if (teardownNoise) console.log('(teardown noise ignored)');
-process.exitCode = failed ? 1 : 0;
-setTimeout(() => process.exit(process.exitCode || 0), 200).unref?.();
+await finishSuite(failed);

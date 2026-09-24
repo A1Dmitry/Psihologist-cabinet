@@ -17,7 +17,7 @@
  *   • ГОНКА: две параллельные транзакции на один слот → ровно одна запись;
  *   • RLS: аноним не видит клиентов и сессии, владелец видит свои.
  */
-import { startTestDatabase } from '../tools/dbtest/index.mjs';
+import { startTestDatabase, finishSuite } from '../tools/dbtest/index.mjs';
 
 /**
  * Гонка при остановке PostgreSQL: pg_ctl гасит сервер, а «спящий» клиент пула
@@ -299,5 +299,4 @@ try {
 const failed = results.filter(r => !r[1]).length;
 console.log(failed ? `\n${failed} FAILED` : '\nALL PASS');
 if (teardownNoise) console.log('(шум остановки PostgreSQL проигнорирован: 57P01 на закрытии соединения)');
-process.exitCode = failed ? 1 : 0;
-setTimeout(() => process.exit(process.exitCode || 0), 200).unref?.();
+await finishSuite(failed);

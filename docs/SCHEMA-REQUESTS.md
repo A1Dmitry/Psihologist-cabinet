@@ -355,6 +355,55 @@
   **В проде требует переприменения `schema.sql`** — до этого функция остаётся
   в legacy-режиме.
 
+### SR-D1 — Booking Policy / Availability (D1, issue #31)
+
+- **От:** реализация D1 по ROADMAP-OKNA (фаза 3, после #18/#21/#22)
+- **Дата:** 2026-09-24
+- **Что нужно:**
+  - `session_settings`: `min_notice_minutes integer not null default 0`,
+    `max_advance_days integer` (NULL = ∞), `buffer_before_min` / `buffer_after_min`
+    `integer not null default 0`, `slot_increment_min integer` (NULL = шаг сетки),
+    `max_bookings_per_day` / `max_bookings_per_week integer` (NULL = ∞);
+  - `services.availability jsonb` (NULL = наследовать расписание;
+    `{"days":[1..7],"start":"HH:MM","end":"HH:MM"}`, частичный объект = частичное перекрытие);
+  - новая таблица `schedule_overrides`
+    `(id, psychologist_id, date, is_closed, open_from, open_to, title, created_at)`
+    + `unique(psychologist_id, date)` — закрытые дни и особые окна приёма;
+  - RLS `owner_all` на `schedule_overrides` (владелец через `auth.uid()`),
+    прямой `SELECT` для `anon` запрещён;
+  - публичный view `public_schedule_overrides`
+    `(id, psychologist_id, date, is_closed, open_from, open_to, title)` + гранты
+    `anon, authenticated`;
+  - `public_settings` расширен полями политики (не секретны — нужны публичному engine);
+  - `create_booking`: серверное enforcement политики (notice в поясе специалиста,
+    горизонт, буферы в overlap-проверках, инкремент для сгенерированной сетки,
+    service availability, overrides, дневной/недельный лимиты под advisory lock).
+    Сигнатура RPC **не меняется** (политика резолвится сервером из настроек/услуги).
+- **Куда:** `supabase/schema.sql` (идемпотентные `alter table … add column if not exists`,
+  `create table if not exists`, view, RLS, RPC); клиенты: `js/models/entities.js`
+  (`SessionSettings`, `Service.availability`, `ScheduleOverride`), `js/core/dbContext.js`,
+  `js/services/supabaseApi.js` (`listOverrides`), `supabaseSync`/`cabinetApi`
+  (чтение + write-through).
+- **Зачем:** D1 — единый Availability + Booking Policy Engine
+  (`Service + BookingPolicy + Schedule + BusySources → CandidateSlots → PolicyFilter → BookableSlots`).
+  Канонический клиентский engine — `js/domain/availability.js`; серверный близнец —
+  проверки в `create_booking`. Один engine для записи/переноса/серий/waitlist (D2)/каталога (T-26).
+- **Миграция:** только `add column if not exists` + `create table/view if not exists`;
+  дефолты сохраняют поведение до D1 (notice/буферы 0, лимиты/горизонт/инкремент NULL).
+  Backfill не нужен. Изменение fail-open: старые клиенты и старые вызовы RPC работают как раньше.
+- **Пограничные семантики (зафиксированы тестами):**
+  - сгенерированная сетка: старты строго до закрытия (`m < slotEnd`); явный `slot_times` — как есть;
+  - сессия обязана закончиться не позже `slot_end + шаг` (grace, как в T-02);
+  - инкремент применяется только к сгенерированной сетке (явный список побеждает);
+  - буферы расширяют записи симметрично, блокировки — жёсткие;
+  - «сегодня»/«прошлое»/горизонт — в поясе специалиста (`session_settings.timezone`),
+    а не сервера (заменяет crude same-day check по серверному времени).
+- **Приоритет:** P1 (архитектурный узел фазы 3; блокирует D5/T-05/D2/T-12/T-26).
+- **Статус:** `applied` в репозитории 2026-09-24 (ветка `arena/01a0d32e-psihologist-cabinet`).
+  Проверено: `node tests/availability-policy.mjs` (домен), `node tests/availability-db.mjs`
+  (сервер на реальном PostgreSQL), `npm run verify` 17/17.
+  **В проде требует переприменения `schema.sql`** (как все DDL-изменения).
+
 ### Не заявки (рекомендации Агенту 1, без изменения схемы)
 1. **sitemap.xml:** CI генерирует `/psy/{slug}`, но не `/book/{slug}`, хотя Pages отдаёт оба маршрута с HTTP 200. Предлагаю добавить `/book/{slug}` в sitemap (или, наоборот, поставить на `/book/{slug}` canonical → `/psy/{slug}` — тогда в sitemap они не нужны). Сейчас canonical на странице записи — собственный.
 2. **Перерисовка после загрузки каталога:** в `loadServerCatalog()`/`enableDemoData()` заменены вызовы `renderPortal()` на `render()` — иначе глубокие ссылки `/psy/{slug}` и `/book/{slug}` после загрузки каталога оставались на экране «не найдено» (исправлено Агентом 2, точечно, с комментарием).

@@ -287,6 +287,25 @@
                 <div id="blocks-list" class="bg-white rounded-xl border"></div>
               </div>
             </div>
+            <div class="mt-6">
+              <h2 class="font-semibold mb-2">Особые дни</h2>
+              <p class="text-sm text-slate-500 mb-3">Закройте конкретную дату (праздник) или задайте особое окно приёма вместо обычного расписания.</p>
+              <div class="grid lg:grid-cols-2 gap-6">
+                <div class="bg-white rounded-xl border p-6 space-y-3 text-sm">
+                  <div><label class="font-medium">Дата *</label><input id="ovr-date" type="date" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                  <label class="flex items-center gap-2"><input id="ovr-closed" type="checkbox" class="accent-indigo-600" checked> Закрыть день (записи нет)</label>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div><label class="font-medium">Приём с</label><input id="ovr-from" type="time" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                    <div><label class="font-medium">Приём по</label><input id="ovr-to" type="time" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                  </div>
+                  <div><label class="font-medium">Подпись (видна клиентам)</label><input id="ovr-title" placeholder="Например: 8 марта" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                  <button id="btn-add-override" class="px-6 py-2.5 rounded-full bg-indigo-600 text-white font-medium">Сохранить</button>
+                </div>
+                <div>
+                  <div id="overrides-list" class="bg-white rounded-xl border"></div>
+                </div>
+              </div>
+            </div>
           </div>
           <div id="tab-clients" class="cab-tab hidden">
             <div class="flex justify-between mb-4">
@@ -443,6 +462,19 @@
                     <div><label class="text-xs">Повтор, если нет ответа (0=выкл)</label><input id="set-reminder-second" type="number" class="w-full mt-1 px-3 py-2 rounded-xl border" value="12"></div>
                   </div>
                   <p class="text-xs text-slate-400 mt-2">Практика: 24 ч — основной запрос; 12 ч — если клиент не ответил.</p>
+                </div>
+                <div class="pt-3 border-t">
+                  <div class="font-medium mb-2">Правила доступности записи</div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div><label class="text-xs">Мин. срок записи, мин (0 = выкл)</label><input id="set-min-notice" type="number" min="0" class="w-full mt-1 px-3 py-2 rounded-xl border" value="0"></div>
+                    <div><label class="text-xs">Горизонт записи, дней (пусто = ∞)</label><input id="set-max-advance" type="number" min="0" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                    <div><label class="text-xs">Пауза до сессии, мин</label><input id="set-buf-before" type="number" min="0" class="w-full mt-1 px-3 py-2 rounded-xl border" value="0"></div>
+                    <div><label class="text-xs">Пауза после сессии, мин</label><input id="set-buf-after" type="number" min="0" class="w-full mt-1 px-3 py-2 rounded-xl border" value="0"></div>
+                    <div><label class="text-xs">Шаг начала слотов, мин (пусто = шаг сетки)</label><input id="set-increment" type="number" min="0" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                    <div><label class="text-xs">Мест в день (пусто = ∞)</label><input id="set-max-day-cap" type="number" min="0" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                    <div><label class="text-xs">Мест в неделю (пусто = ∞)</label><input id="set-max-week-cap" type="number" min="0" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+                  </div>
+                  <p class="text-xs text-slate-400 mt-2">Проверяются сервером: запись, переносы и лист ожидания используют одни правила.</p>
                 </div>
                 <button id="btn-save-pay-settings" class="px-6 py-2.5 rounded-full bg-indigo-600 text-white font-medium">Сохранить</button>
               </div>
@@ -740,6 +772,14 @@
         <div class="grid grid-cols-2 gap-3">
           <div><label class="font-medium">Минут</label><input id="sv-duration" type="number" value="60" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
           <div><label class="font-medium">Формат</label><select id="sv-format" class="w-full mt-1 px-3 py-2 rounded-xl border"><option value="offline">Очно</option><option value="online">Онлайн</option></select></div>
+        </div>
+        <div class="pt-2 border-t">
+          <div class="font-medium mb-1">Доступность услуги (пусто = как в расписании)</div>
+          <div><label class="text-xs">Дни недели 1–7 через запятую (1=Пн)</label><input id="sv-days" placeholder="1,2,3,4,5" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+          <div class="grid grid-cols-2 gap-3 mt-2">
+            <div><label class="text-xs">Приём с</label><input id="sv-start" type="time" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+            <div><label class="text-xs">Приём по</label><input id="sv-end" type="time" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+          </div>
         </div>
       </div>
       <div class="flex gap-3 mt-6">

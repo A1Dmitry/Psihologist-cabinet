@@ -9,7 +9,7 @@
  * к клиентам включается после подключения Supabase Auth (owner_id = auth.uid()).
  */
 import { db } from '../core/dbContext.js';
-import { Service, SessionSettings, ScheduleBlock } from '../models/entities.js';
+import { Service, SessionSettings, ScheduleBlock, ScheduleOverride } from '../models/entities.js';
 import { supabaseApi } from './supabaseApi.js';
 import { isSupabaseConfigured } from './supabaseConfig.js';
 import { mapPsy } from './psyMapper.js';
@@ -62,7 +62,8 @@ function mapService(row) {
     platforms: row.platforms || [],
     payUrl: row.pay_url || '',
     sortOrder: row.sort_order || 0,
-    isActive: row.is_active !== false
+    isActive: row.is_active !== false,
+    availability: row.availability ?? null
   });
 }
 
@@ -169,6 +170,17 @@ export const supabaseSync = {
         (blocks || []).forEach(b => db.scheduleBlocks.push(mapBlock(b)));
       } catch (_) { /* блокировки опциональны */ }
 
+      // D1: переопределения расписания на дату (закрытые дни / особые окна)
+      try {
+        const overrides = await supabaseApi.listOverrides(psyId);
+        db.scheduleOverrides = (db.scheduleOverrides || []).filter(o => o.psychologistId !== psyId);
+        (overrides || []).forEach(o => db.scheduleOverrides.push(new ScheduleOverride({
+          id: o.id, psychologistId: o.psychologist_id, date: o.date,
+          isClosed: !!o.is_closed, openFrom: o.open_from || '', openTo: o.open_to || '',
+          title: o.title || '', createdAt: o.created_at
+        })));
+      } catch (_) { /* overrides опциональны */ }
+
       try {
         const st = await supabaseApi.getSettings(psyId);
         if (st) {
@@ -184,6 +196,14 @@ export const supabaseSync = {
             slotEnd: st.slot_end || '18:00',
             slotStepMin: st.slot_step_min || DEFAULT_DURATION_MIN,
             defaultVideoPlatform: st.default_video_platform || 'google_meet',
+            // D1: политика доступности (public_settings; отсутствуют в старых схемах → дефолты)
+            minNoticeMinutes: st.min_notice_minutes ?? 0,
+            maxAdvanceDays: st.max_advance_days ?? null,
+            bufferBeforeMin: st.buffer_before_min ?? 0,
+            bufferAfterMin: st.buffer_after_min ?? 0,
+            slotIncrementMin: st.slot_increment_min ?? null,
+            maxBookingsPerDay: st.max_bookings_per_day ?? null,
+            maxBookingsPerWeek: st.max_bookings_per_week ?? null,
             paymentPolicy: st.payment_policy || 'none',
             depositPercent: Number(st.deposit_percent) || 30,
             holdMinutes: st.hold_minutes || 30,
