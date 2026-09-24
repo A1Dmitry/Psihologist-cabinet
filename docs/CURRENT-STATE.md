@@ -1,13 +1,33 @@
-# CURRENT-STATE — canonical current-state (audited)
+# CURRENT-STATE — canonical current-state
 
 > Единственный current-state source of truth по issue #19. Все остальные
 > документы описывают снимки прошлых циклов (см. раздел «Исторические
 > документы»). Конфликт с этим файлом решается в пользу настоящего файла
 > до новой аудированной правки.
 >
+> «Canonical» = единственный источник истины (authority), а **не** независимая
+> сертификация: происхождение каждой проверки определяется маркером `АУДИТОР`
+> (RULES §3). Независимая верификация этого файла — отдельный открытый гейт
+> (статус ниже).
+>
 > **АУДИТОР: САМ** (сессия исполнения #19, Producer + self-check, 2026-09-24 UTC).
 > Независимый Challenger по этому документационному циклу и Main Re-Audit —
 > **OPEN** (следующий независимый агент; см. `docs/ISSUE-19-REPORT.md`).
+
+## Статус цикла #19 (machine-readable, для orchestration)
+
+```
+#19 implementation: COMPLETE
+#19 verification gate: OPEN
+#19 independent challenger: OPEN
+#19 main re-audit: OPEN
+#19 terminal state: PARTIALLY_COMPLETED
+```
+
+Порядок закрытия (RULES §6.6/§6.7): independent challenger
+(`АУДИТОР: ВНЕШНИЙ`) → Main Re-Audit на актуальном `main` → решение
+сопровождающего. До этого #19 **не закрывается**: implementation COMPLETE
+не тождественно quality gate passed.
 
 ## Main SHA
 

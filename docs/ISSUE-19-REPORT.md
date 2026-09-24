@@ -5,6 +5,21 @@
 Независимый Challenger по этому документационному циклу и Main Re-Audit —
 **не выполнены** (открытый гейт; см. раздел 11).
 
+Статус цикла (machine-readable, для orchestration):
+
+```
+#19 implementation: COMPLETE
+#19 verification gate: OPEN
+#19 independent challenger: OPEN
+#19 main re-audit: OPEN
+#19 terminal state: PARTIALLY_COMPLETED
+```
+
+**Implementation DoD #19 = выполнено. Quality Gate #19 = не завершён.**
+Закрываться #19 может только после: independent challenger (`АУДИТОР: ВНЕШНИЙ`)
+→ Main Re-Audit на актуальном `main` → решение сопровождающего (RULES §6.7).
+Первое утверждение не тождественно второму — см. разделы 2 и 11.
+
 Задача: https://github.com/A1Dmitry/Psihologist-cabinet/issues/19
 «P1: Synchronize project documentation with current main and remove stale
 historical claims». Выбран как ишью без зависимостей (не «child of» других
@@ -21,13 +36,22 @@ historical claims». Выбран как ишью без зависимосте�
 
 ## 2. РЕЗУЛЬТАТ
 
-Документационная часть задачи **выполнена полностью** (все 8 пунктов DoD):
+**Implementation DoD #19 — выполнено** (все 8 пунктов DoD). **Quality Gate
+#19 — не завершён**: independent Challenger и Main Re-Audit — OPEN
+(статус-блок в шапке, раздел 11). Разграничение намеренное, чтобы
+«implementation complete» не читалось как «quality gate passed».
+
+Документационная работа выполнена полностью:
 
 1. **Current-state:** `docs/CURRENT-STATE.md` переписан под актуальный
    main @ `87e3951241fd18f2cc24afa2b6502247a7fee73b`: merged PR (#20/#24/#25/#26/
    #32/#37), production-статус (честно: ничего не подтверждено production-контуром),
    локально верифицированное (22/22 + verify_pages), открытые issue P0/P1/P2,
    активные SR, список исторических документов, статус регистрации и Quality Gate.
+   Из заголовка убрано «(audited)»: слово в имени/заголовке могло читаться как
+   независимая сертификация; каноничность = authority, происхождение проверок —
+   маркер `АУДИТОР` (RULES §3). Добавлен machine-readable блок статуса цикла
+   и порядок закрытия (#19 → Challenger → Main Re-Audit → closure).
 2. **История не переписана:** 12 документов прошлых циклов получили короткий
    баннер `HISTORICAL REPORT — NOT CURRENT MAIN STATE` + ссылку на
    CURRENT-STATE.md (FULL-AUDIT-REPORT, ISSUE-14-REPORT, ISSUE-14-CHALLENGER,
@@ -188,14 +212,23 @@ historical claims». Выбран как ишью без зависимосте�
 
 ## 11. ОКОНЧАТЕЛЬНЫЙ СТАТУС
 
-**ЧАСТИЧНО ЗАВЕРШЕНО.**
+**ЧАСТИЧНО ЗАВЕРШЕНО** (terminal state: `PARTIALLY_COMPLETED`, блок в шапке).
 
-Документационная цель #19 достигнута в полном объёме (все пункты DoD).
-Терминальный «ЗАВЕРШЁННЫЙ» не присвоен: по §6.6/§6.7 для P1-цикла открыты
-независимый Challenger и Main Re-Audit (второй агент сверяет этот документ
-с кодом на актуальном main и публикует отчёт с `АУДИТОР: ВНЕШНИЙ`).
-Для чисто процессного изменения production-проверка не выдумывается:
-продуктового кода не менялось, UI-гейт (verify_pages) пройден.
+**Implementation DoD #19 — выполнено** (все 8 пунктов DoD, раздел 2).
+**Quality Gate #19 — не завершён**: терминальный «ЗАВЕРШЁННЫЙ» не присвоен,
+по §6.6/§6.7 для P1-цикла открыты независимый Challenger и Main Re-Audit
+(второй агент сверяет этот документ с кодом на актуальном main и публикует
+отчёт с `АУДИТОР: ВНЕШНИЙ`). Для чисто процессного изменения
+production-проверка не выдумывается: продуктового кода не менялось,
+UI-гейт (verify_pages) пройден.
+
+**Порядок closure (обязательный, RULES §6.6/§6.7):**
+`#19 implementation: COMPLETE` → independent challenger (`АУДИТОР: ВНЕШНИЙ`)
+→ Main Re-Audit на актуальном `main` (проверить SHA, присутствие правок,
+сверить CURRENT-STATE.md с кодом) → решение сопровождающего → только потом
+closure #19. Промежуточное состояние (implementation done, gate open) —
+нормальное и ожидаемое; оно не является основанием для автоматического
+закрытия ишью.
 
 ## 12. УВЕРЕННОСТЬ
 

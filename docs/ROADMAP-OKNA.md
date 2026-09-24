@@ -81,9 +81,11 @@ local-only).
 
 После #18/#21/#22 обновить единственный current-state source of truth. Исторические отчёты не переписывать.
 
-Статус (2026-09-24): цикл #19 выполнен по фактам main @ `87e3951`
-(`docs/CURRENT-STATE.md`, баннеры historical, сверка ROADMAP/SR/RULES —
-`docs/ISSUE-19-REPORT.md`). Независимый Challenger по циклу — open.
+Статус (2026-09-24): **implementation completed; independent verification
+pending** — документационная часть (все 8 пунктов DoD) выполнена на main @
+`87e3951` (`docs/CURRENT-STATE.md`, баннеры historical, сверка ROADMAP/SR/RULES —
+`docs/ISSUE-19-REPORT.md`); independent Challenger + Main Re-Audit — **OPEN**.
+Закрывать #19 только после Challenger + Main Re-Audit (RULES §6.7).
 
 ### PHASE 2 — Existing Booking Foundation
 
