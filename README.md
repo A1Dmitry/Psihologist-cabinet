@@ -32,6 +32,7 @@ chmod +x serve.sh && ./serve.sh  # простой статический сер�
 - `supabase/seed.sql` — референс-данные профиля с сайта nataliamikhailouskaya.by
 - `docs/DATA-MODEL.md` — модель данных сайта, сверка и маппинг в БД
 - `docs/ROADMAP-OKNA.md` — роадмап: сверка функций с okna.one и бэклог задач (T-01…T-25)
+- `docs/ROADMAP-DATABASE-CONNECTION.md` — роадмап правильного подключения к базе данных (Supabase MCP, AI-клиенты, безопасность)
 - `docs/INFRA.md` — продакшен-инфраструктура: runbook Supabase/Resend/Pages, статус, чек-лист
 - `docs/SCHEMA-REQUESTS.md` — очередь заявок на изменение схемы (правила для агентов 2–5)
 - `docs/RULES.md` — обязательные строгие правила работы с проектом (типология «туфты», запрет самосертификации, 12-пунктовый итоговый отчёт)
@@ -72,7 +73,8 @@ chmod +x serve.sh && ./serve.sh  # простой статический сер�
 
 Подключение БД: Supabase → SQL Editor → выполнить `supabase/schema.sql`, затем
 `supabase/seed.sql` → в приложении нажать «Повторить» (бейдж в шапке станет
-«Данные: сервер»).
+«Данные: сервер»). Роадмап и регламент подключения LLM-клиентов и Supabase MCP
+Server см. в `docs/ROADMAP-DATABASE-CONNECTION.md`.
 
 ## Вход психолога — одноразовый код из письма (6–8 символов)
 
