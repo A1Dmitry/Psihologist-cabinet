@@ -206,3 +206,27 @@ production-фактов (объявлены UNKNOWN явно — egress блок
 Это не самовнушение: (1) статусы ROADMAP/SR получены из кода, а не из
 старых документов; (2) найден и исправлен реальный stale-факт (README
 «до SR-001»); (3) «ЗАВЕРШЁННЫЙ» не присвоен при открытых гейтах.
+
+---
+
+## Приложение — готовый комментарий для GitHub issue #19
+
+> GitHub-интеграция сессии не имеет Issues: write (попытка `gh issue comment`
+> 2026-09-24 → `Resource not accessible by integration`; прецедент —
+> `docs/ISSUE-TRIAGE-2026-09-24.md`). При переподключении GitHub с правом
+> Issues: write — публикуется как есть.
+
+```markdown
+## Статус цикла #19 (ветка `arena/01a0d3db-psihologist-cabinet`, коммит 7757a03)
+
+Документационная часть #19 выполнена на main @ `87e3951241fd18f2cc24afa2b6502247a7fee73b`:
+
+- `docs/CURRENT-STATE.md` — единственный current-state source of truth: SHA main, merged PR (#20/#24/#25/#26/#32/#37), production-статус (честно UNKNOWN — egress), локально верифицированное (22/22 + verify_pages ALL PASS), открытые P0/P1/P2, активные SR, исторические документы, статус регистрации и Quality Gate.
+- 12 отчётов прошлых циклов помечены баннером `HISTORICAL REPORT — NOT CURRENT MAIN STATE` (история не переписана); `ISSUE-TRIAGE-2026-09-24` — контекстная строка (триаж против `d578c08`).
+- `ROADMAP-OKNA.md` сверен с кодом: D1 ✅ в main (PR #32 + recovery #33), server-authority оплаты ✅ (PR #25), T-25 consent fact ✅ (`clients`/`booking_attempts`), PHASE 1/3 и §7 обновлены, QG-цикл — со ссылкой на канон RULES §6.
+- `SCHEMA-REQUESTS.md`: applied SR (001/002/003/004/108/D1) сверены grep'ом с `schema.sql`; у каждого явный production-статус «НЕ подтверждено, re-apply schema.sql»; superseded-черновики помечены.
+- `README.md`: исправлена stale-строка «(до SR-001)»; `INFRA.md`: чек-лист подтверждён, п.2 дополнен SR-D1 + фиксами #21/#22.
+- Гейт после изменений: `npm run verify` 22/22 exit 0; `verify_pages.py` ALL PASS (12/12).
+
+Итоговый отчёт: `docs/ISSUE-19-REPORT.md` (АУДИТОР: САМ). **Независимый Challenger и Main Re-Audit по циклу — OPEN** (второй агент; status ЧАСТИЧНО ЗАВЕРШЕНО, не ЗАВЕРШЁННЫЙ).
+```
