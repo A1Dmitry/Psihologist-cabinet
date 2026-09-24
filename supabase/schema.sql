@@ -491,9 +491,16 @@ create policy anon_read_services on services
   for select to anon
   using (is_active = true);
 
--- client_risks — глобальный антифрод: чтение владельцам, запись через service_role
+-- client_risks — глобальный антифрод: ТОЛЬКО service_role / security definer RPC.
+-- Любой authenticated ранее читал всю таблицу (using true) — cross-tenant утечка
+-- phone_key (квази-PII). Теперь прямого SELECT для anon/authenticated нет:
+-- RLS включен, политик для чтения нет, service_role обходит RLS.
+-- Проверка блокировки — внутри create_booking (security definer).
 drop policy if exists owner_read on client_risks;
-create policy owner_read on client_risks for select to authenticated using (true);
+-- no policies for anon/authenticated → only service_role can read
+-- ensure RLS enabled (already enabled in loop above, but explicit for clarity)
+alter table client_risks enable row level security;
+revoke all on client_risks from anon, authenticated;
 
 -- ——— Публичный контракт для anon: view с минимальными полями ———
 drop view if exists public_profiles;
@@ -586,18 +593,173 @@ declare
   -- DEFAULT_DURATION_MIN в js/domain/duration.js — менять только парой.
   v_default_dur constant int := 60;
   v_psy_id text;
-  v_phone_key text := regexp_replace(coalesce(p_client_phone, ''), '\D', '', 'g');
+  v_phone_digits text;
+  v_phone_key text;
   v_client_id text;
   v_session_id text;
   v_today_count bigint;
-  v_new_start int := (substr(p_session_time, 1, 2)::int * 60 + substr(p_session_time, 4, 2)::int);
+  v_new_start int;
   v_new_dur int;
   v_step int;
+  v_slot_start text;
+  v_slot_end text;
+  v_work_days jsonb;
+  v_hold_minutes int;
+  v_service_row services%rowtype;
+  v_settings_row session_settings%rowtype;
+  v_effective_policy text;
+  v_price numeric;
+  v_currency text;
+  v_amount_due numeric;
+  v_requires_payment boolean;
+  v_status text;
+  v_payment_status text;
+  v_amount_paid numeric := 0;
+  v_hold_expires_at timestamptz;
+  v_date date;
+  v_isodow int;
+  v_time_valid boolean;
+  v_date_valid boolean;
+  v_blocked boolean;
 begin
+  -- ——— 0. Базовая валидация формата даты/времени (T04) ———
+  -- Дата: YYYY-MM-DD
+  if p_session_date !~ '^\d{4}-\d{2}-\d{2}$' then
+    return jsonb_build_object('ok', false, 'error', 'Неверный формат даты');
+  end if;
+  begin
+    v_date := p_session_date::date;
+    v_date_valid := true;
+  exception when others then
+    v_date_valid := false;
+  end;
+  if not v_date_valid then
+    return jsonb_build_object('ok', false, 'error', 'Неверная дата');
+  end if;
+
+  -- Время: HH:MM
+  if p_session_time !~ '^\d{2}:\d{2}$' then
+    return jsonb_build_object('ok', false, 'error', 'Неверный формат времени');
+  end if;
+  begin
+    -- проверка диапазона часов/минут через попытку парсинга
+    if substr(p_session_time,1,2)::int < 0 or substr(p_session_time,1,2)::int > 23
+       or substr(p_session_time,4,2)::int < 0 or substr(p_session_time,4,2)::int > 59 then
+      raise exception 'invalid time';
+    end if;
+    v_new_start := (substr(p_session_time, 1, 2)::int * 60 + substr(p_session_time, 4, 2)::int);
+    v_time_valid := true;
+  exception when others then
+    v_time_valid := false;
+  end;
+  if not v_time_valid then
+    return jsonb_build_object('ok', false, 'error', 'Неверное время');
+  end if;
+
+  -- Past-date rejection (T04): нельзя в прошлом
+  if v_date < current_date then
+    return jsonb_build_object('ok', false, 'error', 'Нельзя записаться в прошлое');
+  end if;
+  if v_date = current_date then
+    -- если сегодня и время уже прошло по серверному времени — отклоняем
+    if p_session_time < to_char(now(), 'HH24:MI') then
+      return jsonb_build_object('ok', false, 'error', 'Это время уже прошло');
+    end if;
+  end if;
+
+  -- ——— 1. Психолог exists + active (T04) ———
   select id into v_psy_id from psychologists where id = p_psychologist_id and is_active;
   if v_psy_id is null then
     return jsonb_build_object('ok', false, 'error', 'Специалист не найден или неактивен');
   end if;
+
+  -- ——— 2. Детерминированная нормализация телефона (T03) ———
+  -- Клиент: last 9 digits; сервер — то же, чтобы bypass через форматирование не работал.
+  v_phone_digits := regexp_replace(coalesce(p_client_phone, ''), '\D', '', 'g');
+  if length(v_phone_digits) >= 9 then
+    v_phone_key := right(v_phone_digits, 9);
+  else
+    v_phone_key := v_phone_digits;
+  end if;
+
+  -- ——— 3. Service existence / ownership / active (T04) ———
+  if p_service_id is not null and p_service_id <> '' then
+    select * into v_service_row from services where id = p_service_id;
+    if not found then
+      return jsonb_build_object('ok', false, 'error', 'Услуга не найдена');
+    end if;
+    if v_service_row.psychologist_id <> p_psychologist_id then
+      return jsonb_build_object('ok', false, 'error', 'Услуга не принадлежит выбранному специалисту');
+    end if;
+    if not v_service_row.is_active then
+      return jsonb_build_object('ok', false, 'error', 'Услуга неактивна');
+    end if;
+  end if;
+
+  -- ——— 4. Настройки кабинета (для расписания и оплаты) ———
+  select * into v_settings_row from session_settings where psychologist_id = p_psychologist_id;
+  -- defaults if no settings row
+  v_step := coalesce(v_settings_row.slot_step_min, v_default_dur);
+  v_slot_start := coalesce(v_settings_row.slot_start, '00:00');
+  v_slot_end := coalesce(v_settings_row.slot_end, '23:59');
+  v_work_days := v_settings_row.work_days;
+  v_hold_minutes := coalesce(v_settings_row.hold_minutes, 60);
+
+  -- Длительность — server-derived (T02 + T04): услуга → шаг сетки → дефолт
+  -- Клиентский p_duration_min игнорируется (не может переопределять authoritative duration)
+  v_new_dur := coalesce(v_service_row.duration_min, v_step, v_default_dur);
+  if v_new_dur <= 0 or v_new_dur > 480 then
+    v_new_dur := v_default_dur;
+  end if;
+
+  -- ——— 5. Schedule validation (T04): work_days + work_hours ———
+  if v_work_days is not null then
+    begin
+      v_isodow := extract(isodow from v_date)::int;
+      -- work_days is jsonb array like [1,2,3,4,5]; check containment
+      if not (v_work_days ? v_isodow::text) and not (v_work_days @> to_jsonb(v_isodow)) then
+        -- try both text and int containment for compatibility
+        -- if work_days contains numbers, the @> check above works; if strings, first check
+        -- For safety, also check if array contains isodow as int via jsonb_array_elements
+        if exists (select 1 where jsonb_typeof(v_work_days) = 'array') then
+          -- if no match found via @> and ?, do explicit check
+          if not exists (
+            select 1 from jsonb_array_elements(v_work_days) as elem
+            where (elem::text)::int = v_isodow or elem::text = v_isodow::text
+          ) then
+            return jsonb_build_object('ok', false, 'error', 'В этот день недели специалист не принимает');
+          end if;
+        end if;
+      end if;
+    exception when others then
+      -- if work_days malformed, skip strict check (fail open for schedule, but other checks remain)
+      null;
+    end;
+  end if;
+
+  -- work hours: start <= time < end, and time+duration <= end + step (allow last slot)
+  begin
+    declare
+      v_slot_start_min int := null;
+      v_slot_end_min int := null;
+    begin
+      if v_slot_start ~ '^\d{2}:\d{2}$' then
+        v_slot_start_min := substr(v_slot_start,1,2)::int*60 + substr(v_slot_start,4,2)::int;
+      end if;
+      if v_slot_end ~ '^\d{2}:\d{2}$' then
+        v_slot_end_min := substr(v_slot_end,1,2)::int*60 + substr(v_slot_end,4,2)::int;
+      end if;
+      if v_slot_start_min is not null and v_slot_end_min is not null then
+        if v_new_start < v_slot_start_min then
+          return jsonb_build_object('ok', false, 'error', 'Время вне рабочих часов');
+        end if;
+        -- allow up to slot_end inclusive for start, but end must not exceed slot_end + step
+        if v_new_start + v_new_dur > v_slot_end_min + v_step then
+          return jsonb_build_object('ok', false, 'error', 'Время выходит за рабочие часы');
+        end if;
+      end if;
+    end;
+  exception when others then null; end;
 
   -- ============================================================
   -- Атомарность (SR-002). Проверка занятости и INSERT ниже — одна транзакция,
@@ -608,14 +770,15 @@ begin
   -- ============================================================
   perform pg_advisory_xact_lock(hashtext('booking:' || p_psychologist_id || ':' || p_session_date));
 
-  -- Длительность новой записи: снимок от клиента → услуга → шаг сетки → дефолт
-  select coalesce(sv.duration_min, v_default_dur) into v_new_dur
-  from services sv where sv.id = p_service_id and sv.psychologist_id = p_psychologist_id;
-  select coalesce(ss.slot_step_min, v_default_dur) into v_step
-  from session_settings ss where ss.psychologist_id = p_psychologist_id;
-  v_new_dur := coalesce(nullif(p_duration_min, 0), v_new_dur, v_step, v_default_dur);
+  -- ——— 6. Проверка client_risks blocked (server-side risk) ———
+  if v_phone_key <> '' then
+    select blocked into v_blocked from client_risks where phone_key = v_phone_key;
+    if v_blocked then
+      return jsonb_build_object('ok', false, 'error', 'Запись с этого номера временно недоступна');
+    end if;
+  end if;
 
-  -- Занятость по ИНТЕРВАЛАМ: новый [start, start+dur) не должен пересекаться
+  -- ——— 7. Занятость по ИНТЕРВАЛАМ: новый [start, start+dur) не должен пересекаться
   -- ни с одной существующей записью [s, s+dur_s). Длительность чужой записи —
   -- её снимок, иначе услуга, иначе шаг сетки, иначе дефолт.
   if exists (
@@ -651,23 +814,37 @@ begin
     return jsonb_build_object('ok', false, 'error', 'В это время специалист не принимает');
   end if;
 
-  -- анти-спам: не больше 3 записей в день на телефон
+  -- ——— 8. Анти-спам по времени СОЗДАНИЯ (T03) ———
+  -- Раньше считалось session_date = current_date, что позволяло обойти лимит
+  -- выбором будущих дат. Теперь — по created_at (факт создания заявки).
   if v_phone_key <> '' then
+    -- normalize client phone in clients table same way for comparison
     select count(*) into v_today_count
-    from sessions s join clients c on c.id = s.client_id
+    from sessions s
+    join clients c on c.id = s.client_id
     where s.psychologist_id = p_psychologist_id
-      and s.session_date = current_date::text
-      and regexp_replace(coalesce(c.phone, ''), '\D', '', 'g') = v_phone_key;
+      and s.created_at >= current_date
+      and (
+        case when length(regexp_replace(coalesce(c.phone, ''), '\D', '', 'g')) >= 9
+             then right(regexp_replace(coalesce(c.phone, ''), '\D', '', 'g'), 9)
+             else regexp_replace(coalesce(c.phone, ''), '\D', '', 'g')
+        end
+      ) = v_phone_key;
     if v_today_count >= 3 then
       return jsonb_build_object('ok', false, 'error', 'Слишком много записей за день, попробуйте позже');
     end if;
   end if;
 
-  -- повторный клиент по телефону
+  -- ——— 9. Повторный клиент по телефону (детерминированная нормализация) ———
   if v_phone_key <> '' then
     select id into v_client_id from clients
     where psychologist_id = p_psychologist_id
-      and regexp_replace(coalesce(phone, ''), '\D', '', 'g') = v_phone_key
+      and (
+        case when length(regexp_replace(coalesce(phone, ''), '\D', '', 'g')) >= 9
+             then right(regexp_replace(coalesce(phone, ''), '\D', '', 'g'), 9)
+             else regexp_replace(coalesce(phone, ''), '\D', '', 'g')
+        end
+      ) = v_phone_key
     order by created_at limit 1;
   end if;
 
@@ -677,25 +854,81 @@ begin
             coalesce(nullif(p_client_name, ''), p_client_nickname),
             coalesce(nullif(p_client_nickname, ''), p_client_name),
             p_client_phone, p_client_contact, p_client_note,
-            coalesce(p_consent, false), p_consent_at)  -- T-25: факт согласия
+            coalesce(p_consent, false), p_consent_at)
     returning id into v_client_id;
   end if;
+
+  -- ——— 10. Server-authoritative payment derivation (T02) ———
+  -- Клиентские p_status, p_payment_policy, p_payment_status, p_amount_due,
+  -- p_amount_paid, p_currency, p_duration_min — игнорируются, authoritative
+  -- значения выводятся сервером из услуги и настроек кабинета.
+  v_price := coalesce(v_service_row.price, 0);
+  v_currency := coalesce(v_service_row.currency, 'BYN');
+  v_effective_policy := coalesce(v_service_row.payment_policy, v_settings_row.payment_policy, 'none');
+
+  -- deposit calculation
+  if v_effective_policy = 'full' then
+    v_amount_due := v_price;
+  elsif v_effective_policy in ('deposit', 'hold_until_paid', 'hold') then
+    if v_service_row.deposit_amount is not null then
+      v_amount_due := v_service_row.deposit_amount;
+    elsif v_settings_row.deposit_amount is not null then
+      v_amount_due := v_settings_row.deposit_amount;
+    else
+      declare
+        v_pct numeric := coalesce(v_service_row.deposit_percent, v_settings_row.deposit_percent, 30);
+      begin
+        v_amount_due := round((v_price * v_pct / 100)::numeric, 2);
+      end;
+    end if;
+    if v_amount_due > v_price then
+      v_amount_due := v_price;
+    end if;
+  else
+    v_amount_due := 0;
+  end if;
+
+  v_requires_payment := v_effective_policy <> 'none' and coalesce(v_amount_due,0) > 0;
+  if v_requires_payment then
+    v_status := 'held';
+    v_hold_expires_at := now() + (v_hold_minutes || ' minutes')::interval;
+  else
+    v_status := 'confirmed';
+    v_hold_expires_at := null;
+  end if;
+  v_payment_status := 'unpaid';
+  v_amount_paid := 0;
 
   insert into sessions (psychologist_id, client_id, service_id, session_date, session_time,
                         status, note, video_platform,
                         payment_policy, payment_status, amount_due, amount_paid, currency,
+                        hold_expires_at,
                         client_timezone, client_utc_offset_min, duration_min)
   values (p_psychologist_id, v_client_id, p_service_id, p_session_date, p_session_time,
-          coalesce(p_status, 'pending'), p_session_note, p_video_platform,
-          p_payment_policy, p_payment_status, p_amount_due, p_amount_paid, p_currency,
+          v_status, p_session_note, coalesce(p_video_platform,''),
+          v_effective_policy, v_payment_status, v_amount_due, v_amount_paid, v_currency,
+          v_hold_expires_at,
           coalesce(nullif(p_client_timezone, ''), ''), p_client_utc_offset_min, v_new_dur)
   returning id into v_session_id;
+
+  -- ——— 11. Логирование попытки (для аудита anti-spam) ———
+  begin
+    insert into booking_attempts (psychologist_id, phone_key, fingerprint, success, reason, consent, consent_at)
+    values (p_psychologist_id, v_phone_key, '', true, 'created', coalesce(p_consent,false), p_consent_at);
+  exception when others then null; end;
 
   return jsonb_build_object(
     'ok', true,
     'client_id', v_client_id,
     'session_id', v_session_id,
-    'duration_min', v_new_dur
+    'duration_min', v_new_dur,
+    'status', v_status,
+    'payment_status', v_payment_status,
+    'payment_policy', v_effective_policy,
+    'amount_due', v_amount_due,
+    'amount_paid', v_amount_paid,
+    'currency', v_currency,
+    'hold_expires_at', v_hold_expires_at
   );
 end;
 $$;
