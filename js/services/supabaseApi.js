@@ -443,12 +443,23 @@ export const supabaseApi = {
       return null;
     });
     await check('RPC create_booking (запись клиентов)', 'Выполните supabase/schema.sql (функция create_booking)', async () => {
-      await request('rpc/create_booking', { method: 'POST', body: JSON.stringify({}) });
-      return null;
+      // Проба с несуществующим id: исправная функция отвечает 200
+      // {"ok":false,"error":"Специалист не найден…"}; 404 = функции/схемы нет.
+      // Пустой {} здесь нельзя: у функции обязательные аргументы, PostgREST
+      // ответил бы 404 и на исправной схеме (ложный ⛔).
+      const r = await request('rpc/create_booking', { method: 'POST', body: JSON.stringify({
+        p_psychologist_id: 'diag-probe', p_service_id: 'diag-probe',
+        p_session_date: '2000-01-01', p_session_time: '00:00'
+      }) });
+      if (r?.ok === false && /не найден/i.test(String(r.error || ''))) return null;
+      return r?.ok === false ? `неожиданный ответ: ${String(r.error).slice(0, 120)}` : null;
     });
     await check('RPC claim_psychologist_profile (вход по коду)', 'Выполните supabase/schema.sql (функция claim_psychologist_profile)', async () => {
-      await request('rpc/claim_psychologist_profile', { method: 'POST', body: JSON.stringify({}) });
-      return null;
+      // Проба без сессии (anon): исправная функция отвечает 200
+      // {"ok":false,"error":"Email не подтверждён"}; 404 = функции нет.
+      const r = await request('rpc/claim_psychologist_profile', { method: 'POST', body: JSON.stringify({ p_email: 'diag-probe@example.invalid' }) });
+      if (r?.ok === false) return null;
+      return r?.ok === true ? 'анонимный claim неожиданно успешен — проверьте security-контур' : null;
     });
     await check('Edge Function auth-code (письма с кодом входа)', 'Задеплойте функцию: supabase functions deploy auth-code --project-ref phiavtroybgwyjdhqqkh --no-verify-jwt (см. docs/INFRA.md). Не задеплоенная функция в браузере выглядит как CORS-ошибка', async () => {
       const r = await fetch(`${SUPABASE_URL}/functions/v1/auth-code`, {
