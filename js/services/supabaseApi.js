@@ -12,7 +12,13 @@
  *
  * Клиенты, сессии, платежи и PII анонимам НЕ доступны (см. supabase/schema.sql).
  */
-import { SUPABASE_URL, SUPABASE_ANON_KEY, isSupabaseConfigured } from './supabaseConfig.js';
+import {
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY,
+  isSupabaseConfigured,
+  resolveApplicationUrl,
+  resolveAuthEntryUrl
+} from './supabaseConfig.js';
 import { safeStorage } from '../core/safeStorage.js';
 
 const PUBLIC_PROFILE_COLUMNS = 'id,full_name,phone,specialization,city,about,website,source_url,address,experience,slug,greeting,approach,photo_url,public_email,directions,education,experience_items,socials,payment_links,payment_requisites,profession,is_active,created_at';
@@ -181,14 +187,27 @@ export const supabaseApi = {
   },
 
   // ——— Supabase Auth: вход по коду из письма (OTP) ———
-  /** Отправить 6-значный код на email (Supabase Auth → письмо). */
+  /**
+   * Отправить OTP/magic-link на email (запасной канал, issue #23).
+   *
+   * `emailRedirectTo` ОБЯЗАН указывать на реальный APPLICATION_URL (не localhost):
+   * письмо открывают на любом устройстве. GoTrue всё равно сверяет redirect с
+   * allowlist Site URL / Redirect URLs в Dashboard — их тоже нужно выставить
+   * на production origin (docs/INFRA.md).
+   */
   async requestEmailOtp(email) {
     if (!isSupabaseConfigured()) throw new Error('Supabase не настроен');
+    const redirectTo = resolveAuthEntryUrl({ via: 'otp' });
     const res = await fetch(`${SUPABASE_URL}/auth/v1/otp`, {
       method: 'POST',
       headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
       // create_user: true — email может быть в таблице psychologists, но не в auth.users
-      body: JSON.stringify({ email: String(email).toLowerCase().trim(), create_user: true })
+      body: JSON.stringify({
+        email: String(email).toLowerCase().trim(),
+        create_user: true,
+        email_redirect_to: redirectTo,
+        options: { emailRedirectTo: redirectTo }
+      })
     });
     if (!res.ok) {
       const body = await res.text();
@@ -197,6 +216,141 @@ export const supabaseApi = {
       throw new Error(msg || `HTTP ${res.status}`);
     }
     return true;
+  },
+
+  /**
+   * Разобрать redirect Supabase Auth из location (hash или query).
+   *
+   * Успех: `#access_token=…&refresh_token=…&expires_in=…&type=…`
+   *        или PKCE `?code=…` (обмен на /auth/v1/token).
+   * Ошибка: `#error=access_denied&error_code=otp_expired&error_description=…`
+   *
+   * После разбора URL очищается (replaceState), чтобы reload не повторял обмен.
+   * Возвращает { kind:'session', session } | { kind:'error', error, errorCode, message }
+   * | { kind:'none' }.
+   */
+  async consumeAuthRedirectFromUrl(loc = globalThis.location) {
+    if (!loc) return { kind: 'none' };
+    const rawHash = String(loc.hash || '').replace(/^#/, '');
+    // Hash History routes look like `/auth?…` — Auth params may sit after `?` in hash
+    // or as bare `error=…` / `access_token=…` (no leading slash).
+    let authParams = new URLSearchParams();
+    if (rawHash.startsWith('/')) {
+      const q = rawHash.indexOf('?');
+      if (q !== -1) authParams = new URLSearchParams(rawHash.slice(q + 1));
+    } else if (rawHash.includes('=')) {
+      authParams = new URLSearchParams(rawHash);
+    }
+    const searchParams = new URLSearchParams(String(loc.search || '').replace(/^\?/, ''));
+    // merge: hash Auth params win over search (typical Supabase implicit flow)
+    for (const [k, v] of searchParams.entries()) {
+      if (!authParams.has(k)) authParams.set(k, v);
+    }
+
+    const err = authParams.get('error') || authParams.get('error_code');
+    const errCode = authParams.get('error_code') || authParams.get('error') || '';
+    const errDesc = authParams.get('error_description') || authParams.get('error') || '';
+    if (err || /otp_expired|access_denied/i.test(errCode + errDesc)) {
+      this._stripAuthParamsFromUrl(loc);
+      return {
+        kind: 'error',
+        error: err || 'access_denied',
+        errorCode: errCode || 'otp_expired',
+        message: decodeURIComponent(String(errDesc || errCode || err).replace(/\+/g, ' '))
+      };
+    }
+
+    const access = authParams.get('access_token');
+    const refresh = authParams.get('refresh_token');
+    if (access) {
+      const expiresIn = Number(authParams.get('expires_in') || 0);
+      const expiresAt = authParams.get('expires_at')
+        ? Number(authParams.get('expires_at'))
+        : (expiresIn > 0 ? Math.floor(Date.now() / 1000) + expiresIn : null);
+      this._stripAuthParamsFromUrl(loc);
+      return {
+        kind: 'session',
+        session: {
+          access_token: access,
+          refresh_token: refresh || '',
+          expires_at: expiresAt,
+          token_type: authParams.get('token_type') || 'bearer',
+          expires_in: expiresIn || undefined
+        }
+      };
+    }
+
+    const pkceCode = authParams.get('code');
+    if (pkceCode && isSupabaseConfigured()) {
+      try {
+        const session = await this.exchangeCodeForSession(pkceCode);
+        this._stripAuthParamsFromUrl(loc);
+        if (session?.access_token) return { kind: 'session', session };
+      } catch (ex) {
+        this._stripAuthParamsFromUrl(loc);
+        return {
+          kind: 'error',
+          error: 'exchange_failed',
+          errorCode: 'exchange_failed',
+          message: String(ex?.message || ex)
+        };
+      }
+    }
+
+    return { kind: 'none' };
+  },
+
+  /** PKCE: authorization code → session (GoTrue). */
+  async exchangeCodeForSession(code) {
+    if (!code) throw new Error('Нет authorization code');
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=pkce`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        auth_code: code,
+        // some GoTrue builds expect `code`
+        code
+      })
+    });
+    if (!res.ok) {
+      // fallback classic grant if pkce grant name differs
+      const res2 = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=authorization_code`, {
+        method: 'POST',
+        headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auth_code: code, code })
+      });
+      if (!res2.ok) {
+        const body = await res2.text();
+        throw new Error(body || `HTTP ${res2.status}`);
+      }
+      return res2.json();
+    }
+    return res.json();
+  },
+
+  /** Убрать Auth-параметры из address bar, сохранив Hash History маршрут приложения. */
+  _stripAuthParamsFromUrl(loc = globalThis.location) {
+    try {
+      const hist = globalThis.history;
+      if (!hist?.replaceState || !loc) return;
+      const rawHash = String(loc.hash || '').replace(/^#/, '');
+      let nextHash = '';
+      if (rawHash.startsWith('/')) {
+        const q = rawHash.indexOf('?');
+        const path = q === -1 ? rawHash : rawHash.slice(0, q);
+        const qs = new URLSearchParams(q === -1 ? '' : rawHash.slice(q + 1));
+        ['error', 'error_code', 'error_description', 'access_token', 'refresh_token',
+          'expires_in', 'expires_at', 'token_type', 'type', 'code', 'sb', 'provider_token',
+          'provider_refresh_token'].forEach(k => qs.delete(k));
+        const rest = qs.toString();
+        nextHash = rest ? `#${path}?${rest}` : `#${path}`;
+      } else {
+        // bare Auth hash → clean entry to auth route
+        nextHash = '#/auth';
+      }
+      const url = `${loc.pathname || '/'}${loc.search || ''}${nextHash}`;
+      hist.replaceState(null, '', url);
+    } catch { /* non-browser / sandboxed */ }
   },
 
   /** Проверить код из письма → сессия (access_token).

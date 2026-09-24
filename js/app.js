@@ -2483,6 +2483,46 @@ function boot() {
     // стартовый маршрут — из hash (Hash History: #/psy/{slug}, #/book/{slug});
     // legacy-ссылки без # нормализуются в hash без перезагрузки
     bookingVm.onAvailability = () => { if (route.name === 'booking') renderBooking(); };
+
+    // ——— issue #23: Supabase Auth redirect (magic-link / OTP error) ———
+    // Должен выполниться ДО normalizeLegacyUrl/routeFromUrl: иначе bare
+    // `#error=otp_expired…` или `#access_token=…` молча станет portal.
+    let redirectLogin = null;
+    try {
+      redirectLogin = await registration.consumeAuthRedirect();
+    } catch (e) {
+      console.warn('[boot] auth redirect', e?.message || e);
+      redirectLogin = { ok: false, reason: 'exception', message: String(e?.message || e) };
+    }
+    if (redirectLogin?.ok && redirectLogin.psychologist) {
+      try { await cabinetApi.refresh(redirectLogin.psychologist.id); }
+      catch (e) { console.warn('[boot] pull cabinet after redirect', e?.message || e); }
+      startTelegramLoops(redirectLogin.psychologist.id);
+      normalizeLegacyUrl();
+      navigate('cabinet', {}, { push: false });
+      await loadServerCatalog();
+      showToast(redirectLogin.message || 'Вход выполнен');
+      return;
+    }
+    if (redirectLogin && redirectLogin.reason === 'auth-error') {
+      authVm.error = redirectLogin.message || 'Ссылка из письма недействительна. Запросите новый код.';
+      authVm.step = 'email';
+      normalizeLegacyUrl();
+      route = { name: 'auth', params: { mode: 'login' } };
+      navigate('auth', { mode: 'login' }, { push: false });
+      await loadServerCatalog();
+      return;
+    }
+    if (redirectLogin && redirectLogin.reason && redirectLogin.reason !== 'none' && redirectLogin.message) {
+      // session arrived but claim/load failed — keep user on auth with message
+      authVm.error = redirectLogin.message;
+      authVm.email = redirectLogin.email || authVm.email;
+      normalizeLegacyUrl();
+      navigate('auth', { mode: 'login' }, { push: false });
+      await loadServerCatalog();
+      return;
+    }
+
     normalizeLegacyUrl();
 
     // Восстановление аутентификации — ПЕРЕД роут-гардом и до загрузки каталога.

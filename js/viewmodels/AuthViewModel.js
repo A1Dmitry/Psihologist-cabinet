@@ -56,8 +56,35 @@ export class AuthViewModel extends BaseViewModel {
     if (this._resumed) return false;
     this._resumed = true;
 
+    // Deep-link из письма auth-code: …/#/auth?email=… (issue #23, другое устройство).
+    // Не затираем error, уже выставленный consumeAuthRedirect на boot.
+    let fromLetter = false;
+    try {
+      const h = String(globalThis.location?.hash || '').replace(/^#/, '');
+      if (h.startsWith('/')) {
+        const q = h.indexOf('?');
+        if (q !== -1) {
+          const qs = new URLSearchParams(h.slice(q + 1));
+          const mail = registration.normalizeEmail(qs.get('email') || '');
+          if (mail) {
+            if (!this.email) this.email = mail;
+            fromLetter = true;
+          }
+        }
+      }
+    } catch { /* non-browser */ }
+
     const record = registration.peekPendingVerification();
-    if (!record) return false;
+    if (!record) {
+      // Письмо открыто на устройстве, где код не запрашивали: сразу шаг ввода
+      // кода — сервер (auth-code) знает код, pending на этом устройстве не нужен.
+      if (fromLetter && this.email && !this.error) {
+        this.step = 'code';
+        this._startWindow(120);
+        return true;
+      }
+      return !!this.email;
+    }
 
     const remainingMs = record.expiresAt - Date.now();
     if (remainingMs > 0) {
@@ -71,7 +98,7 @@ export class AuthViewModel extends BaseViewModel {
     // а не молча оказаться на пустой форме (код на сервере уже не примут).
     this.email = record.email;
     this.step = 'email';
-    this.error = 'Окно ввода кода истекло. Запросите новый код.';
+    if (!this.error) this.error = 'Окно ввода кода истекло. Запросите новый код.';
     registration.clearPendingVerification();
     return true;
   }
