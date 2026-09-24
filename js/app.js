@@ -939,7 +939,7 @@ function renderVaultPanel() {
     const r = await authService.initVaultPassword(p.id, $('#vault-pass')?.value);
     showToast(r.message, !r.ok);
     if (r.ok) {
-      supabaseSync.pushProfile(p); // key_verifier → сервер (владелец, по своей сессии)
+      supabaseSync.pushProfile(p); // профиль → сервер; key_verifier отправляет initVaultPassword (pushKeyVerifier)
       renderCabClients();
     }
   });

@@ -281,6 +281,13 @@ globalThis.fetch = async (url, opts = {}) => {
     const owner = uidFromRequest(opts);
     const byOwner = /owner_id=eq\.([^&]+)/.exec(u);
     const byId = /[?&]id=eq\.([^&]+)/.exec(u);
+    // PATCH — как RLS owner_all: писать может только владелец своей строки
+    if ((opts.method || 'GET').toUpperCase() === 'PATCH') {
+      const row = [...dbState.psychologists.values()].find(r => r.id === decodeURIComponent(byId?.[1] || ''));
+      if (!owner || !row || row.owner_id !== owner) return resp(401, { message: 'new row violates row-level security policy' });
+      Object.assign(row, body);
+      return resp(200, [row]);
+    }
     let rows = [...dbState.psychologists.values()];
     if (byOwner) rows = rows.filter(r => r.owner_id === decodeURIComponent(byOwner[1]));
     if (byId) rows = rows.filter(r => r.id === decodeURIComponent(byId[1]));
@@ -383,7 +390,8 @@ async function loadFreshModules() {
   const { cabinetApi } = await import('../js/services/cabinetApi.js');
   const { db } = await import('../js/core/dbContext.js');
   const { authService } = await import('../js/services/authService.js');
-  return { registration, supabaseApi, userIdFromToken, cabinetApi, db, authService };
+  const { cryptoService } = await import('../js/services/cryptoService.js');
+  return { registration, supabaseApi, userIdFromToken, cabinetApi, db, authService, cryptoService };
 }
 
 const PROFILE = {
@@ -603,6 +611,86 @@ check('валидация: полный профиль принят', m.registra
 check('валидация: код 5 символов отклоняется', !!m.registration.validateCode('AB123'));
 check('валидация: код 8 символов принят', m.registration.validateCode('ABCD2345') === '');
 check('валидация: email без домена отклоняется', !!m.registration.validateEmail('natalia@'));
+
+/* ============================================================================
+ * 8. Пароль сейфа с формы регистрации (issue #14, п.7 — challenger-находка:
+ *    поле собиралось, но нигде не использовалось — сейф оставался незадатым)
+ * ========================================================================== */
+const vault = await loadFreshModules();
+vault.registration.signOut();
+vault.registration.clearPendingVerification();
+
+// короткий пароль: честный отказ ДО обращения к серверу — код не сжигается
+await vault.registration.requestVerification('vault.short@example.by');
+const verifyCallsBefore = logCalls.filter(u => u.includes('/auth/v1/verify')).length;
+const shortPw = await vault.authService.verifyCode('vault.short@example.by', dbState.issuedCode, PROFILE, 'abc');
+check('пароль сейфа короче 6 символов: отказ до обращения к серверу',
+  shortPw.ok === false && /минимум 6/i.test(shortPw.message || ''), shortPw.message);
+check('пароль сейфа короче 6 символов: одноразовый код не сожжён (verify не вызывался)',
+  logCalls.filter(u => u.includes('/auth/v1/verify')).length === verifyCallsBefore);
+
+// корректный пароль: сейф создаётся и открывается тем же паролем
+console.log = (...args) => logLines.push(args.join(' '));
+await vault.registration.requestVerification('vault@example.by');
+const withPw = await vault.authService.verifyCode('vault@example.by', dbState.issuedCode, PROFILE, 'Доверие-2026');
+console.log = realConsoleLog;
+check('пароль сейфа с формы: вход выполнен', withPw.ok === true, withPw.message || '');
+check('пароль сейфа с формы: сообщение об открытом сейфе',
+  /Сейф клиентов создан и открыт/.test(withPw.message || ''), withPw.message);
+const vaultPsy = vault.db.currentPsychologist;
+check('пароль сейфа с формы: keyVerifier задан', !!vaultPsy?.keyVerifier, JSON.stringify(vaultPsy?.keyVerifier || null));
+check('пароль сейфа с формы: сейф открыт в памяти',
+  vault.cryptoService.isUnlocked(vaultPsy.id) === true);
+vault.cryptoService.lock(vaultPsy.id);
+check('пароль сейфа с формы: после блокировки открывается тем же паролем',
+  (await vault.cryptoService.unlock(vaultPsy.id, 'Доверие-2026', vaultPsy.keyVerifier)) === true);
+vault.cryptoService.lock(vaultPsy.id);
+check('пароль сейфа с формы: чужой пароль сейф не открывает',
+  (await vault.cryptoService.unlock(vaultPsy.id, 'другой-пароль', vaultPsy.keyVerifier)) === false);
+const serverPsy = [...dbState.psychologists.values()].find(p => p.email === 'vault@example.by');
+check('пароль сейфа с формы: verifier отправлен на сервер (pushKeyVerifier)',
+  serverPsy?.key_verifier?.salt === vaultPsy.keyVerifier.salt, String(serverPsy?.key_verifier?.salt));
+
+/* —— «Другое устройство»: localStorage пуст, серверное состояние сохранено.
+ *    Вход тем же email обязан подтянуть verifier с сервера и открыть сейф
+ *    тем же паролем (без этого очистка хранилища = потеря доступа к сейфу,
+ *    а повторный init создал бы новую соль и несовместимый ключ). —— */
+lsMap.clear();
+const newDevice = await loadFreshModules();
+await newDevice.registration.requestVerification('vault@example.by');
+const ndRes = await newDevice.authService.verifyCode('vault@example.by', dbState.issuedCode, PROFILE, 'Доверие-2026');
+check('другое устройство: вход выполнен', ndRes.ok === true, ndRes.message || '');
+check('другое устройство: verifier восстановлен с сервера (не создан заново)',
+  newDevice.db.currentPsychologist?.keyVerifier?.salt === vaultPsy.keyVerifier.salt,
+  `${newDevice.db.currentPsychologist?.keyVerifier?.salt} vs ${vaultPsy.keyVerifier.salt}`);
+check('другое устройство: сейф открыт прежним паролем',
+  newDevice.cryptoService.isUnlocked(ndRes.psychologist.id) === true);
+check('другое устройство: сообщение «открыт» (не «создан»)',
+  /Сейф клиентов открыт\./.test(ndRes.message || ''), ndRes.message);
+
+// пустой пароль — допустимая опция: сейф остаётся незадатым, сообщение честное
+const noPw = await loadFreshModules();
+await noPw.registration.requestVerification('vault.empty@example.by');
+const emptyRes = await noPw.authService.verifyCode('vault.empty@example.by', dbState.issuedCode, PROFILE, '');
+check('без пароля сейфа: вход выполнен', emptyRes.ok === true, emptyRes.message || '');
+check('без пароля сейфа: keyVerifier не задан', !noPw.db.currentPsychologist?.keyVerifier);
+check('без пароля сейфа: сообщение предлагает задать пароль во вкладке «Клиенты»',
+  /Клиенты/i.test(emptyRes.message || ''), emptyRes.message);
+
+// claim существующего кабинета (register-режим + существующий email):
+// пароль с формы НЕ подменяет verifier, а только открывает сейф
+const claim = await loadFreshModules();
+await claim.registration.requestVerification('vault@example.by');
+const claimRes = await claim.authService.verifyCode('vault@example.by', dbState.issuedCode, PROFILE, 'Доверие-2026');
+check('повторная регистрация тем же email: вход выполнен', claimRes.ok === true, claimRes.message || '');
+check('повторная регистрация тем же email: verifier не подменён',
+  claim.db.currentPsychologist?.keyVerifier?.salt === vaultPsy.keyVerifier.salt);
+check('повторная регистрация тем же email: сейф открыт верным паролем',
+  claim.cryptoService.isUnlocked(claimRes.psychologist.id) === true);
+
+// пароль сейфа не попадает в логи
+check('пароль сейфа не попадает в логи', !logLines.some(l => l.includes('Доверие-2026')),
+  logLines.filter(l => l.includes('Доверие')).join(' | '));
 
 const failed = results.filter(r => !r[1]).length;
 realConsoleLog(failed ? `\n${failed} FAILED` : '\nALL PASS');

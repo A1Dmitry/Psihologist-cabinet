@@ -5,6 +5,28 @@
 const PBKDF2_ITERATIONS = 100000;
 const KEY_LENGTH = 256;
 
+/** Минимальная длина пароля сейфа — одно правило на весь проект
+ *  (форма регистрации, создание сейфа, автотесты). */
+export const MIN_VAULT_PASSWORD_LENGTH = 6;
+
+/**
+ * Каноническое правило пароля сейфа клиентов.
+ *
+ * @param {*} password
+ * @param {{required?: boolean}} [opts]
+ *    required=true — пустой пароль недопустим (создание сейфа);
+ *    по умолчанию пустой допустим: поле на форме регистрации — опция,
+ *    сейф можно задать позже во вкладке «Клиенты».
+ * @returns {string} '' — правило соблюдено, иначе текст ошибки для пользователя.
+ */
+export function vaultPasswordError(password, { required = false } = {}) {
+  const p = String(password ?? '');
+  if (!p) return required ? 'Задайте пароль сейфа клиентов (минимум 6 символов)' : '';
+  return p.length >= MIN_VAULT_PASSWORD_LENGTH
+    ? ''
+    : `Пароль сейфа — минимум ${MIN_VAULT_PASSWORD_LENGTH} символов (или оставьте поле пустым и задайте его позже во вкладке «Клиенты»)`;
+}
+
 function bufToB64(buf) {
   const bytes = new Uint8Array(buf);
   let s = '';
