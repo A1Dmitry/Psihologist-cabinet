@@ -104,6 +104,26 @@ export const supabaseSync = {
     }
   },
 
+  /** Отправить ТОЛЬКО key_verifier на сервер (владелец, по своей сессии).
+   *
+   *  Отдельный метод не случайно: pushProfile сознательно вырезает
+   *  key_verifier, чтобы публичный контекст не мог его ни записать, ни
+   *  перезаписать. Единственный легитимный писатель — init сейфа у владельца.
+   *  Без этой отправки verifier живёт только в localStorage: очистка хранилища
+   *  или другое устройство видят «сейф не настроен», а повторный init с тем же
+   *  паролем даёт НОВУЮ соль → новый ключ AES → прежние шифроблобы (в т.ч.
+   *  серверная encrypted_pii, SR-102) становятся нерасшифровываемыми. */
+  async pushKeyVerifier(psychologist) {
+    if (!this.enabled()) return { ok: false, localOnly: true };
+    if (!psychologist?.id || !psychologist.keyVerifier) return { ok: false, message: 'Verifier сейфа не задан' };
+    try {
+      await supabaseApi.updatePsychologist(psychologist.id, { key_verifier: psychologist.keyVerifier });
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, message: String(e.message || e) };
+    }
+  },
+
   /**
    * Загрузить публичный каталог + услуги + free/busy в локальный db.
    * Клиенты и сессии НЕ загружаются — они приватны (только кабинет владельца).

@@ -124,9 +124,9 @@
             <input id="auth-code" name="code" type="text" autocomplete="one-time-code" maxlength="8" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300 font-mono text-lg tracking-widest uppercase" placeholder="6–8 букв и цифр">
           </div>
           <div id="auth-pass-wrap">
-            <label for="auth-password" class="text-sm font-medium">Пароль кабинета * <span class="text-slate-400 font-normal">(ключ шифрования клиентов)</span></label>
+            <label for="auth-password" class="text-sm font-medium">Пароль сейфа клиентов <span class="text-slate-400 font-normal">(необязательно, минимум 6 символов)</span></label>
             <input id="auth-password" name="password" type="password" minlength="6" autocomplete="new-password" class="w-full mt-1 px-4 py-2.5 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300" placeholder="минимум 6 символов">
-            <p class="text-xs text-slate-400 mt-1">Пароль не хранится: из него выводится ключ AES. Без пароля чужие не прочитают ваших клиентов.</p>
+            <p class="text-xs text-slate-400 mt-1">Из пароля выводится ключ AES, сам пароль не хранится: без него чужие не прочитают ваших клиентов. Можно оставить пустым и задать позже во вкладке «Клиенты».</p>
           </div>
           <div id="auth-reg-fields" class="hidden space-y-3">
             <div>

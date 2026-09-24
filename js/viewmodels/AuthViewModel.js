@@ -124,7 +124,9 @@ export class AuthViewModel extends BaseViewModel {
     this.error = '';
     this.busy = true;
     try {
-      const res = await authService.verifyCode(this.email, this.code, this.profile);
+      // пароль сейфа (this.password) — опция формы регистрации, не для входа;
+      // use case применит его к сейфу сразу после успешного входа
+      const res = await authService.verifyCode(this.email, this.code, this.profile, this.password);
       if (!res.ok) {
         this.error = res.message;
         return null;

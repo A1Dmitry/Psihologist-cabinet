@@ -78,6 +78,18 @@
    > `TypeError: Failed to fetch`. Проверить напрямую:
    > `curl -i https://phiavtroybgwyjdhqqkh.supabase.co/functions/v1/auth-code`
    > → `{"code":"NOT_FOUND","message":"Requested function was not found"}`.
+
+6. **Production E2E-проверка регистрации (issue #14, п.1–2)** — с машины владельца
+   (у песочницы агента нет сети до supabase.co):
+   ```bash
+   node tools/prod-e2e.mjs                         # шаг 1: только диагностика (письма не шлёт)
+   node tools/prod-e2e.mjs --email <тестовый@email> # шаг 2: полный E2E, код вводится из письма
+   ```
+   Скрипт исполняет НАСТОЯЩИЙ use case приложения (`js/domain/registration.js →
+   supabaseApi`): новый email → письмо → код → Auth-сессия → claim → поля профиля →
+   reload → повторный вход → ошибки (неверный/повторный код). Вывод (20 проверок,
+   PASS/FAIL) можно целиком приложить к issue #14 — код и токены не печатаются.
+   Очистка тестового профиля печатается в конце. Неинтерактивно: `E2E_CODES="код1,код2"`.
    > Фронтенд в этом случае автоматически переключается на запасной канал
    > (встроенная почта Supabase OTP), пункт «Диагностика сервера» → «Edge
    > Function auth-code» подсвечивает проблему красным.
