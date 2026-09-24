@@ -24,6 +24,7 @@ const SUITES = [
   ['Регистрация и вход специалиста (E2E-контракт)', 'node', ['tests/registration-flow.mjs']],
   ['OTP: одноразовость, TTL, лимит попыток (настоящий auth-code)', 'node', ['--no-warnings', 'tests/auth-code-edge.mjs']],
   ['SQL-контракт schema.sql на настоящем PostgreSQL', 'node', ['tests/db-contract.mjs']],
+  ['Security regression (booking authority, tenant isolation, domain validation)', 'node', ['tests/security-regression.mjs']],
   ['Кабинет: серии, условия, мини-кабинет, пояса', 'node', ['tools/verify_cabinet.mjs']],
   ['Авторизация: каналы кода, сессия, write-through', 'node', ['verify_auth.mjs']],
   ['UI входа: ожидание кода переживает перезагрузку', 'node', ['tests/auth-ui-pending.mjs']],
