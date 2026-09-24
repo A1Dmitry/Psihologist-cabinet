@@ -1,5 +1,10 @@
 # Issue #15 — отчёт Producer и передача на независимый аудит
 
+> **HISTORICAL REPORT — NOT CURRENT MAIN STATE.** Документ описывает снимок цикла «issue #15 (Producer, до merge PR #17)»
+> (pre-merge, 2026-09-23) и сохранён как история — не переписывается.
+> Актуальное состояние — [`CURRENT-STATE.md`](CURRENT-STATE.md).
+
+
 **АУДИТОР: САМ** — агент-исполнитель этой редакции, 2026-09-23 (UTC).
 Независимый Challenger-аудит не выполнен. Main Re-Audit после merge не выполнен.
 

@@ -1,5 +1,10 @@
 # Issue #14 — отчёт независимого Challenger-аудита (другой агент, отдельная сессия)
 
+> **HISTORICAL REPORT — NOT CURRENT MAIN STATE.** Документ описывает снимок цикла «issue #14 (Challenger)»
+> (main @ `d578c08`, 2026-09-24) и сохранён как история — не переписывается.
+> Актуальное состояние — [`CURRENT-STATE.md`](CURRENT-STATE.md).
+
+
 **Дата:** 2026-09-24 · **Ветка:** `arena/01a0d2b2-psihologist-cabinet` (от `main` @ `d578c08`)
 **Задача:** https://github.com/A1Dmitry/Psihologist-cabinet/issues/14, п.7 (Independent Challenger Audit)
 **Роль:** Challenger — независимая проверка актуального `main` без доверия отчёту Producer

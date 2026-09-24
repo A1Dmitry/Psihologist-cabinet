@@ -1,5 +1,10 @@
 # Отчёт по issue #14 — Production activation + auth-flow hardening + verification
 
+> **HISTORICAL REPORT — NOT CURRENT MAIN STATE.** Документ описывает снимок цикла «issue #14 (Producer)»
+> (main @ `998561d`, 2026-09-23) и сохранён как история — не переписывается.
+> Актуальное состояние — [`CURRENT-STATE.md`](CURRENT-STATE.md).
+
+
 **Дата:** 2026-09-23 · **Ветка:** `arena/01a0d001-psihologist-cabinet` (от `main` @ `998561d`)
 **Задача:** https://github.com/A1Dmitry/Psihologist-cabinet/issues/14
 **Правила:** `AGENTS.md`, `docs/RULES.md` (12 разделов, маркер аудитора, запрет самосертификации).

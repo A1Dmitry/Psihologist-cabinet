@@ -1,7 +1,10 @@
 # Инфраструктура продакшена — runbook и статус
 
 > Владелец процесса: Агент 1 (инфраструктура и интеграция).
-> Обновлено: 2026-09-23. Вопросы/заявки на схему — `docs/SCHEMA-REQUESTS.md`.
+> Обновлено: 2026-09-23; сверено с main @ `87e3951` 2026-09-24 (issue #19) —
+> чек-лист без изменений по фактам (production-проверок из песочницы нет).
+> Вопросы/заявки на схему — `docs/SCHEMA-REQUESTS.md`.
+> Актуальное состояние проекта — `docs/CURRENT-STATE.md`.
 
 ## Архитектура
 
@@ -18,7 +21,7 @@
 | # | Элемент | Статус | Комментарий |
 |---|---------|--------|-------------|
 | 1 | Проект Supabase | ✅ подтверждён декларативно | ref `phiavtroybgwyjdhqqkh`; anon key выпущен 2026-09-21 (см. `iat` в JWT) — проект свежесозданный. Дашборд-проверку выполняет владелец (у агента песочницы нет сети до supabase.co и access-токена) |
-| 2 | `supabase/schema.sql` в проде | ⏳ **критично: переприменить** | идемпотентен, применять целиком в SQL Editor. До 2026-09-23 файл **не применялся целиком**: `revoke`/`grant execute` для `create_booking` описывали старую арность → PostgreSQL обрывал выполнение на 42883, поэтому `claim_psychologist_profile` и `client_error_logs` в проде не существовали (это и есть причина неработающей регистрации). 2026-09-23 исправлено + добавлены `sessions.client_timezone` / `client_utc_offset_min` / `duration_min` (SR-001/108), интервальная занятость + advisory lock в `create_booking` (SR-002), `public_booked_slots.duration_min` (SR-003), `auth_login_codes.issued_token_hash` / `issues` / `consumed_at` (SR-004 — атомарное погашение кода входа, нужно Edge Function `auth-code`). Проверено на PostgreSQL 18.4: `node tests/db-contract.mjs` → 36/36 PASS. **Внимание: миграция удаляет колонку `sessions.timezone_offset` и меняет арность RPC** — подробности в `docs/FULL-AUDIT-REPORT.md` |
+| 2 | `supabase/schema.sql` в проде | ⏳ **критично: переприменить** | идемпотентен, применять целиком в SQL Editor. До 2026-09-23 файл **не применялся целиком**: `revoke`/`grant execute` для `create_booking` описывали старую арность → PostgreSQL обрывал выполнение на 42883, поэтому `claim_psychologist_profile` и `client_error_logs` в проде не существовали (это и есть причина неработающей регистрации). 2026-09-23 исправлено + добавлены `sessions.client_timezone` / `client_utc_offset_min` / `duration_min` (SR-001/108), интервальная занятость + advisory lock в `create_booking` (SR-002), `public_booked_slots.duration_min` (SR-003), `auth_login_codes.issued_token_hash` / `issues` / `consumed_at` (SR-004 — атомарное погашение кода входа, нужно Edge Function `auth-code`). **2026-09-24 (issue #19, main @ `87e3951`): в файл дополнительно вошли SR-D1 (D1: политика/`schedule_overrides`/`public_schedule_overrides`) и фиксы #21/#22 (серверная деривация оплаты/hold в `create_booking`, RLS `client_risks` без политик для `anon`/`authenticated`, `booking_attempts`)** — re-apply по-прежнему обязателен целиком. Проверено на PostgreSQL 18.4: `node tests/db-contract.mjs` (в составе `npm run verify` 22/22, 2026-09-24). **Внимание: миграция удаляет колонку `sessions.timezone_offset` и меняет арность RPC** — подробности в `docs/FULL-AUDIT-REPORT.md` |
 | 3 | `supabase/seed.sql` в проде | ✅ решение: накатывать | это реальный референс-профиль Наталии Михайловской, не фиктивное демо. См. «Ловушка первого входа» ниже |
 | 4 | Edge Function `auth-code` | ⏳ задеплоить | см. «Деплой функций». **verify_jwt=false обязателен** (config.toml уже в репо). 2026-09-23 (issue #14): функция переработана — код гасится **после** создания сессии, появились actions `recover` и `redeem`; для атомарного погашения нужны колонки SR-004 (п.2). Без них функция работает в legacy-режиме (ответ `legacy_schema: true`, восстановление сессии недоступно) |
 | 5 | Edge Function `telegram-notify` | ⏳ задеплоить | то же |
