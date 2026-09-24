@@ -1,190 +1,324 @@
 # Роадмап: сжатие функционального разрыва с ОКОН (okna.one)
 
-Анализ выполнен по материалам okna.one (главная + демо страницы записи `/book/demo`)
-на 2026-09-23. Приоритет задач отражает главное требование продукта: **удобная запись
-для клиента** и **удобная работа психолога с этими записями**.
+Цель этого документа — не просто перечислить функции, а организовать работы **по зависимостям**, чтобы параллельные работы не конфликтовали, не создавали вторые реализации одного домена и не опережали серверные инварианты.
 
----
+> **Правило:** порядок ниже — dependency order, а не порядок номеров T-01…T-26.
+> Реализация каждой существенной задачи: **Producer → Challenger → Merge → Main Re-Audit**.
+> P0/P1 дефект останавливает затронутый контур до устранения или явного containment.
 
-## 1. Что уже есть у нас (сверка)
+## 1. Что уже есть
 
-| Возможность ОКОН | У нас | Состояние |
-|---|---|---|
-| Страница записи без регистрации клиента | `/book/{slug}` (никнейм вместо аккаунта) | ✅ |
-| Шаг «услуга → время» | услуга → день/время (диапазоны до месяца) | ✅ |
-| Счётчики свободных окон на табах периодов («Неделя · 12») | добавлено (freeCountInRange) | ✅ |
-| Часы работы / рабочие дни | `session_settings.work_days/slot_*` | ✅ |
-| Блокировки/личные события | вкладка «Занятость» + Google Calendar iCal | ✅ |
-| Предоплата (вкл/выкл, аванс, резерв) | политики none/deposit/full/hold + антиспам | ✅ |
-| Перенос с подтверждением клиента | reply-токен: клиент подтверждает/отказывается | ✅ (см. T-12) |
-| Напоминания (T-24h/T-12h) | reminderService (демо-канал) | ⚠️ нет реальной доставки (T-15) |
-| Карточка клиента: история сессий, заметки | карточка + журнал записей | ✅ (см. T-09/T-11) |
-| SEO-страница специалиста | `/psy/{slug}` + JSON-LD | ✅ |
-| Постоянная ссылка записи | «Ссылка записи» в кабинете | ✅ |
-| Согласие при передаче данных | чекбокс на форме записи | ⚠️ не хранится факт (T-25) |
+| Возможность | Состояние |
+|---|---|
+| Публичная запись `/book/{slug}` | ✅ |
+| Service → availability | ✅ |
+| Duration-aware slots | ✅ T-02 |
+| Client timezone | ✅ T-03 |
+| Booking wizard | ✅ T-01 |
+| Service → windows | ✅ T-04 |
+| Public free/busy | ✅ |
+| Google Calendar iCal groundwork | ✅ |
+| Payment policy groundwork | ⚠️ server authority требует #21 |
+| Client reply token | ✅ / расширяется T-12 |
+| Telegram psychologist notifications | ✅ T-16 |
+| Consent checkbox | ⚠️ хранение факта — T-25 |
+| Waitlist storage | ⚠️ T-24 |
+| Client portal | ⚠️ T-12 |
+| Real client email delivery | ⬜ T-15 |
+| Calendar event lifecycle | ⬜ D4 |
+| Server booking policy engine | ⬜ D1 |
 
-## 2. Задачи (бэклог)
+## 2. Обязательный порядок выполнения
 
-Приоритет: **P0** — ядро «запись/работа с записями», **P1** — заметное удобство, **P2** — позже.
-Оценка: S ≤ 1 день, M ≤ 3 дня, L > 3 дня (черновая).
+### PHASE 0 — Process / Quality Gate
 
-### Статус реализации (проверено по коду, 2026-09-23)
+**0. #15 — Toyota Quality Gate**
 
-| Задача | Статус | Примечание |
-|---|---|---|
-| T-01 Wizard «Услуга → Время → Контакт» | ✅ сделано 2026-09-23 | шаги + индикатор, валидация на каждом шаге, назад без потери данных; тест `node test_booking_funnel.mjs` |
-| T-02 Слоты под длительность услуги | ✅ сделано 2026-09-23 (сервер — 2026-09-23, AUDIT-REG-DRY-001) | 90-мин услуга режет сетку (конец дня 19:00 → 18:00 недоступно); перекрытия интервалов; сервер: `public_booked_slots.duration_min` читается клиентом + интервальная overlap-проверка в `create_booking` под advisory-lock (атомарно). **В проде нужно переприменить `schema.sql`** |
-| T-03 Часовой пояс клиента | ✅ сделано 2026-09-23 (контракт исправлен 2026-09-23, AUDIT-REG-DRY-001) | слоты показываются в поясе клиента (+ «время психолога → ваше»), подпись, в письмах-текстах «(у вас — HH:MM)». Хранение: `sessions.client_timezone` (IANA) + `client_utc_offset_min` (снимок) вместо прежней `timezone_offset`; вся арифметика поясов — в одном модуле `js/services/timezoneService.js` |
-| T-04 Клик по услуге → окна | ✅ сделано 2026-09-23 | выбор услуги сразу ведёт на шаг «Время» (услуга выбрана, автоскролл вверх) |
-| T-05…T-08 Серии (модель, перенос, пауза, запрос) | ⬜ не начато | дальше по порядку (спринт «Серии») |
-| T-09 Цена/валюта/оплата per client | ⬜ не начато | |
-| T-10 Закреплённые ссылки клиента | ⚠️ частично | `meet_link` есть у сессии; per-client `meet_link`/`payment_url` — нет |
-| T-11 История платежей в карточке | ⬜ не начато | таблица `payments` есть, UI нет |
-| T-12 Кабинет клиента по секретной ссылке | ⚠️ частично | сейчас только reply-токен (подтвердить/отказать); `client_access_tokens` нет |
-| T-13 Материалы и ДЗ | ⬜ не начато | |
-| T-14 Документы с подписью | ⬜ не начато | |
-| T-15 Реальная доставка (email клиенту) | ⬜ не начато | напоминания — demo-outbox; Telegram-канал готов (T-16) |
-| T-16 Уведомления психологу (Telegram) | ✅ готово раньше | |
-| T-17 Авто-статус оплаты (webhook) | ⬜ не начато | |
-| T-18 Stripe/PayPal | ⬜ отложено владельцем | bePaid сейчас |
-| T-19 Ссылка оплаты в письмах | ⬜ не начато | зависит от T-15; `pay_url` у услуг уже есть |
-| T-20 Аналитика | ⚠️ частично | вкладка «Статистика» — 3 карточки за 7 дней |
-| T-21 PWA | ⬜ не начато | |
-| T-22 Автосоздание видеоссылки | ⬜ не начато | |
-| T-23 Часовые поясы в расписании | ⬜ не начато | groundwork сделан (T-03: offset в сессии, бейдж «клиент ±HH:MM» в книге записей) |
-| T-24 Лист ожидания по дням | ⚠️ частично | `waiting_items` есть; запрос клиента на конкретный день — нет |
-| T-25 Хранение факта согласия | ⬜ не начато | consent проверяется, но не записывается |
+Общий процесс для всех следующих работ:
 
-### Клиентская запись (P0)
+`MAIN → AUDIT → DEFECT/REQUIREMENT → ISSUE → PRODUCER → TESTS → CHALLENGER → MERGE → MAIN RE-AUDIT → STANDARDIZE`
 
-> **Статус 2026-09-23 (Агент 2):** T-01, T-02, T-03, T-04 — **сделаны** (см.
-> `docs/AGENT-2-REPORT.md`). T-02/T-03 на серверной стороне догонялись заявками
-> SR-001…SR-003 в `docs/SCHEMA-REQUESTS.md`.
->
-> **Статус 2026-09-23 (AUDIT-REG-DRY-001):** SR-001/002/003/108 **применены** в
-> `supabase/schema.sql` и на клиенте, проверено на реальном PostgreSQL 18.4
-> (`node tests/db-contract.mjs` → 36/36 PASS). Отдельно закрыт блокер регистрации:
-> `schema.sql` ранее не применялся целиком (несовпадение арности `create_booking` в
-> `revoke`/`grant` → ошибка 42883), из-за чего в проде не существовали
-> `claim_psychologist_profile` и `client_error_logs`. Прод-деплой — за владельцем
-> (п.2/4/5 `docs/INFRA.md`). Подробности: `docs/FULL-AUDIT-REPORT.md`.
+Не считать зелёный CI, merge или Producer report доказательством production readiness.
 
-- **T-01 · Многошаговый wizard записи (M)** — ✅ форма `/book/{slug}` → шаги 1-2-3 с индикатором:
-  «Услуга → Время → Контакт», кнопка «Далее», возврат назад без потери данных.
-  Точка: `index.html#page-booking`, `BookingViewModel`. Приёмка: шаги переключаются,
-  выбор валидируется на каждом шаге, старые ссылки продолжают работать.
-- **T-02 · Слоты подстраиваются под услугу (S)** — ✅ длительность услуги (60/90 мин) режет
-  сетку: окно занято, если до конца приёма не хватает времени или слот пересекает чужую запись.
-  Точка: `BookingViewModel.slots`. Приёмка: для 90-мин услуги слот 18:00 при конце дня 19:00 недоступен
-  (проверено автотестом `tests/booking-wizard.mjs`). Серверная проверка — SR-002.
-- **T-03 · Часовой пояс клиента (M)** — ✅ показывать время в поясе клиента
-  (`Intl.DateTimeFormat().resolvedOptions().timeZone`), подпись «время в вашем поясе»,
-  конверсия слотов при записи из другого пояса (хранить в UTC или с оффсетом в сессии).
-  Точки: `BookingViewModel`, `sessions` (поля `client_timezone` + `client_utc_offset_min`,
-  SR-001 применён), schema.sql. Канонический модуль поясов — `js/services/timezoneService.js`.
-- **T-04 · «Выберите услугу — покажем окна» (S)** — клик по услуге сразу скроллит к
-  свободным дням/окнам этой услуги (услуга уже выбрана). Точка: `renderBooking`.
-- **T-26 · Полоска доступности в карточке каталога (S)** — на странице списка
-  специалистов (`/`) показывать в каждой карточке компактную полоску доступности на
-  **сегодня** и **завтра**, а также кнопку/индикатор `···` («ещё») для следующих дней.
-  Данные брать из публичного free/busy-контура (`public_settings`,
-  `public_booked_slots`, `public_schedule_blocks`) и локального mock-контура; не
-  раскрывать чужие данные и причины блокировок. При клике на день открывать профиль
-  или запись специалиста с выбранной датой, при отсутствии свободных окон показывать
-  нейтральное состояние «нет окон». Учесть состояния загрузки/ошибки и timezone
-  клиента; визуально не ломать мобильную карточку. Точки: `renderPortal`,
-  `PortalViewModel`, публичные availability-сервисы. Изменение схемы БД не требуется.
-  **Приоритет P1, оценка S, статус planned.**
-### Регулярные сессии (P0/P1 — ядро работы психолога)
+### PHASE 1 — Production / Security Foundation
 
-- **T-05 · Модель серии (L)** — `SessionSeries {id, psychologistId, clientId, serviceId,
-  weekday, time, intervalWeeks, dateFrom, dateTo, paused}` + генерация сессий на N недель
-  вперёд. Таблица `session_series` в schema.sql. Приёмка: серия на 8 недель создаёт
-  8 сессий, пауза скрывает будущие, клиент видит своё постоянное время.
-- **T-06 · Перенос одной встречи vs всей серии (M)** — в модалке переноса переключатель;
-  перенос серии сдвигает weekday/time и перегенерирует будущие. Точка: modal-session.
-- **T-07 · Пауза/возобновление серии (S)** — «временная приостановка» как у ОКОН.
-- **T-08 · Запрос регулярности от клиента (S)** — чекбокс «хочу постоянное время» на
-  записи → заявка в лист ожидания с флагом `recurring`.
+**1. #18 — Production Auth / Registration E2E — P0**
 
-### Карточка клиента: индивидуальные условия (P1)
+Закрыть реальный production-контур:
 
-- **T-09 · Цена/валюта/способ оплаты per client (M)** — override в карточке клиента,
-  автоподстановка в новые сессии. Таблица `clients` + колонки `price_override`,
-  `currency`, `payment_method`. Точка: `CabinetViewModel.saveClient`, `paymentService.resolvePolicy`.
-- **T-10 · Закреплённые ссылки клиента (S)** — `meet_link` (постоянная ссылка
-  видеовстречи) и `payment_url` в карточке; автоподстановка в сессии и уведомления.
-- **T-11 · История платежей в карточке (S)** — сводка по `sessions.payment_status` +
-  будущая таблица `payments` (платежи уже есть в схеме — вывести в UI).
+`real email → OTP → Auth → owner_id=auth.uid() → cabinet → reload`
 
-### Личный кабинет клиента (P1 — сильный дифференциатор)
+**2. #21 — Server-authoritative Booking — P1**
 
-- **T-12 · Страница клиента по секретной ссылке (M)** — расширение текущего reply-механизма
-  до полноценного кабинета: ближайшие сессии + кнопка «Подключиться» (meet_link) +
-  «Предложить другое время» (клиент выбирает из свободных слотов → психолог
-  подтверждает/отклоняет в книге записей). Без регистрации (токен в ссылке, как у ОКОН).
-  Точки: `page-client-reply`, `sessions.pending_change` (есть), `client_access_tokens`.
-- **T-13 · Материалы и домашние задания (M)** — психолог прикрепляет к клиенту тексты/
-  ссылки/файлы; клиент видит в своём кабинете. Таблица `client_materials`.
-- **T-14 · Документы с подписью (L)** — согласие/контракт: клиент открывает PDF и
-  «подписывает» (клик + фикс даты/токена). Таблица `client_documents`.
+Сделать сервер единственным источником истины для booking status, payment state, amount, duration, hold expiry и booking-time validation.
 
-### Уведомления (P0 для реальной эксплуатации)
+**3. #22 — Tenant Isolation / Anti-spam — P1**
 
-- **T-15 · Реальные каналы доставки (M)** — Supabase Edge Function + SMTP/Resend:
-  письмо клиенту (запись/перенос/напоминание) вместо demo-«outbox»; опционально
-  Telegram-бот. Переключатели типов уведомлений (запись/оплата/перенос/напоминание)
-  в настройках кабинета. Точка: `reminderService` + Edge Function.
-- **T-16 · Уведомления психологу (S)** — ✅ Telegram-часть готова (свой бот,
-  настройка в кабинете, события «новая запись» и «оплата» с переключателями,
-  outbox+watermark, опциональный webhook для мгновенной доставки с сайта);
-  email-канал — не нужен (решение владельца).
+Закрыть cross-tenant reads, ownership, anti-spam и server-side identity.
 
-### Оплаты (P1)
+#18, #21 и #22 могут выполняться параллельно **только если они не изменяют один и тот же участок schema/RPC без координации**. Перед следующим phase обязателен Main Re-Audit.
 
-- **T-17 · Автоматический статус оплаты (M)** — webhook bePaid/Stripe → Edge Function →
-  `sessions.payment_status` (сейчас «Чек/оплата» вручную). Деньги — напрямую психологу.
-- **T-18 · Несколько платёжных систем + выбор клиентом (M)** — к bePaid добавить Stripe/
-  PayPal (клиенты вне РБ/РФ); клиент выбирает способ на шаге оплаты. Точка: `book-pay-actions`.
-- **T-19 · Ссылка оплаты в письмах (S)** — payUrl услуги/клиента в подтверждении и напоминаниях.
+**4. #19 — Current-State Documentation**
 
-### Аналитика и платформа (P1/P2)
+После #18/#21/#22 обновить единственный current-state source of truth. Исторические отчёты не переписывать.
 
-- **T-20 · Аналитика загрузки и дохода (M)** — будущие/проведённые сессии, свободные часы,
-  ожидаемый vs полученный доход по валютам, по неделям/месяцам. Точка: вкладка «Статистика».
-- **T-21 · PWA (S)** — manifest + service worker: «установить на телефон», оффлайн-壳.
-- **T-22 · Автосоздание видеоссылки на сессию (M)** — ⏳ **дизайн-заметка** `docs/T22-video-link-design.md`
-  (реализация требует OAuth-настройки владельца); генерация Meet-ссылки через
-  Google Calendar API (или Jitsi-комната per session) при подтверждении записи; клиент
-  получает её в письме. Сейчас meet_link ручной.
-- **T-23 · Часовые поясы в расписании психолога (M)** — записи клиентов из других поясов
-  в единой сетке (зависит от T-03).
-- **T-24 · Улучшение списка ожидания (S)** — клиент может «встать в лист ожидания» на
-  конкретный день, психолог видит очередь в кабинете (частично есть waiting_items).
-- **T-25 · Хранение факта согласия (S)** — записывать дату/текст согласия в
-  `booking_attempts`/`clients` (152-ФЗ-подобные требования).
+### PHASE 2 — Existing Booking Foundation
 
-## 3. Порядок работ (рекомендация)
+Уже реализовано, не перерабатывать без доказанного дефекта:
 
-1. **Спринт «Запись»**: T-01, T-02, T-04, T-03 → клиентская воронка уровня ОКОН.
-2. **Спринт «Доставка»**: T-15, T-16, T-19 → уведомления реально уходят.
-3. **Спринт «Серии»**: T-05, T-06, T-07, T-08 → постоянное время клиентов.
-4. **Спринт «Клиент-портал»**: T-12, T-10 → переносы в один клик, ссылки.
-5. **Спринт «Деньги и аналитика»**: T-17, T-09, T-20, T-21.
+**5. T-01 — Wizard** ✅
+**6. T-02 — Duration-aware slots** ✅
+**7. T-03 — Client timezone** ✅
+**8. T-04 — Service → windows** ✅
 
-## 4. Открытые вопросы — РЕШЕНО владельцем (2026-09-23)
+Эти задачи образуют базовый контракт:
 
-1. **Видео: НЕ делаем.** Встроенной видеосессии не будет; остаётся автосоздание
-   Google Meet-ссылок (T-22) — как в плане.
-2. **Платежи: bePaid сейчас, Stripe/PayPal — перспектива** (T-18 не закрывается,
-   просто приоритет ниже; клиенты вне РБ/РФ — позже).
-3. **Telegram-уведомления: ДЕЛАЕМ, настройка через админ-часть** — психолог вводит
-   свой токен бота в кабинете (вкладка «Уведомления»); токен не публикуется на
-   публичных страницах (мгновенная доставка — через Edge Function, опционально).
-   → **Реализовано**: `telegramService` + вкладка «Уведомления» + напоминания
-   клиенту по `/start`-приглашению + outbox с watermark + Edge Function
-   `supabase/functions/telegram-notify` (см. docs/TELEGRAM.md).
-4. **Кабинет клиента (T-12): по ссылке-токену, без регистрации — подтверждено.**
-5. Часовой пояс портала по умолчанию — Europe/Minsk; языки интерфейса — не приоритет.
-6. **«Поделиться психологом» — добавлено** (okna-паттерн): кнопка на карточке
-   специалиста (navigator.share → копирование `/psy/{slug}`).
+`Service → Duration → Schedule → Timezone → Candidate Slots`
+
+### PHASE 3 — Canonical Availability + Booking Policy Engine
+
+**9. #31 / D1 — Availability + Booking Policy Engine — P1**
+
+Это **главный следующий архитектурный узел**.
+
+Канонический контракт:
+
+`Service + BookingPolicy + Schedule + BusySources → CandidateSlots → PolicyFilter → BookableSlots`
+
+Policy включает minimum scheduling notice, maximum booking horizon, buffer before/after, slot increment, service-specific availability, date overrides, holidays/exceptions и optional daily/weekly limits.
+
+**Один engine** используется для public booking, psychologist calendar, reschedule, recurring sessions, waitlist и catalog availability.
+
+Запрещено создавать UI-only или второй availability calculator.
+
+### PHASE 4 — Booking Policy / Series
+
+**10. #31 / D5 — Server-enforced Cancellation / Reschedule Policy — P1**
+
+Контракт:
+
+`BookingPolicy + BookingState + CurrentTime + Actor → AllowedAction`
+
+До реализации переноса серии должны существовать серверные правила cancellation deadline, reschedule deadline, late cancellation, no-show, deposit retention/refund, client/psychologist permissions и explicit override + audit.
+
+**11. T-05 — Session Series Model — P1**
+Зависит от D1.
+
+**12. T-06 — Move One Session / Whole Series — P1**
+Зависит от T-05 + D1 + D5.
+
+**13. T-07 — Pause / Resume Series — P1**
+Зависит от T-05.
+
+**14. T-08 — Client Recurring Request — P1/P2**
+Зависит от T-05 и waitlist foundation.
+
+Dependency: `D1 → D5 → T-05 → T-06`
+
+### PHASE 5 — Waitlist
+
+**15. T-24 — Waitlist Base / Specific Day — P1**
+
+Довести существующий `waiting_items` до базового запроса клиента.
+
+**16. #31 / D2 — Waitlist Matching + Exclusive Claim — P1**
+
+Граф:
+
+`released slot → match → notify → exclusive hold → claim/release → booking`
+
+D2 обязан использовать D1.
+
+Нужны preferred service/date/day/time, timezone, notification preference, recurring preference, automatic matching, exclusive hold, timeout, anti-race и audit.
+
+Dependency: `D1 → T-24 → D2`
+
+### PHASE 6 — Client Portal / Client Data
+
+**17. T-12 — Client Portal — P1**
+
+После #18, #21, D1 и D5. Портал должен использовать существующие серверные booking rules, а не создавать свои.
+
+**18. T-10 — Permanent Client Links — P1**
+После T-12.
+
+**19. T-13 — Materials / Homework — P1**
+После T-12.
+
+**20. T-25 — Consent Persistence — P1**
+
+Сохранение факта согласия с версией текста и временем.
+
+**21. #31 / D3 — Configurable Intake / Forms — P1/P2**
+
+После базового portal/consent boundary. Lifecycle: `not_started → incomplete → submitted`.
+
+Intake отдельно от consent. Это сбор данных, не диагностика.
+
+### PHASE 7 — Notifications
+
+**22. T-15 — Real Client Delivery — P1**
+
+Только после authoritative booking lifecycle:
+
+`authoritative event → notification event → delivery`
+
+Не показывать success до подтверждения критической серверной операции.
+
+**23. T-16 — Psychologist Telegram — DONE**
+
+Не переделывать без дефекта.
+
+**24. T-19 — Payment Links in Notifications — P1/P2**
+
+Зависит от T-15 и authoritative payment data.
+
+### PHASE 8 — Calendar Lifecycle
+
+**25. T-23 — Psychologist Timezone Scheduling — P1**
+
+Зависит от T-03 и D1.
+
+**26. #31 / D4 — Calendar Event Lifecycle — P1/P2**
+
+Канонический граф:
+
+`Authoritative Booking → Calendar Artifact → Sync/Retry → Client/Provider Calendar`
+
+Требования: stable external event ID, create/update/cancel, .ics/provider invite, timezone correctness, idempotency, retry/reconciliation и `pending/synced/failed/retry`.
+
+Не создавать отдельный booking state вне authoritative booking.
+
+**27. T-22 — Auto Video Link — P2**
+
+После D4. Google Meet/Jitsi link является артефактом session/calendar lifecycle, а не вторым booking engine.
+
+### PHASE 9 — Payments
+
+**28. T-09 — Per-client Price / Currency / Payment Method — P1**
+
+Сначала персональная policy.
+
+**29. T-17 — Payment Webhook / Authoritative Payment Status — P1**
+
+`Provider → Webhook → Server → sessions.payment_status`
+
+Зависит от #21.
+
+**30. T-11 — Payment History UI — P2**
+
+После authoritative payment events.
+
+**31. T-18 — Stripe/PayPal — LATER**
+
+Не блокирует текущий bePaid flow.
+
+### PHASE 10 — Secondary Product Features
+
+**32. T-14 — Documents / Signature — P2**
+После portal + consent.
+
+**33. T-20 — Analytics — P2**
+Только после стабилизации authoritative sessions/payments/booking events.
+
+**34. T-26 — Catalog Availability Strip — P1/P2**
+Только consumer D1 Availability Engine. Никакого собственного расчёта availability.
+
+**35. T-21 — PWA — P2**
+Независимая инфраструктурная задача; не должна блокировать booking domain.
+
+## 3. Dependency Graph
+
+`#15`
+` ↓`
+`#18 + #21 + #22`
+` ↓`
+`#19`
+` ↓`
+`T-01/T-02/T-03/T-04`
+` ↓`
+`D1 Availability Engine`
+` ├──→ D5 Policy`
+` │     └──→ T-06`
+` ├──→ T-05 Series`
+` │     ├──→ T-06`
+` │     ├──→ T-07`
+` │     └──→ T-08`
+` ├──→ T-24`
+` │     └──→ D2 Waitlist`
+` ├──→ T-12 Portal`
+` │     ├──→ T-10`
+` │     └──→ T-13`
+` ├──→ T-23`
+` │     └──→ D4 Calendar`
+` │            └──→ T-22`
+` └──→ T-26`
+
+Параллельные ветки после соответствующих prerequisites:
+
+`T-25 → D3 Intake`
+`#21 → T-17 → T-11`
+`T-15 → T-19`
+
+## 4. Правила параллельной работы — защита от конфликтов
+
+### Правило 1 — один domain owner
+
+Не допускается одновременная независимая реализация двух availability engines, booking policy calculators, waitlist mechanisms, notification pipelines, payment state machines или calendar booking states.
+
+### Правило 2 — schema/RPC lock
+
+Если задача меняет один и тот же `supabase/schema.sql`, RPC, RLS, Edge Function или domain service, она не выполняется параллельно с другой задачей, меняющей тот же контракт.
+
+Сначала merge одной → Main Re-Audit → следующая.
+
+### Правило 3 — UI не опережает domain contract
+
+UI может готовиться параллельно только если он не создаёт собственную бизнес-логику.
+
+Правильно: `UI → canonical service/domain API`
+
+Неправильно: `UI calculator ≠ server calculator`
+
+### Правило 4 — зависимость блокирует downstream
+
+Если D1 меняет availability contract, T-05/T-06/D2/T-26 не должны одновременно создавать старую модель availability.
+
+### Правило 5 — Producer + Challenger
+
+Для каждого P0/P1:
+
+`Producer → tests/evidence → Challenger → merge → Main Re-Audit`
+
+Challenger обязан искать обход исходного инварианта, а не только запускать те же тесты.
+
+### Правило 6 — production evidence отдельно
+
+Local/PostgreSQL/CI ≠ production. Production-ready только после фактического production evidence.
+
+### Правило 7 — после каждого merge
+
+Проверить исходный дефект/требование, соседние сценарии, отсутствие дублирования, актуальный main SHA и состояние зависимых задач.
+
+## 5. Definition of Done
+
+Работа не считается завершённой только потому, что код написан, тесты зелёные, PR merged или Producer сказал DONE.
+
+Для P0/P1 необходимы: implementation, regression tests, Challenger, проверка исходного сценария, Main Re-Audit, проверка DRY/DDD/SOLID, проверка отсутствия второго domain implementation и production evidence для production-critical функций.
+
+## 6. Отложено
+
+- T-18 Stripe/PayPal — позже;
+- multi-provider routing из #30 — future;
+- собственная видеоплатформа — не делать;
+- автоматическая диагностика/терапевтические решения — не делать.
+
+## 7. Ключевой принцип
+
+**Номер задачи не определяет порядок. Зависимость определяет порядок.**
+
+Главный следующий архитектурный узел после production/security foundation:
+
+**D1 — единый Availability + Booking Policy Engine.**
+
+Все остальные booking-capabilities должны потреблять его, а не реализовывать собственную копию.
