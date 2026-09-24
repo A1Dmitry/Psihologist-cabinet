@@ -48,6 +48,15 @@
 
 ### PHASE 1 — Production / Security Foundation
 
+**0. TASK-P0-SUPABASE-PORTAL — безопасный портал психологов — P0 / НАИВЫСШИЙ ПРИОРИТЕТ**
+
+Канон задачи и статус: [`docs/TASK-P0-SUPABASE-PORTAL.md`](TASK-P0-SUPABASE-PORTAL.md)
+(сохранена 2026-09-24 по решению владельца, реализация не начата). Охватывает и
+поглощает цели #18/#23 в части email-redirect, одноразовой привязки и RLS-изоляции:
+`app_url + callback → подтверждение email → серверная привязка по коду →
+owner_id = auth.uid() → только свои данные`. Ниже идущие #18/#21/#22 не
+переопределяют этот контракт (`docs/RULES.md` §6.14 — один источник истины).
+
 **1. #18 — Production Auth / Registration E2E — P0**
 
 Закрыть реальный production-контур:
