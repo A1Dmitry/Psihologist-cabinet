@@ -78,6 +78,32 @@
    > `TypeError: Failed to fetch`. Проверить напрямую:
    > `curl -i https://phiavtroybgwyjdhqqkh.supabase.co/functions/v1/auth-code`
    > → `{"code":"NOT_FOUND","message":"Requested function was not found"}`.
+   > Фронтенд в этом случае автоматически переключается на запасной канал
+   > (встроенная почта Supabase OTP), пункт «Диагностика сервера» → «Edge
+   > Function auth-code» подсвечивает проблему красным.
+
+   > **Симптом после клика по ссылке из письма (issue #23):**
+   > ```
+   > http://localhost:…/#error=access_denied&error_code=otp_expired
+   > &error_description=Email+link+is+invalid+or+has+expired&sb=
+   > ```
+   > Это **не** письмо Resend `auth-code` (там только код 6–8 символов, без
+   > hyperlink). Так выглядит **magic-link / OTP-redirect Supabase Auth**:
+   > Site URL в Auth → URL Configuration указывает на localhost, ссылка истекла
+   > или уже использована, SPA пока **не** разбирает `#error=…` (см.
+   > `docs/ISSUE-23-EVIDENCE.md`).
+   >
+   > **Обязательная настройка Auth (один раз на проект):**
+   > 1. Dashboard → Authentication → URL Configuration:
+   >    - **Site URL** = реальный URL приложения (GitHub Pages / кастомный домен),
+   >      **не** `http://localhost:…`.
+   >    - **Redirect URLs** — allowlist того же origin (`https://…/`, `https://…/**`).
+   > 2. Убедиться, что в проде отвечает `auth-code` (п.5), чтобы пользователи
+   >    получали **код в письме** и вводили его на `#/auth`, а не кликали
+   >    magic-link на localhost.
+   > 3. Если запасной OTP всё же нужен — шаблон письма Auth тоже должен вести
+   >    на Site URL из п.1; SPA должна принять session hash / показать
+   >    `otp_expired` через `friendlyAuthError` (DoD #23).
 
 6. **Production E2E-проверка регистрации (issue #14, п.1–2)** — с машины владельца
    (у песочницы агента нет сети до supabase.co):
@@ -90,10 +116,8 @@
    reload → повторный вход → ошибки (неверный/повторный код). Вывод (20 проверок,
    PASS/FAIL) можно целиком приложить к issue #14 — код и токены не печатаются.
    Очистка тестового профиля печатается в конце. Неинтерактивно: `E2E_CODES="код1,код2"`.
-   > Фронтенд в этом случае автоматически переключается на запасной канал
-   > (встроенная почта Supabase OTP), пункт «Диагностика сервера» → «Edge
-   > Function auth-code» подсвечивает проблему красным.
-6. **Открыть сайт** → нажать «Диагностика сервера» на странице входа — все пункты
+   Подробный evidence по localhost/`otp_expired`: `docs/ISSUE-23-EVIDENCE.md`.
+7. **Открыть сайт** → нажать «Диагностика сервера» на странице входа — все пункты
    должны быть зелёными; бейдж «Данные: сервер». Проверить «Получить код» —
    письмо приходит на подставленный email, вход открывает кабинет.
    Пункты диагностики, относящиеся к входу:
@@ -104,7 +128,10 @@
      legacy-режиме (код гасится до создания сессии, восстановление сессии
      после обрыва сети недоступно). Проверка «холостая»: письмо не отправляется,
      данные не меняются.
-7. **(Опционально) мгновенные Telegram-уведомления:** в `js/services/supabaseConfig.js`
+   - Auth **Site URL** (Dashboard) — реальный origin приложения, не localhost
+     (иначе клик по magic-link из OTP-fallback даёт `#error=…otp_expired` на
+     localhost; issue #23).
+8. **(Опционально) мгновенные Telegram-уведомления:** в `js/services/supabaseConfig.js`
    заполнить `NOTIFY_WEBHOOK_URL = 'https://phiavtroybgwyjdhqqkh.supabase.co/functions/v1/telegram-notify'`.
    Без него уведомления уходят из открытого кабинета (outbox-режим) — не блокер.
 

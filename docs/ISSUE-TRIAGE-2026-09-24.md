@@ -7,6 +7,26 @@
 
 ---
 
+## 🔗 Синхронизация с live URL → **#23** (не закрывать, дополнить evidence)
+
+**Наблюдение пользователя (2026-09-24):**
+
+```text
+http://localhost:3000/#error=access_denied&error_code=otp_expired
+&error_description=Email+link+is+invalid+or+has+expired&sb=
+```
+
+**Куда относится:** открытый P0 **#23** (application URL + session token E2E),
+не отдельная issue и не #21/#22. Блокирует E2E-ногу **#18**.
+
+**Полный разбор:** [`docs/ISSUE-23-EVIDENCE.md`](ISSUE-23-EVIDENCE.md)  
+**Runbook Site URL:** [`docs/INFRA.md`](INFRA.md) (симптом `otp_expired` + Auth URL Configuration)
+
+**Готовый комментарий в #23 / #18** — в §6–7 `ISSUE-23-EVIDENCE.md` (вставить вручную
+после Issues: write).
+
+---
+
 ## ✅ Закрыть #7 — «Refactor: eliminate duplicated domain logic under strict DRY / DDD / SOLID»
 **Причина:** исполнено и зафиксировано (PR #12 `AUDIT-REG-DRY-001`; PR #13/#16 дублей не вернули). Независимо перепроверено на актуальном main.
 
