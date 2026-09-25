@@ -64,6 +64,9 @@ jobs:
 
       # Функции должны отвечать (не 404/401): пустой POST → 400 от auth-code,
       # 400 от telegram-notify. Ранний детект случайного отката verify_jwt.
+      # Плюс НАСТОЯЩИЙ браузерный preflight: именно он ломал вход психолога
+      # («blocked by CORS policy … It does not have HTTP ok status»), а браузер
+      # не показывает статус OPTIONS — поэтому проверяем его здесь.
       - name: Smoke check functions are reachable
         if: ${{ env.SUPABASE_ACCESS_TOKEN != '' && env.SUPABASE_PROJECT_ID != '' }}
         run: |
@@ -77,6 +80,33 @@ jobs:
             fi
           done
 
+      # Preflight ровно как у браузера: OPTIONS + Origin приложения +
+      # Access-Control-Request-*. Ожидание: 2xx и Allow-Origin/Allow-Methods.
+      - name: Verify CORS preflight (browser-visible condition)
+        if: ${{ env.SUPABASE_ACCESS_TOKEN != '' && env.SUPABASE_PROJECT_ID != '' }}
+        env:
+          ORIGIN: https://a1dmitry.github.io
+        run: |
+          for fn in auth-code telegram-notify; do
+            hdrs=$(curl -s -D - -o /dev/null -X OPTIONS \
+              "https://${SUPABASE_PROJECT_ID}.supabase.co/functions/v1/${fn}" \
+              -H "Origin: ${ORIGIN}" \
+              -H "Access-Control-Request-Method: POST" \
+              -H "Access-Control-Request-Headers: authorization, x-client-info, apikey, content-type")
+            code=$(printf '%s' "$hdrs" | head -1 | tr -d '\r' | awk '{print $2}')
+            allow_origin=$(printf '%s' "$hdrs" | grep -i '^access-control-allow-origin:' | tr -d '\r' | awk '{print $2}')
+            allow_methods=$(printf '%s' "$hdrs" | grep -i '^access-control-allow-methods:' | tr -d '\r' | cut -d' ' -f2-)
+            echo "$fn preflight -> HTTP ${code} · allow-origin=${allow_origin:-—} · allow-methods=${allow_methods:-—}"
+            if [ -z "$code" ] || [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+              echo "::error::$fn: preflight OPTIONS вернул HTTP ${code:-нет ответа} — браузер заблокирует вызов (CORS)."; exit 1
+            fi
+            if [ -z "$allow_origin" ]; then
+              echo "::error::$fn: в ответе на preflight нет Access-Control-Allow-Origin."; exit 1
+            fi
+            case "$allow_methods" in *POST*) : ;; *) echo "::error::$fn: Allow-Methods без POST ($allow_methods)."; exit 1 ;; esac
+          done
+          echo "Preflight OK: 2xx + CORS-заголовки на месте."
+
       # Публичная проверка фактического состояния прода — БЕЗ секретов, поэтому
       # выполняется всегда, включая путь «секреты не настроены». Именно она
       # превращает зелёный статус workflow в проверяемое утверждение
@@ -84,6 +114,7 @@ jobs:
       - name: Production reachability (gateway 404 = NOT deployed, #35)
         env:
           PROJECT_REF: ${{ vars.SUPABASE_PROJECT_ID || 'phiavtroybgwyjdhqqkh' }}
+          ORIGIN: https://a1dmitry.github.io
         run: |
           missing=0
           for fn in auth-code telegram-notify; do
@@ -95,8 +126,22 @@ jobs:
               404|000) missing=1 ;;
             esac
           done
+          # Браузерный preflight auth-code: 2xx + Access-Control-Allow-Origin.
+          # Без него SPA не может вызвать функцию вообще («CORS-ошибка»).
+          hdrs=$(curl -s -D - -o /dev/null -X OPTIONS \
+            "https://${PROJECT_REF}.supabase.co/functions/v1/auth-code" \
+            -H "Origin: ${ORIGIN}" \
+            -H "Access-Control-Request-Method: POST" \
+            -H "Access-Control-Request-Headers: authorization, x-client-info, apikey, content-type" || true)
+          pcode=$(printf '%s' "$hdrs" | head -1 | tr -d '\r' | awk '{print $2}')
+          porigin=$(printf '%s' "$hdrs" | grep -i '^access-control-allow-origin:' | tr -d '\r' | awk '{print $2}')
+          echo "auth-code preflight -> HTTP ${pcode:-нет ответа} · allow-origin=${porigin:-—}"
+          if [ -z "$pcode" ] || [ "$pcode" -lt 200 ] || [ "$pcode" -ge 300 ] || [ -z "$porigin" ]; then
+            echo "::error::auth-code: preflight не проходит (HTTP ${pcode:-нет ответа}, allow-origin=${porigin:-—}) — браузер заблокирует вызов."
+            missing=1
+          fi
           if [ "$missing" = "1" ]; then
-            echo "::error::Edge Functions не отвечают в проде (404/нет сети): деплой не выполнен или откатился. Блокер #35/#46."
+            echo "::error::Edge Functions не отвечают в проде (404/нет сети/preflight): деплой не выполнен или откатился. Блокер #35/#46."
             echo "::error::Действие владельца: docs/OWNER-CHECKLIST-E2E.md, Блок 1 (SUPABASE_ACCESS_TOKEN + SUPABASE_PROJECT_ID → supabase functions deploy ... --no-verify-jwt)."
             exit 1
           fi

@@ -28,7 +28,7 @@
 | 1 | Проект Supabase | ✅ подтверждён декларативно | ref `phiavtroybgwyjdhqqkh`; anon key выпущен 2026-09-21 (см. `iat` в JWT) — проект свежесозданный. Дашборд-проверку выполняет владелец (у агента песочницы нет сети до supabase.co и access-токена) |
 | 2 | `supabase/schema.sql` в проде | ⛔ **критично: переприменить** (drift подтверждён LIVE 2026-09-25: в проде НЕТ SR-004 `auth_login_codes.issued_token_hash/issues/consumed_at`, НЕТ SR-D1 — `schedule_overrides`, `public_schedule_overrides`, `session_settings.min_notice_minutes`, `services.availability`; `create_booking` для anon недоступен → публичная запись не работает. SR-001/SR-003 при этом применены. См. `docs/ISSUE-46-EVIDENCE.md` §2) | идемпотентен, применять целиком в SQL Editor. До 2026-09-23 файл **не применялся целиком**: `revoke`/`grant execute` для `create_booking` описывали старую арность → PostgreSQL обрывал выполнение на 42883, поэтому `claim_psychologist_profile` и `client_error_logs` в проде не существовали (это и есть причина неработающей регистрации). 2026-09-23 исправлено + добавлены `sessions.client_timezone` / `client_utc_offset_min` / `duration_min` (SR-001/108), интервальная занятость + advisory lock в `create_booking` (SR-002), `public_booked_slots.duration_min` (SR-003), `auth_login_codes.issued_token_hash` / `issues` / `consumed_at` (SR-004 — атомарное погашение кода входа, нужно Edge Function `auth-code`). **2026-09-24 (issue #19, main @ `87e3951`): в файл дополнительно вошли SR-D1 (D1: политика/`schedule_overrides`/`public_schedule_overrides`) и фиксы #21/#22 (серверная деривация оплаты/hold в `create_booking`, RLS `client_risks` без политик для `anon`/`authenticated`, `booking_attempts`)** — re-apply по-прежнему обязателен целиком. Проверено на PostgreSQL 18.4: `node tests/db-contract.mjs` (в составе `npm run verify` 22/22, 2026-09-24). **Внимание: миграция удаляет колонку `sessions.timezone_offset` и меняет арность RPC** — подробности в `docs/FULL-AUDIT-REPORT.md` |
 | 3 | `supabase/seed.sql` в проде | ✅ решение: накатывать | это реальный референс-профиль Наталии Михайловской, не фиктивное демо. См. «Ловушка первого входа» ниже |
-| 4 | Edge Function `auth-code` | ⛔ **не задеплоена** (LIVE 2026-09-25: `GET /functions/v1/auth-code` → `404 NOT_FOUND` gateway) | см. «Деплой функций». **verify_jwt=false обязателен** (config.toml уже в репо). 2026-09-23 (issue #14): функция переработана — код гасится **после** создания сессии, появились actions `recover` и `redeem`; для атомарного погашения нужны колонки SR-004 (п.2). Без них функция работает в legacy-режиме (ответ `legacy_schema: true`, восстановление сессии недоступно) |
+| 4 | Edge Function `auth-code` | ⛔ **не задеплоена** (LIVE 2026-09-25: `GET /functions/v1/auth-code` → `404 NOT_FOUND` gateway; preflight `OPTIONS` → 404 без CORS-заголовков) | см. «Деплой функций». **verify_jwt=false обязателен** (config.toml уже в репо). 2026-09-23 (issue #14): функция переработана — код гасится **после** создания сессии, появились actions `recover` и `redeem`; для атомарного погашения нужны колонки SR-004 (п.2). Без них функция работает в legacy-режиме (ответ `legacy_schema: true`, восстановление сессии недоступно) |
 | 5 | Edge Function `telegram-notify` | ⛔ **не задеплоена** (LIVE 2026-09-25: `404 NOT_FOUND`) | то же |
 | 6 | Секрет `RESEND_API_KEY` | ⛔ блокер на владельце | нужен аккаунт Resend + **верифицированный домен** (иначе письма уходят только владельцу аккаунта Resend — блокирует T-15) |
 | 7 | Секрет `MAIL_FROM` | ⏳ после домена | напр. `PsyПортал <login@ваш-домен>`; без домена — `onboarding@resend.dev` (только на email владельца Resend) |
@@ -106,6 +106,32 @@
    > Status=0 неоднозначен: POST мог отправить письмо, поэтому сначала проверить
    > почту и не повторять запрос немедленно. Пункт «Диагностика сервера» → «Edge
    > Function auth-code» подсвечивает проблему красным.
+   >
+   > **Как снять фактический статус и заголовки опубликованного `auth-code`**
+   > (браузер их не показывает — только «blocked by CORS policy»):
+   > зонд `tools/prod-probe/probe.mjs` повторяет точный запрос браузера
+   > (`OPTIONS` + `Origin: https://a1dmitry.github.io` + `Access-Control-Request-*`)
+   > и печатает статус ответа и `allow-origin` / `allow-methods` / `allow-headers`.
+   > Три неотличимых в консоли состояния он различает:
+   > `NOT_DEPLOYED` (gateway 404 без CORS), `PREFLIGHT_BLOCKED(HTTP 401 — verify_jwt?)`
+   > и `PREFLIGHT_BAD_CORS` (2xx без нужных заголовков). Ожидание для здорового
+   > деплоя — `PREFLIGHT_OK` (200 + `Allow-Origin` + `Allow-Methods: POST, OPTIONS`),
+   > см. `supabase/functions/auth-code/index.ts` и `verify_jwt = false`
+   > в `supabase/config.toml`. Отчёт публикуется комментарием в PR
+   > (workflow `Production read-only probe`), тот же гейт встроен в
+   > `supabase-deploy.yml` (шаги «Verify CORS preflight» и «Production reachability»).
+   >
+   > **Третья причина той же консольной ошибки — слишком узкий allow-list.**
+   > Supabase требует, чтобы `Access-Control-Allow-Headers` покрывал ВСЕ заголовки
+   > вызывающего клиента (<https://supabase.com/docs/guides/functions/cors>):
+   > `x-retry-count` (авто-ретраи postgrest-js) и `traceparent` / `tracestate` /
+   > `baggage` (client-side tracing). Функция, задеплоенная с узким списком,
+   > перестаёт вызываться из браузера после обновления SDK — лечится только
+   > редеплоем, а в консоли выглядит как та же CORS-ошибка. Канонический список
+   > объявлен в обеих функциях и запинен: `tests/cors-contract.mjs` (список,
+   > равенство контрактов двух функций, покрытие заголовков фронтенда —
+   > с falsification-контролем) + поведенческая проверка `OPTIONS`
+   > в `tests/auth-code-edge.mjs`.
 
    > **Симптом после клика по ссылке из письма (issue #23):**
    > ```

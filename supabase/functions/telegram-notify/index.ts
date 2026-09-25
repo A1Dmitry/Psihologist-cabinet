@@ -13,10 +13,16 @@
 //   { "psychologist_id": "...", "event": "booking" | "payment",
 //     "text": "<html-текст>", "session_created_at": "ISO..." | null }
 
+// CORS-контракт — тот же канонический список Supabase, что и в auth-code
+// (https://supabase.com/docs/guides/functions/cors). Расхождение между
+// функциями дало бы «работает вход, но не работает уведомление» (или наоборот)
+// с одинаковой консольной ошибкой; равенство списков запинировано в
+// tests/cors-contract.mjs.
 const cors = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS'
+  'Access-Control-Allow-Headers':
+    'authorization, x-client-info, apikey, content-type, x-retry-count, traceparent, tracestate, baggage',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
 };
 
 Deno.serve(async (req) => {

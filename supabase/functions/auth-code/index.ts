@@ -42,10 +42,22 @@
 // сессии) с компенсацией при отказе Auth и явной подсказкой переприменить
 // schema.sql — без новых колонок атомарный захват и recover недоступны.
 
+// CORS-контракт вызова из браузера. Список заголовков — канонический для
+// Supabase (https://supabase.com/docs/guides/functions/cors): allow-list
+// обязан покрывать ВСЕ заголовки, которые присылает вызывающий клиент, иначе
+// preflight падает с той же консольной ошибкой («... It does not have HTTP ok
+// status» / «header ... is not allowed»), что и 404/401 — причина неотличима.
+// Сюда входят x-retry-count (авто-ретраи postgrest-js) и traceparent /
+// tracestate / baggage (client-side tracing, если клиент включит
+// tracePropagation): без них функция, задеплоенная один раз, перестаёт
+// вызываться из браузера после обновления SDK — нужен редеплой.
+// Инвариант «обе функции объявляют один и тот же список, и он покрывает всё,
+// что шлёт фронтенд» запинен в tests/cors-contract.mjs.
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS'
+  'Access-Control-Allow-Headers':
+    'authorization, x-client-info, apikey, content-type, x-retry-count, traceparent, tracestate, baggage',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
 };
 
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // без похожих I, O, 0, 1
