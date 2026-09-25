@@ -22,6 +22,10 @@
  *  8. Негативные контроли честности гейта (#51, #46 F2): silent-набор
  *     (0 проверок, exit 0) и набор с `FAIL` в отступе ≥3 обязаны красить
  *     REDUCED-прогон verify_all; честный мини-набор — обязан зеленеть.
+ *  9. Parity P3: ok-слот строится ОТ ПОРОГА (ceil(now + notice + 61с) до
+ *     целой минуты). Прежнее `plusMinutes(11)` после усечения hhmm() теряло
+ *     до 59.999с и давало флейк «client=ok / server=reject» в полном гейте
+ *     (2026-09-25, валидация #36); инвариант сюиты — запас ≥60с.
  *
  * Сам guard — обычный скрипт без БД: естественный выход + exitCode.
  */
@@ -120,6 +124,10 @@ check('verify_app: IMPORT/LINK ERROR выходит ≠0',
 check('verify_app: BOOT ERROR выходит ≠0',
   /bootFailed[\s\S]*process\.exit\(1\)/.test(readFileSync(join(ROOT, 'verify_app.mjs'), 'utf-8')),
   'нет process.exit(1) на boot');
+check('parity P3: ok-слот от порога (флейк 2026-09-25, запас ≥60с)',
+  /Math\.ceil\(\(Date\.now\(\) \+ 10 \* 60000 \+ 61000\) \/ 60000\) \* 60000/.test(
+    readFileSync(join(ROOT, 'tests', 'availability-parity.mjs'), 'utf-8')),
+  'ок-слот P3 снова строится от now, а не от порога');
 
 function runNode(file, extraEnv = {}, timeout = 20000) {
   const r = spawnSync(process.execPath, [file], {
