@@ -108,8 +108,19 @@ async function probeObject(group, table, cols) {
 
 /* ════════════════════════════════════════════════════════════════════════════
  * A. Edge Functions (TASK 2) — задеплоены ли вообще
+ *
+ * Канонический контракт после #88 (коррекция #35 от 2026-09-25): вход
+ * специалиста — ТОЛЬКО Google OAuth через Supabase Auth. Почтовый код входа
+ * отменён, поэтому `auth-code` больше не является компонентом продукта и не
+ * должна быть задеплоена: её ОТСУТСТВИЕ — норма, а появление — возрождение
+ * отменённого пути (#35: «must not be deployed or restored»). Единственная
+ * требуемая функция — `telegram-notify` (серверные уведомления владельца,
+ * вызывает js/services/telegramService.js).
  * ══════════════════════════════════════════════════════════════════════════ */
-for (const fn of ['auth-code', 'telegram-notify']) {
+const REQUIRED_FUNCTIONS = ['telegram-notify'];
+const RETIRED_FUNCTIONS = ['auth-code'];
+
+for (const fn of REQUIRED_FUNCTIONS) {
   try {
     // GET: у задеплоенной функции ответ приходит ОТ ФУНКЦИИ (405/400/200 +
     // её тело), у незадеплоенной — от gateway: 404 {"code":"NOT_FOUND"}.
@@ -124,8 +135,25 @@ for (const fn of ['auth-code', 'telegram-notify']) {
   }
 }
 
+/* Снятые функции: ожидаем gateway-404. «Отсутствует» доказывается ТОЛЬКО
+ * фактическим ответом gateway — сетевой отказ остаётся NETWORK_ERROR, иначе
+ * «не измерили» читалось бы как «снята, всё в порядке» (тот же дефект, что #54). */
+for (const fn of RETIRED_FUNCTIONS) {
+  const name = `GET /functions/v1/${fn} (снята по #35/#88)`;
+  try {
+    const r = await call('GET', `/functions/v1/${fn}`, { auth: false });
+    const absent = r.status === 404 && r.json?.code === 'NOT_FOUND';
+    rec('A edge-functions', name, {
+      verdict: r.networkError ? 'NETWORK_ERROR' : (absent ? 'RETIRED_ABSENT' : 'REVIVED_RETIRED_PATH'),
+      status: r.status, code: r.json?.code || '', detail: brief(r.text, 260)
+    });
+  } catch (e) {
+    rec('A edge-functions', name, { verdict: 'NETWORK_ERROR', detail: brief(e) });
+  }
+}
+
 /**
- * Настоящий браузерный preflight для `auth-code` — то самое, что падает
+ * Настоящий браузерный preflight для `telegram-notify` — то самое, что падает
  * в консоли владельца:
  *   «Response to preflight request doesn't pass access control check:
  *     It does not have HTTP ok status.»
@@ -135,7 +163,12 @@ for (const fn of ['auth-code', 'telegram-notify']) {
  * CORS) и от «verify_jwt=true» (401 без CORS). Здесь воспроизводится точный
  * запрос браузера: OPTIONS + Origin приложения + Access-Control-Request-*.
  *
- * Ожидание для задеплоенной функции (supabase/functions/auth-code/index.ts,
+ * Зондируется именно `telegram-notify`: после #88 это единственная функция,
+ * которую браузер вызывает с публичной страницы (запись → уведомление
+ * владельца). `auth-code` снята, поэтому preflight по ней больше не измеряем —
+ * её отсутствие проверяется отдельным зондом выше (RETIRED_ABSENT).
+ *
+ * Ожидание для задеплоенной функции (supabase/functions/telegram-notify/index.ts,
  * `supabase/config.toml` verify_jwt=false):
  *   HTTP 200 + Access-Control-Allow-Origin + Allow-Methods: POST, OPTIONS.
  */
@@ -181,7 +214,7 @@ async function probePreflight(fn) {
     });
   }
 }
-await probePreflight('auth-code');
+for (const fn of REQUIRED_FUNCTIONS) await probePreflight(fn);
 
 /* ════════════════════════════════════════════════════════════════════════════
  * B. Инвентаризация production (TASK 1)
@@ -364,7 +397,10 @@ const drift = results.filter(r => String(r.verdict).startsWith('DRIFT') || r.ver
   || String(r.verdict).startsWith('LEAK')
   // preflight — это и есть браузерный симптом issue: без 2xx + CORS-заголовков
   // SPA не может вызвать функцию, даже когда она «задеплоена».
-  || String(r.verdict).startsWith('PREFLIGHT_BLOCKED') || r.verdict === 'PREFLIGHT_BAD_CORS');
+  || String(r.verdict).startsWith('PREFLIGHT_BLOCKED') || r.verdict === 'PREFLIGHT_BAD_CORS'
+  // Возрождение отменённого пути (#35/#88): снятая функция снова отвечает.
+  // RETIRED_ABSENT сюда НЕ входит — отсутствие снятой функции и есть норма.
+  || r.verdict === 'REVIVED_RETIRED_PATH');
 // Сетевой отказ (status 0) — это НЕ вердикт прода, а отсутствие измерения:
 // считаем отдельно, иначе «drift 0» при мёртвой сети читается как «чисто» (#54).
 const unreachable = results.filter(r => Number(r.status) === 0);

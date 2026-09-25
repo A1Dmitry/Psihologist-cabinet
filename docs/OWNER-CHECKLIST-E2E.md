@@ -22,6 +22,15 @@
 
 ## Блок 1 — Секреты деплоя CI (5 минут) — `SUPABASE_ACCESS_TOKEN` + `SUPABASE_PROJECT_ID`
 
+> **Канон после #88 (коррекция #35 от 2026-09-25):** вход специалиста — только
+> Google OAuth через Supabase Auth. Почтовый код входа отменён, поэтому
+> `auth-code` **не деплоится**: единственная публикуемая функция —
+> `telegram-notify` (серверные уведомления владельца). Если `auth-code` уже
+> была задеплоена ранее — удалите её (Dashboard → Edge Functions → Delete, или
+> `supabase functions delete auth-code --project-ref phiavtroybgwyjdhqqkh`):
+> проверка в CI трактует отвечающую `auth-code` как возрождение отменённого
+> пути входа и краснеет.
+
 Без этого деплой-workflow всегда уходит в skip (проверено: все запуски, включая
 последний 35979360714, — «Skip when credentials are not configured»).
 
@@ -36,16 +45,18 @@
 4. **Запустить деплой:** https://github.com/A1Dmitry/Psihologist-cabinet/actions/workflows/supabase-deploy.yml
    → **Run workflow** (ветка main) → дождаться завершения.
    ✅ Признак успеха: шаги `Checkout / Setup Supabase CLI / Deploy functions /
-   Smoke check` — зелёные **не skipped**; в логе `auth-code -> HTTP 400` и
-   `telegram-notify -> HTTP 400` (400 = функция отвечает; 404/401 — ошибка).
-   (Деплой функций до применения схемы безвреден: функция ответит legacy-режимом,
-   пока не применён Блок 2.)
+   Smoke check` — зелёные **не skipped**; в логе `telegram-notify -> HTTP 400`
+   (400 = функция отвечает; 404/401 — ошибка) и `auth-code (снята) -> HTTP 404`
+   (404 = снятой функции в проде нет, это норма).
+   (Деплой функции до применения схемы безвреден: `telegram-notify` не зависит
+   от схемы; Блок 2 нужен для записи и кабинета.)
 
 Альтернатива без CI (если предпочитаете руками):
 ```bash
 npm i -g supabase && supabase login        # откроет браузер для входа
-supabase functions deploy auth-code --project-ref phiavtroybgwyjdhqqkh --no-verify-jwt
 supabase functions deploy telegram-notify --project-ref phiavtroybgwyjdhqqkh --no-verify-jwt
+# auth-code НЕ деплоим: снята по #35/#88. Если была задеплоена — удалить:
+supabase functions delete auth-code --project-ref phiavtroybgwyjdhqqkh
 ```
 
 ---

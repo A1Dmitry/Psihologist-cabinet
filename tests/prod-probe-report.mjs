@@ -124,11 +124,18 @@ check('workflow: шаг читает именно сохранённый JSON-о
  * (401 без CORS) и «2xx без CORS-заголовков» выглядят одинаково. Зонд обязан
  * различать все три — иначе он не доказательство, а декорация. */
 const stubModes = {
-  // Задеплоенная функция: OPTIONS → 200 + CORS (как auth-code/index.ts).
+  // Задеплоенная функция: OPTIONS → 200 + CORS (как telegram-notify/index.ts).
+  // `auth-code` снята (#35/#88) — стенд отвечает по ней gateway-404, как
+  // настоящий прод без этой функции.
   deployed: `import { createServer } from 'node:http';
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
+const NOT_FOUND = { 'Content-Type': 'application/json' };
 createServer((req, res) => {
-  if (req.url.startsWith('/functions/v1/auth-code') && req.method === 'OPTIONS') {
+  if (req.url.startsWith('/functions/v1/auth-code')) {
+    res.writeHead(404, NOT_FOUND);
+    return res.end(JSON.stringify({ code: 'NOT_FOUND', message: 'Requested function was not found' }));
+  }
+  if (req.url.startsWith('/functions/v1/telegram-notify') && req.method === 'OPTIONS') {
     res.writeHead(200, CORS); return res.end('ok');
   }
   if (req.url.startsWith('/functions/v1/')) { res.writeHead(405, CORS); return res.end('{}'); }
@@ -176,6 +183,29 @@ for (const mode of ['deployed', 'notDeployed', 'jwtGate']) {
   check(`preflight (${mode}): зонд существует и измерен`, !!pre && Number(pre.status) !== 0,
     r.out.slice(0, 200));
   if (!pre) continue;
+
+  /* ── Снятая функция (`auth-code`, #35/#88): отсутствие — норма, появление — дрейф.
+   * Проверяется здесь же, на тех же стендах: иначе «снята» могло бы тихо
+   * означать «не измеряли», а возрождение отменённого пути входа — пройти
+   * незамеченным. */
+  const retired = r.json?.results.find(x => String(x.name).includes('/functions/v1/auth-code')
+    && String(x.name).includes('снята'));
+  check(`снятая функция (${mode}): зонд существует и измерен`, !!retired && Number(retired.status) !== 0,
+    JSON.stringify(retired || r.json?.results.map(x => x.name)));
+  if (retired) {
+    // 401 в стенде jwtGate означает «функция отвечает» → снятый путь возрождён.
+    const revived = mode === 'jwtGate';
+    check(`снятая функция (${mode}): вердикт ${revived ? 'REVIVED_RETIRED_PATH' : 'RETIRED_ABSENT'}`,
+      retired.verdict === (revived ? 'REVIVED_RETIRED_PATH' : 'RETIRED_ABSENT'), retired.verdict);
+    check(`снятая функция (${mode}): ${revived ? 'возрождение помечено как drift' : 'отсутствие НЕ считается drift'}`,
+      (r.json.summary.drift_items || []).some(x => x.includes('снята по #35/#88')) === revived,
+      JSON.stringify(r.json.summary.drift_items));
+  }
+  // Единственная требуемая функция — telegram-notify.
+  const required = r.json?.results.find(x => String(x.name) === 'GET /functions/v1/telegram-notify');
+  check(`требуемая функция (${mode}): GET-зонд telegram-notify присутствует`, !!required,
+    JSON.stringify(required || 'нет зонда'));
+
   if (mode === 'deployed') {
     check('preflight (deployed): 200 + CORS → PREFLIGHT_OK', pre.verdict === 'PREFLIGHT_OK', pre.verdict);
     check('preflight (deployed): в отчёте есть allow-origin/methods',
