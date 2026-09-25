@@ -1,0 +1,54 @@
+name: Quality Gate
+
+# Проектный гейт (issue #46 / #36: «не закрывать задачу по merge/green CI»).
+#
+# Зачем отдельный workflow: до него CI не запускал проверки проекта ВООБЩЕ —
+# pages.yml делал только сборку Tailwind и пост-смоук. На baseline `dcb4093`
+# три набора были красными (`npm run verify` → 3 падения), а CI при этом
+# зелёный: классическая маскировка провала. Теперь гейт обязателен и для PR,
+# и для деплоя (pages.yml вызывает этот workflow через needs).
+#
+# Выполняется тот же вход, что и локально: `node tools/verify_all.mjs`
+# (22 набора, включая SQL-контракт на настоящем PostgreSQL) + смоук маршрутов
+# против живого devserver.py (правило целостности превью из AGENTS.md).
+
+on:
+  pull_request:
+  workflow_dispatch:
+  # вызывается из pages.yml как обязательный шаг перед деплоем
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # devDependencies нужны ТОЛЬКО проверкам (embedded-postgres, pg);
+      # сам сайт собирается без npm. package-lock.json в репозитории не
+      # хранится (.gitignore), поэтому install, а не ci.
+      - name: Install dev dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Run project gate (node tools/verify_all.mjs)
+        run: node tools/verify_all.mjs
+
+      # Смоук маршрутов против настоящего devserver: UI-изменение считается
+      # готовым только после этого прогона (AGENTS.md, форма 5 «туфты»).
+      - name: Smoke routes against a real devserver
+        run: |
+          python3 devserver.py 8765 > /tmp/devserver.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8765/ > /dev/null && break
+            sleep 1
+          done
+          BASE_URL=http://127.0.0.1:8765 python3 verify_pages.py
