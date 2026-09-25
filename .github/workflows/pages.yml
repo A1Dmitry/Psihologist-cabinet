@@ -74,6 +74,10 @@ jobs:
           cp -r css _site/css
           sed "s|%BASE%|/${GITHUB_REPOSITORY#*/}/|g" index.html > _site/index.html
           cp _site/index.html _site/404.html
+          # Google OAuth: политика конфиденциальности + файл подтверждения владения
+          cp privacy.html _site/privacy.html
+          mkdir -p _site/privacy && cp privacy.html _site/privacy/index.html
+          cp google*.html _site/
           for r in cabinet auth onboarding booking-done reply; do
             mkdir -p "_site/$r"
             cp _site/index.html "_site/$r/index.html"
