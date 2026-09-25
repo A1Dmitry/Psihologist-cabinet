@@ -7,6 +7,11 @@
  *                                              # шаг 2: полный E2E реальной регистрации.
  *                                              # ТРЕБУЕТСЯ доступ к почтовому ящику этого email:
  *                                              # скрипт попросит ввести код из письма.
+ *   node tools/prod-e2e.mjs --email test@example.com --link "<ссылка из письма>"
+ *                                              # шаг 3 (issue #46, TASK 4): ВТОРОЙ вход —
+ *                                              # по ссылке из письма. Проверяется, что ссылка
+ *                                              # и ручной код дают ОДНУ canonical-сессию и
+ *                                              # тот же psychologist.id.
  *
  * Зачем: из песочницы агента нет сети до supabase.co (issue #14, п.1–2),
  * поэтому реальный сценарий «новый email → письмо → код → Auth → claim →
@@ -77,6 +82,7 @@ const arg = (name, def = '') => {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : def;
 };
 const EMAIL = arg('email').toLowerCase().trim();
+const LINK = arg('link').trim();
 const PROFILE = {
   fullName: arg('name', 'E2E Smoke Тест'),
   phone: arg('phone', '+375 00 000-00-00'),
@@ -89,7 +95,7 @@ const PROFILE = {
 const { registration } = await import('../js/domain/registration.js');
 const { supabaseApi, setAuthToken, userIdFromToken } = await import('../js/services/supabaseApi.js');
 const { db } = await import('../js/core/dbContext.js');
-const { SUPABASE_URL } = await import('../js/services/supabaseConfig.js');
+const { SUPABASE_URL, SUPABASE_ANON_KEY, APPLICATION_URL } = await import('../js/services/supabaseConfig.js');
 
 const results = [];
 const check = (name, ok, extra = '') => {
@@ -136,6 +142,95 @@ async function askCode(prompt) {
     _rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   }
   return _rl.question(prompt);
+}
+
+/**
+ * Кросс-тенантный доступ своей живой сессией (issue #22 / #46 TASK 5).
+ * Ожидание: чужой профиль и чужие сессии не читаются (RLS owner_all).
+ */
+async function tenantIsolationChecks(myPsyId) {
+  let otherId = null;
+  try {
+    const r = await fetch(
+      `${SUPABASE_URL}/rest/v1/public_profiles?select=id&is_active=eq.true&limit=20`,
+      { headers: { apikey: SUPABASE_ANON_KEY } }
+    );
+    const rows = await r.json();
+    otherId = (Array.isArray(rows) ? rows : []).map(x => x.id).find(id => id && id !== myPsyId) || null;
+  } catch (e) {
+    check('tenant isolation: каталог прочитан', false, String(e.message || e));
+    return;
+  }
+  if (!otherId) {
+    check('tenant isolation: есть второй специалист для проверки', false, 'в каталоге только один профиль');
+    return;
+  }
+  const attempt = async (path) => {
+    try {
+      const rows = await supabaseApi.request(path);
+      return { denied: false, count: Array.isArray(rows) ? rows.length : -1 };
+    } catch (e) {
+      return { denied: true, count: 0, err: String(e.message || e).slice(0, 60) };
+    }
+  };
+  const psy = await attempt(`psychologists?id=eq.${encodeURIComponent(otherId)}&select=id,email,phone`);
+  check('tenant isolation: чужой профиль не читается своей сессией',
+    psy.denied || psy.count === 0, JSON.stringify(psy));
+  const ses = await attempt(`sessions?psychologist_id=eq.${encodeURIComponent(otherId)}&select=id`);
+  check('tenant isolation: чужие сессии не читаются своей сессией',
+    ses.denied || ses.count === 0, JSON.stringify(ses));
+  const risks = await attempt('client_risks?select=phone_key&limit=1');
+  check('tenant isolation: client_risks недоступен (грант отозван)',
+    risks.denied || risks.count === 0, JSON.stringify(risks));
+}
+
+/**
+ * Вход по ссылке из письма (Path B, issue #46 TASK 4).
+ * Ссылка одноразовая: проходим по ней сами (redirect: manual) и берём fragment
+ * из Location — ровно то, что увидел бы браузер после клика. Токены не печатаются.
+ */
+async function runEmailLinkScenario(link, expectPsyId, expectUid) {
+  const safeUrl = (v) => { try { const u = new URL(v); return `${u.origin}${u.pathname}`; } catch { return '(не URL)'; } };
+  let target = link;
+  try {
+    const r = await fetch(link, { redirect: 'manual' });
+    const location = r.headers.get('location') || '';
+    if (location) target = new URL(location, link).toString();
+    check('ссылка из письма обработана GoTrue (есть redirect)',
+      /access_token=|error=|code=/.test(location), `HTTP ${r.status} → ${safeUrl(location || link)}`);
+    check('redirect ведёт на реальный origin приложения (не localhost)',
+      !!location && !/^https?:\/\/(localhost|127\.0\.0\.1)/i.test(location)
+        && location.includes(new URL(APPLICATION_URL).host),
+      safeUrl(location || link));
+  } catch (e) {
+    check('ссылка из письма доступна', false, String(e.message || e));
+    return;
+  }
+
+  // имитируем адресную строку браузера после клика и запускаем ТОТ ЖЕ код,
+  // что и SPA на старте (registration.consumeAuthRedirect)
+  const u = new URL(target);
+  loc.hash = u.hash || '';
+  loc.search = u.search || '';
+  const out = await registration.consumeAuthRedirect();
+  loc.hash = '';
+  loc.search = '';
+
+  check('вход по ссылке: canonical-сессия получена', out.ok === true, out.message || out.reason || '');
+  if (!out.ok) return;
+  check('вход по ссылке: тот же психолог, что и по коду (одна identity)',
+    out.psychologist?.id === expectPsyId, `${out.psychologist?.id} vs ${expectPsyId}`);
+  check('вход по ссылке: owner_id == тому же auth.uid()',
+    out.ownerId === expectUid, `${trunc(out.ownerId)} vs ${trunc(expectUid)}`);
+  const count = await (async () => {
+    try {
+      const rows = await supabaseApi.request(
+        `psychologists?owner_id=eq.${encodeURIComponent(expectUid)}&select=id`);
+      return Array.isArray(rows) ? rows.length : -1;
+    } catch { return -1; }
+  })();
+  check('вход по ссылке: дубль профиля не создан (профилей у owner_id = 1)',
+    count === 1, String(count));
 }
 
 /* ========================================================================== */
@@ -195,6 +290,10 @@ async function main() {
     `${restored.psychologist?.id} vs ${res.psychologist.id}`);
   check('после reload owner_id совпадает', restored.ownerId === uid, trunc(restored.ownerId));
 
+  /* —— 3b. Чужой кабинет недоступен своей сессией (issue #22 / #46 TASK 5) —— */
+  console.log('\n── Сценарий 3b: tenant isolation (чужие данные своей сессией) ──');
+  await tenantIsolationChecks(res.psychologist.id);
+
   /* —— 4. Повторный вход тем же email: без дубля —— */
   console.log('\n── Сценарий 3: повторный вход тем же email (кулдаун ~30 с) ──');
   process.stdout.write('  жду 31 с (кулдаун отправки на сервере) ');
@@ -220,6 +319,17 @@ async function main() {
   }
 
   registration.signOut();
+
+  /* —— 5. Второй вход: по ссылке из письма (Path B) —— */
+  if (LINK) {
+    console.log('\n── Сценарий 4: вход по ссылке из письма (та же canonical-сессия) ──');
+    await runEmailLinkScenario(LINK, res.psychologist.id, uid);
+    registration.signOut();
+  } else {
+    console.log('\nℹ️  Сценарий «вход по ссылке из письма» не запущен.');
+    console.log('    Запустите с той же почтой и ссылкой из письма:');
+    console.log(`    node tools/prod-e2e.mjs --email ${EMAIL} --link "<https://…из письма>"`);
+  }
 
   /* —— Итог —— */
   const failed = results.filter(r => !r[1]).length;

@@ -256,6 +256,16 @@ globalThis.fetch = async (url, opts = {}) => {
       if (existing.owner_id && existing.owner_id !== owner) {
         return resp(200, { ok: false, error: 'Этот профиль уже привязан к другой учётной записи' });
       }
+      // Зеркало SQL-контракта (supabase/schema.sql, claim_psychologist_profile):
+      // вход НЕ реактивирует отключённый кабинет. Проверено на настоящем
+      // PostgreSQL в tests/db-contract.mjs, секция «ОТКЛЮЧЁННЫЙ АККАУНТ».
+      if (existing.is_active === false) {
+        return resp(200, {
+          ok: false,
+          inactive: true,
+          error: 'Учётная запись отключена. Для восстановления доступа обратитесь к администратору портала.'
+        });
+      }
       existing.owner_id = existing.owner_id || owner;
       // дозаполнение только пустого
       for (const [field, value] of [['phone', body.p_phone], ['about', body.p_about], ['city', body.p_city], ['specialization', body.p_specialization]]) {
@@ -794,6 +804,103 @@ check('повторная регистрация тем же email: сейф о�
 // пароль сейфа не попадает в логи
 check('пароль сейфа не попадает в логи', !logLines.some(l => l.includes('Доверие-2026')),
   logLines.filter(l => l.includes('Доверие')).join(' | '));
+
+/* ============================================================================
+ * 9. Отключённый аккаунт и абсолютный срок сессии (issue #40 п.7–8 / #46 TASK 3)
+ * ========================================================================== */
+const SESSION_LS_KEY = 'psy_auth_session_v1';
+const act = await loadFreshModules();
+act.registration.signOut();
+await act.registration.requestVerification(EMAIL);
+const activeLogin = await act.registration.completeVerification(EMAIL, dbState.issuedCode, PROFILE);
+check('контроль: активный аккаунт входит', activeLogin.ok === true, activeLogin.message || '');
+const target = [...dbState.psychologists.values()].find(p => p.email === EMAIL);
+
+// владелец отключил кабинет (в проде это service_role, не сам пользователь)
+target.is_active = false;
+
+// 9.1 Живая сессия после отключения аккаунта доступ не даёт
+const afterDisable = await act.registration.restoreAuthenticatedState();
+check('отключённый аккаунт: живая сессия кабинет не открывает',
+  afterDisable.authenticated === false && afterDisable.reason === 'inactive', JSON.stringify(afterDisable));
+check('отключённый аккаунт: причина показана пользователю',
+  /отключена/i.test(afterDisable.message || ''), afterDisable.message);
+check('отключённый аккаунт: currentPsychologist сброшен',
+  act.db.currentPsychologistId == null, String(act.db.currentPsychologistId));
+
+// 9.2 Повторный вход не реактивирует аккаунт
+await act.registration.requestVerification(EMAIL);
+const inactiveLogin = await act.registration.completeVerification(EMAIL, dbState.issuedCode, PROFILE);
+check('отключённый аккаунт: вход отклонён', inactiveLogin.ok === false, inactiveLogin.message || '');
+check('отключённый аккаунт: is_active входом НЕ изменён', target.is_active === false, String(target.is_active));
+check('отключённый аккаунт: сессия не оставлена на клиенте',
+  act.supabaseApi.hasSession() === false, String(act.supabaseApi.hasSession()));
+check('отключённый аккаунт: дубль профиля не создан',
+  [...dbState.psychologists.values()].filter(p => p.email === EMAIL).length === 1,
+  String([...dbState.psychologists.values()].filter(p => p.email === EMAIL).length));
+
+// 9.3 Реактивация владельцем возвращает доступ к ТОМУ ЖЕ кабинету
+target.is_active = true;
+await act.registration.requestVerification(EMAIL);
+const reactivated = await act.registration.completeVerification(EMAIL, dbState.issuedCode, PROFILE);
+check('реактивация: вход снова работает', reactivated.ok === true, reactivated.message || '');
+check('реактивация: тот же психолог (без дубля)',
+  reactivated.psychologist?.id === target.id, `${reactivated.psychologist?.id} vs ${target.id}`);
+
+// 9.4 Абсолютный срок сессии — месяц, продление refresh-токеном его не удлиняет
+const aged = JSON.parse(lsMap.get(SESSION_LS_KEY));
+check('сессия хранит отметку первой выдачи (issued_at)',
+  Number.isFinite(Number(aged?.issued_at)) && Number(aged.issued_at) > 0, JSON.stringify(aged?.issued_at));
+const agedSession = { ...aged, issued_at: Math.floor(Date.now() / 1000) - (31 * 24 * 3600) };
+lsMap.set(SESSION_LS_KEY, JSON.stringify(agedSession));
+const tooOld = await act.registration.restoreAuthenticatedState();
+check('сессия старше месяца: доступ закрыт',
+  tooOld.authenticated === false && tooOld.reason === 'session-max-age', JSON.stringify(tooOld));
+check('сессия старше месяца: честно объяснено', /30 дней|старше/i.test(tooOld.message || ''), tooOld.message);
+check('сессия старше месяца: сохранённая сессия удалена', lsMap.get(SESSION_LS_KEY) == null);
+check('сессия на 29-й день ещё жива (граница — месяц, не меньше)',
+  act.registration.isBeyondMaxSessionAge({ issued_at: Math.floor(Date.now() / 1000) - (29 * 24 * 3600) }) === false);
+check('без отметки issued_at — fail-closed (возраст недоказуем)',
+  act.registration.isBeyondMaxSessionAge({ access_token: aged.access_token }) === true);
+
+/* ============================================================================
+ * 10. Оба входа — ОДНА canonical-сессия и ОДИН профиль (issue #46, TASK 3)
+ *     Существующий сценарий consumeAuthRedirect брал ДРУГОЙ email, поэтому
+ *     главный инвариант задачи («manual OTP и email link разрешают одного
+ *     психолога, дубль не создаётся») до этого не проверялся.
+ * ========================================================================== */
+const dual = await loadFreshModules();
+dual.registration.signOut();
+await dual.registration.requestVerification(EMAIL);
+const byCode = await dual.registration.completeVerification(EMAIL, dbState.issuedCode, PROFILE);
+check('два входа: вход по коду выполнен', byCode.ok === true, byCode.message || '');
+
+// тот же Supabase-пользователь (тот же sub) приходит по ссылке из письма
+const sameSub = dbState.users.get(EMAIL)?.id;
+const linkJwt = fakeJwt(sameSub, EMAIL);
+globalThis.location = {
+  href: `https://a1dmitry.github.io/Psihologist-cabinet/#access_token=${linkJwt}&refresh_token=rt_${sameSub}&expires_in=3600&token_type=bearer`,
+  hash: `#access_token=${linkJwt}&refresh_token=rt_${sameSub}&expires_in=3600&token_type=bearer`,
+  search: '',
+  pathname: '/Psihologist-cabinet/',
+  hostname: 'a1dmitry.github.io',
+  origin: 'https://a1dmitry.github.io'
+};
+globalThis.history = { replaceState() {} };
+const byLink = await dual.registration.consumeAuthRedirect(PROFILE);
+check('два входа: вход по ссылке из письма выполнен', byLink.ok === true,
+  byLink.message || JSON.stringify(byLink));
+check('два входа: ТОТ ЖЕ psychologist.id (одна identity на оба входа)',
+  byLink.psychologist?.id === byCode.psychologist?.id,
+  `${byLink.psychologist?.id} vs ${byCode.psychologist?.id}`);
+check('два входа: один и тот же owner_id == auth.uid()',
+  byLink.ownerId === byCode.ownerId && byLink.ownerId === sameSub,
+  `${byLink.ownerId} vs ${byCode.ownerId} vs ${sameSub}`);
+check('два входа: дубль профиля НЕ создан',
+  [...dbState.psychologists.values()].filter(p => p.email === EMAIL).length === 1,
+  String([...dbState.psychologists.values()].filter(p => p.email === EMAIL).length));
+check('два входа: сессия одна и та же по sub (нет второго токена входа)',
+  dual.userIdFromToken(dual.registration.currentSession()?.access_token) === sameSub);
 
 const failed = results.filter(r => !r[1]).length;
 realConsoleLog(failed ? `\n${failed} FAILED` : '\nALL PASS');

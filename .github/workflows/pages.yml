@@ -15,7 +15,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Обязательный проектный гейт перед деплоем (issue #46/#36): раньше CI не
+  # запускал проверки проекта вовсе, и красный `npm run verify` деплоился.
+  quality-gate:
+    uses: ./.github/workflows/verify.yml
+
   deploy:
+    needs: quality-gate
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

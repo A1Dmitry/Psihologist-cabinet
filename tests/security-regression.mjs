@@ -42,12 +42,18 @@ try {
 
   check('setup: services created', !!svcA && !!svcB && !!svcA_inactive);
 
-  // Helper to get tomorrow date string
-  const tomorrow = new Date(Date.now() + 24*60*60*1000).toISOString().slice(0,10);
-  const dayAfter = new Date(Date.now() + 2*24*60*60*1000).toISOString().slice(0,10);
-  const dayAfter2 = new Date(Date.now() + 3*24*60*60*1000).toISOString().slice(0,10);
-  const dayAfter3 = new Date(Date.now() + 4*24*60*60*1000).toISOString().slice(0,10);
-  const futureDate = new Date(Date.now() + 10*24*60*60*1000).toISOString().slice(0,10);
+  /*
+   * Даты сценариев — фиксированные БУДНИЕ дни в будущем.
+   *
+   * Почему не «завтра»: work_days кабинета по умолчанию [1..5], поэтому в
+   * субботу/воскресенье create_booking отклонял заявку РАСПИСАНИЕМ
+   * («В этот день недели приёма нет»), а не проверяемым правилом. Набор при
+   * этом краснел по календарю, а negative-кейсы проходили по ложной причине —
+   * обе формы маскировки (issue #46, TASK 5 / Quality Gate D1).
+   * Фиксированные даты делают набор детерминированным в любой день запуска.
+   */
+  const tomorrow  = '2030-03-04'; // понедельник
+  const futureDate = '2030-03-18'; // понедельник, +2 недели
 
   // ============================================================
   // T02: Booking state server-authoritative
@@ -161,21 +167,9 @@ try {
   const svcSpam = (await db.query(`insert into services (psychologist_id, title, duration_min, price, currency, is_active) values ($1,'Spam Service',60,100,'BYN',true) returning id`, [claimSpam.id]))[0].id;
 
   const spamPhone = '+375299000000';
-  function nextWeekdays(count, startOffset = 1) {
-    const res = [];
-    let offset = startOffset;
-    while (res.length < count) {
-      const d = new Date(Date.now() + offset*24*60*60*1000);
-      const day = d.getDay(); // 0=Sun,6=Sat
-      if (day !== 0 && day !== 6) {
-        res.push(d.toISOString().slice(0,10));
-      }
-      offset++;
-      if (offset > 30) break;
-    }
-    return res;
-  }
-  const spamDates = nextWeekdays(4, 1);
+  // Фиксированные будни (пн–чт): анти-спам считается по created_at, поэтому
+  // «разные будущие даты» лимит не обходят — это и проверяется.
+  const spamDates = ['2030-04-01', '2030-04-02', '2030-04-03', '2030-04-04'];
   const spamTimes = ['10:00','11:00','12:00','13:00'];
   let spamResults = [];
   for (let i=0;i<4;i++) {

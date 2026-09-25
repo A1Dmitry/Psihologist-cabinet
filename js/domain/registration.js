@@ -40,6 +40,37 @@ import { safeStorage } from '../core/safeStorage.js';
 /** Канал доставки кода: 'fn' — Edge Function auth-code, 'otp' — почта Supabase Auth. */
 export const VerificationChannel = { FN: 'fn', OTP: 'otp' };
 
+/**
+ * Абсолютный срок жизни сессии — один месяц (issue #40, п.7 / #46, TASK 3).
+ *
+ * Серверная граница задаётся в Supabase Auth (настройка владельца,
+ * docs/INFRA.md → «Срок сессии»); клиентская — защита в глубину: без неё
+ * refresh-токен продлевал бы сессию бесконечно, если серверная настройка
+ * не выставлена. Отсчёт — от ПЕРВОЙ выдачи сессии (persistSession хранит
+ * issued_at и не сбрасывает его при продлении), а не от `iat` нового токена.
+ */
+export const MAX_SESSION_AGE_DAYS = 30;
+export const MAX_SESSION_AGE_MS = MAX_SESSION_AGE_DAYS * 24 * 60 * 60 * 1000;
+
+/**
+ * Сообщение об отключённой учётной записи — единое для входа, reload и
+ * перехода по ссылке из письма (аккаунт не реактивируется login-операцией).
+ */
+export const INACTIVE_ACCOUNT_MESSAGE =
+  'Учётная запись отключена. Для восстановления доступа обратитесь к администратору портала.';
+
+/**
+ * Сессия старше абсолютного срока?
+ * Fail-closed: без отметки issued_at (сессия сохранена старой сборкой)
+ * доказать возраст нельзя — требуем повторный вход.
+ */
+export function isBeyondMaxSessionAge(session) {
+  const issued = Number(session?.issued_at);
+  if (!Number.isFinite(issued) || issued <= 0) return true;
+  const ms = issued < 1e12 ? issued * 1000 : issued;
+  return Date.now() - ms > MAX_SESSION_AGE_MS;
+}
+
 /** Формат кода из письма: 6–8 букв и цифр. */
 const CODE_PATTERN = /^[A-Z0-9]{6,8}$/;
 
@@ -363,6 +394,12 @@ export async function claimOrCreatePsychologist(email, profile = {}) {
   }
 
   if (!claimed?.ok || !claimed.id) {
+    // Отключённый аккаунт: сессию не оставляем — «доступ закрыт» должно
+    // означать и «токена на руках нет», а не только пустой кабинет.
+    if (claimed?.inactive) {
+      clearPersistedSession();
+      return { ok: false, inactive: true, message: claimed.error || INACTIVE_ACCOUNT_MESSAGE };
+    }
     return { ok: false, message: claimed?.error || 'Не удалось привязать профиль' };
   }
 
@@ -382,6 +419,13 @@ export async function claimOrCreatePsychologist(email, profile = {}) {
 export async function loadOwnedProfile(psychologistId) {
   const row = await supabaseApi.fetchOwnPsychologist(psychologistId);
   if (!row) return { ok: false, message: 'Профиль не найден на сервере' };
+  // Отключённый кабинет: доступ не выдаём ни по коду, ни по ссылке из письма.
+  // Сервер при этом тоже отказывает (claim_psychologist_profile + RLS),
+  // клиентская проверка — только внятное сообщение вместо пустого кабинета.
+  if (row.is_active === false) {
+    db.clearCurrentPsychologist();
+    return { ok: false, inactive: true, message: INACTIVE_ACCOUNT_MESSAGE };
+  }
   applyPsychologistToLocalState(row);
   return { ok: true, psychologist: db.currentPsychologist };
 }
@@ -491,6 +535,16 @@ export async function restoreAuthenticatedState() {
   const persisted = readPersistedSession();
   if (!persisted) return { authenticated: false, reason: 'no-session' };
 
+  // Абсолютный срок сессии (месяц) важнее продления refresh-токеном.
+  if (isBeyondMaxSessionAge(persisted)) {
+    clearPersistedSession();
+    return {
+      authenticated: false,
+      reason: 'session-max-age',
+      message: `Сессия старше ${MAX_SESSION_AGE_DAYS} дней. Войдите снова — запросите код на странице входа.`
+    };
+  }
+
   let session = persisted;
   let refreshed = false;
 
@@ -537,6 +591,14 @@ export async function restoreAuthenticatedState() {
       reason: 'no-profile',
       message: 'Вход подтверждён, но кабинет не привязан к аккаунту. Повторите привязку профиля.'
     };
+  }
+
+  // Кабинет отключён владельцем, пока сессия была жива: доступ закрываем
+  // (RLS на сервере закрывает его же), сессию оставляем — после реактивации
+  // вход восстановится без нового кода.
+  if (row.is_active === false) {
+    db.clearCurrentPsychologist();
+    return { authenticated: false, reason: 'inactive', inactive: true, ownerId, message: INACTIVE_ACCOUNT_MESSAGE };
   }
 
   applyPsychologistToLocalState(row);
@@ -594,6 +656,10 @@ export function resetVerificationChannel() {
 
 export const registration = {
   VerificationChannel,
+  MAX_SESSION_AGE_DAYS,
+  MAX_SESSION_AGE_MS,
+  INACTIVE_ACCOUNT_MESSAGE,
+  isBeyondMaxSessionAge,
   normalizeEmail,
   normalizeCode,
   validateEmail,
