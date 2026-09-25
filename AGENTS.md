@@ -88,11 +88,18 @@ email-подтверждение возвращается в опубликов�
     независимый Challenger → запись в кэш) либо явно заявить «новых уроков нет»
     с обоснованием. Кэш — единственный источник накопленного опыта; повторение
     уже зафиксированной ошибки — нарушение дисциплины (§7.5).
+15. **Идентичность и владение задачей**: перед началом работы взять claim —
+    `node tools/claim.mjs id` (свой `EXEC-XXXXXXXXXX`) и
+    `node tools/claim.mjs take <issue>` (карточка в `.claims/` + CLAIM в Issue).
+    Пока claim активен, другой исполнитель берёт **другое** Issue; коммиты
+    помечать трейлером `Executor: EXEC-…` (§6.17, `docs/EXECUTOR-CLAIMS.md`).
 
 Дополнительные договорённости репозитория:
 
 - `docs/SCHEMA-REQUESTS.md` — очередь заявок SR-XXX на изменения схемы данных;
   инфраструктуру данных напрямую не редактировать.
+- `docs/EXECUTOR-CLAIMS.md` — кто над какой задачей работает: `EXEC-…`,
+  `take`/`release`/`status`/`mine` перед началом работы (§6.17).
 - `docs/INFRA.md` — runbook Supabase/Resend/Pages.
 - Смоук-проверки: `verify_pages.py`, `verify_app.mjs`, `verify_auth.mjs`,
   `verify_profile.mjs`, `verify_telegram.mjs`; локальный запуск —
