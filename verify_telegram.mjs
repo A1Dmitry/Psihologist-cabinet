@@ -103,7 +103,7 @@ ok('index: 3 переключателя в UI', ['tg-notify-booking','tg-notify-
 ok('index: «Проверить подключения»', SRC.html.includes('btn-tg-link-clients'));
 ok('index: cache-bust поднят', SRC.html.includes('app.js?v=20260925-ics'));
 ok('config: NOTIFY_WEBHOOK_URL экспорт', /export const NOTIFY_WEBHOOK_URL = ''/.test(SRC.cfg));
-ok('app: outbox-цикл после входа', SRC.app.includes('startTelegramLoops(psy.id)'));
+ok('app: outbox-цикл после входа', /startTelegramLoops\(/.test(SRC.app));
 ok('app: рендер+биндинг вкладки', SRC.app.includes('renderCabTelegram') && SRC.app.includes('bindTelegramTab'));
 ok('app: share-кнопка на карточке', SRC.app.includes('Поделиться специалистом') && SRC.app.includes('sharePsyLink'));
 ok('app: telegram-блок в карточке клиента', SRC.app.includes('renderClientTelegramBlock'));

@@ -403,32 +403,82 @@ export const supabaseApi = {
     return { kind: 'none' };
   },
 
-  /** PKCE: authorization code → session (GoTrue). */
-  async exchangeCodeForSession(code) {
+  /**
+   * PKCE: authorization code → session (GoTrue).
+   *
+   * `codeVerifier` — обязательная часть PKCE: без него GoTrue не может
+   * сопоставить code с code_challenge, отправленным при старте входа. Раньше
+   * этот метод отправлял только auth_code, из-за чего обмен заканчивался
+   * ошибкой (см. docs/PSYCHOLOGIST-PORTAL-SECURITY-PLAN.md, п.4).
+   * Параметр добавлен опционально: существующий вызов без verifier ведёт себя
+   * по-прежнему.
+   */
+  async exchangeCodeForSession(code, codeVerifier = '') {
     if (!code) throw new Error('Нет authorization code');
+    const body = {
+      auth_code: code,
+      // some GoTrue builds expect `code`
+      code,
+      ...(codeVerifier ? { code_verifier: codeVerifier } : {})
+    };
     const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=pkce`, {
       method: 'POST',
       headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        auth_code: code,
-        // some GoTrue builds expect `code`
-        code
-      })
+      body: JSON.stringify(body)
     });
     if (!res.ok) {
       // fallback classic grant if pkce grant name differs
       const res2 = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=authorization_code`, {
         method: 'POST',
         headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ auth_code: code, code })
+        body: JSON.stringify(body)
       });
       if (!res2.ok) {
-        const body = await res2.text();
-        throw new Error(body || `HTTP ${res2.status}`);
+        const errText = await res2.text();
+        const error = new Error(errText || `HTTP ${res2.status}`);
+        error.status = res2.status;
+        throw error;
       }
       return res2.json();
     }
     return res.json();
+  },
+
+  /**
+   * Открытая регистрация специалиста через Google (миграция
+   * supabase/migrations/20260925_google_specialist_signup.sql — см. docs).
+   *
+   * Аргументов НЕТ: email, подтверждённость и auth.uid() сервер берёт сам из
+   * сессии Supabase Auth. Передать «чужой» email из браузера невозможно.
+   *
+   * @returns {Promise<{ok:boolean, code:string, id?:string, created?:boolean,
+   *   profile_completed?:boolean, error?:string, resolution?:string}>}
+   */
+  async linkGoogleSpecialist() {
+    const rows = await request('rpc/link_or_create_psychologist_for_google', {
+      method: 'POST',
+      body: JSON.stringify({})
+    });
+    return Array.isArray(rows) ? rows[0] : rows;
+  },
+
+  /**
+   * Онбординг: сохранить поля профиля и выставить profile_completed = true.
+   * Пишет только поля существующей схемы: full_name, phone, specialization,
+   * city, about. email/is_active/owner_id/slug сервер не трогает.
+   */
+  async completeGoogleProfile({ fullName = '', phone = '', specialization = '', city = '', about = '' } = {}) {
+    const rows = await request('rpc/complete_psychologist_profile', {
+      method: 'POST',
+      body: JSON.stringify({
+        p_full_name: String(fullName || ''),
+        p_phone: String(phone || ''),
+        p_specialization: String(specialization || ''),
+        p_city: String(city || ''),
+        p_about: String(about || '')
+      })
+    });
+    return Array.isArray(rows) ? rows[0] : rows;
   },
 
   /** Убрать Auth-параметры из address bar, сохранив Hash History маршрут приложения. */

@@ -102,6 +102,14 @@ export class Psychologist {
     /** discriminator профессии (см. Professions) — портал расширяется не только на психологов */
     profession = 'psychologist',
     isActive = true,
+    /**
+     * Профиль заполнен специалистом (онбординг пройден).
+     * false → приложение показывает форму заполнения профиля, а публичный
+     * каталог (public_profiles) такой кабинет не показывает. Меняется ТОЛЬКО
+     * на сервере (RPC complete_psychologist_profile), клиентской записью —
+     * никогда.
+     */
+    profileCompleted = true,
     /** { salt, iv, data } — verifier ключа из пароля; пароль не хранится */
     keyVerifier = null,
     createdAt = null
@@ -160,6 +168,7 @@ export class Psychologist {
     this.profession = Professions[profession] ? profession : 'psychologist';
 
     this.isActive = isActive;
+    this.profileCompleted = profileCompleted !== false;
     this.keyVerifier = keyVerifier;
     this.createdAt = createdAt || new Date().toISOString();
   }

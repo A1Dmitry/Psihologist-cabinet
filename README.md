@@ -153,50 +153,32 @@ chmod +x serve.sh && ./serve.sh  # простой статический сер�
 «Данные: сервер»). Роадмап и регламент подключения LLM-клиентов и Supabase MCP
 Server см. в `docs/ROADMAP-DATABASE-CONNECTION.md`.
 
-## Вход психолога — одноразовый код из письма (6–8 символов)
+## Вход психолога — Google OAuth (Supabase Auth)
 
-Email → «Получить код» → **код генерируется в БД** (`auth_login_codes`, хеш SHA-256,
-одноразовый, окно 2 минуты, максимум 5 попыток) и отправляется на почту специалиста
-**Edge Function `auth-code`** (Resend) — в письме только код, никаких ссылок.
-Психолог вводит код в поле входа → сервер проверяет код → выдаёт сессию браузера
-(hashed_token → `/auth/v1/verify`), код гасится. Профиль по email привязывается к
-кабинету автоматически (RPC `claim_psychologist_profile`), при регистрации — создаётся.
-Пароль сейфа клиентов — опция во вкладке «Клиенты», для входа не нужен.
+Единственный путь (issue #88):
 
-Два свойства входа, которые легко сломать (issue #14):
+```text
+Google OAuth → Supabase Auth → auth.uid() → свой кабинет
+```
 
-- **Канал доставки переживает перезагрузку.** Выбранный транспорт (Edge Function
-  или запасной Supabase OTP) сохраняется вместе с окном ввода и восстанавливается
-  после F5; код проверяется только тем каналом, которым он был выслан. Если окно
-  истекло — пользователь видит «Запросите новый код», а не тихий перебор каналов.
-- **Код не сгорает при временном отказе Supabase Auth.** Порядок на сервере:
-  атомарный захват строки кода → создание сессии → погашение (`used_at`). Если
-  Auth отказал, захват снимается и код можно ввести снова; одноразовость и защита
-  от повторного использования сохранены (`consumed_at` + лимит перевыпусков).
+На `#/auth` — кнопка «Войти через Google» (PKCE). Возврат на
+`https://a1dmitry.github.io/Psihologist-cabinet/` без hash. Сервер
+(`link_or_create_psychologist_for_google`) берёт email из `auth.users`,
+привязывает свободную запись или создаёт одну новую. Повторный вход не
+дублирует профиль. Отключённый кабинет входом не реактивируется.
 
-Настройка основного канала:
-1. Применить `supabase/schema.sql` (таблица `auth_login_codes`).
-2. `supabase functions deploy auth-code`
-3. `supabase secrets set RESEND_API_KEY=re_...` (ключ из resend.com; для писем с
-   своего домена — верифицировать домен в Resend и задать
-   `MAIL_FROM="PsyПортал <код@ваш-домен>"`; без домена работает `onboarding@resend.dev`
-   — только на адрес владельца аккаунта Resend).
+Email/OTP/`auth-code` для психолога из UI сняты. Клиентский Google при
+записи (опрос, #41) — отдельный контур, не вход в кабинет.
 
-Запасной канал (если функция ещё не задеплоена): встроенная почта Supabase Auth —
-тогда в дашборде Supabase (Auth → Emails → шаблоны) в шаблонах Magic Link/OTP должен
-стоять `{{ .Token }}`, иначе придёт magic-link-ссылка вместо кода.
+Настройка (владелец, секреты не в репозиторий):
+1. Google Cloud → Authorized redirect URI:
+   `https://phiavtroybgwyjdhqqkh.supabase.co/auth/v1/callback`
+2. Supabase → Authentication → Providers → Google: включить, Client ID/Secret.
+3. Site URL / Redirect URLs = `https://a1dmitry.github.io/Psihologist-cabinet/`
+4. SQL Editor: `supabase/migrations/20260925_google_specialist_signup.sql`
 
-Смоук авторизации и серверного кабинета: `node verify_auth.mjs` (канал auth-code,
-hashed_token-сессия, честные ошибки, запасной OTP, claim/REST). Контракты входа
-проверяют: `node tests/registration-flow.mjs` (use case + перезагрузка страницы),
-`node --no-warnings tests/auth-code-edge.mjs` (настоящий исходник Edge Function:
-одноразовость, TTL, гонка, recover/redeem, legacy-схема),
-`node tests/auth-ui-pending.mjs` (UI: ожидание кода переживает F5).
-
-Если код не приходит или вход не проходит — на страницах «Вход» и «Каталог» есть
-**«Диагностика сервера»**: она показывает по пунктам, что уже применено в вашей БД
-(view, новые колонки, RPC create_booking и claim_psychologist_profile, схема
-`auth_login_codes` из SR-004) и что нужно выполнить в SQL Editor.
+Подробности: `docs/GOOGLE-SPECIALIST-SIGNUP.md`. Смоук UI:
+`node tests/auth-ui-pending.mjs`, `node tests/google-oauth-client.mjs`.
 
 ## Карточка специалиста — вся модель сайта через БД
 

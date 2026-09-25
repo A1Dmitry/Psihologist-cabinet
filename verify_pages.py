@@ -30,6 +30,7 @@ CHECKS = [
     (f'/book/{SLUG}', 200, 'js/app.js'),         # страница записи (SPA-fallback)
     ('/cabinet', 200, 'ПсихоПортал'),
     ('/auth', 200, 'ПсихоПортал'),
+    ('/onboarding', 200, 'ПсихоПортал'),   # онбординг после первого входа через Google
     ('/booking-done', 200, 'ПсихоПортал'),
     ('/reply?reply=demo', 200, 'ПсихоПортал'),
     ('/js/definitely-missing.js', 404, None),    # битые ассеты не маскируются

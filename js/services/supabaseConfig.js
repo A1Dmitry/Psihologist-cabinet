@@ -39,6 +39,17 @@ export const GOOGLE_CLIENT_ID = String(globalThis.PSY_GOOGLE_CLIENT_ID || '').tr
 export const APPLICATION_URL = 'https://a1dmitry.github.io/Psihologist-cabinet/';
 
 /**
+ * Первые сегменты пути, которые являются МАРШРУТАМИ роутера, а не base path
+ * приложения (`/Psihologist-cabinet/`, `/`). Единый список для всех мест, где
+ * приложение вычисляет свою базу: раньше сегменты были перечислены в двух
+ * функциях по-разному, и новый маршрут легко забыть (§6.14 — один источник
+ * истины для канонической логики).
+ */
+const ROUTE_SEGMENTS = new Set([
+  'auth', 'cabinet', 'onboarding', 'booking-done', 'reply', 'book', 'psy'
+]);
+
+/**
  * URL приложения «здесь и сейчас» для client-side redirect_to.
  * - на production/preview origin (не loopback) — текущий origin + base path;
  * - на localhost/127.0.0.1 — всегда APPLICATION_URL (письмо/OTP не должны
@@ -54,7 +65,7 @@ export function resolveApplicationUrl() {
     if (baseEl?.href) return normalizeAppUrl(baseEl.href);
     // Pages path: /Psihologist-cabinet/… → base = origin + first segment
     const seg = String(loc.pathname || '/').split('/').filter(Boolean)[0];
-    if (seg && seg !== 'auth' && seg !== 'cabinet' && seg !== 'book' && seg !== 'psy' && seg !== 'reply' && seg !== 'booking-done') {
+    if (seg && !ROUTE_SEGMENTS.has(seg.toLowerCase())) {
       return normalizeAppUrl(`${loc.origin}/${seg}/`);
     }
     return normalizeAppUrl(`${loc.origin}/`);

@@ -66,6 +66,9 @@ export function mapPsy(row = {}) {
     paymentLinks: listValue(value(row, 'payment_links', 'paymentLinks', [])),
     paymentRequisites: jsonValue(value(row, 'payment_requisites', 'paymentRequisites', null), null),
     isActive: value(row, 'is_active', 'isActive', true) !== false,
+    // Отсутствие колонки (миграция ещё не применена) = профиль заполнен:
+    // иначе существующие кабинеты внезапно уехали бы на онбординг.
+    profileCompleted: value(row, 'profile_completed', 'profileCompleted', true) !== false,
     keyVerifier: value(row, 'key_verifier', 'keyVerifier', null),
     createdAt: value(row, 'created_at', 'createdAt', null)
   });

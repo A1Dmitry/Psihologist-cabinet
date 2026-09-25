@@ -84,6 +84,8 @@ check('#/book/{slug} → booking', r.name === 'booking' && r.params.slug === 'an
 
 set('#/cabinet');
 check('#/cabinet', router.routeFromUrl().name === 'cabinet');
+set('#/onboarding');
+check('#/onboarding', router.routeFromUrl().name === 'onboarding');
 set('#/auth');
 check('#/auth (mode=login)', JSON.stringify(router.routeFromUrl().params) === JSON.stringify({ mode: 'login' }));
 set('#/auth?mode=register');
@@ -114,6 +116,8 @@ nav('auth', { mode: 'register' });
 check('navigate(auth, register) → #/auth?mode=register', loc.hash === '#/auth?mode=register', loc.hash);
 nav('auth', { mode: 'login' });
 check('navigate(auth, login) → #/auth (без хвоста)', loc.hash === '#/auth', loc.hash);
+nav('onboarding');
+check('navigate(onboarding) без сессии → #/auth', loc.hash === '#/auth', loc.hash);
 nav('success');
 check('navigate(success) → #/booking-done', loc.hash === '#/booking-done', loc.hash);
 nav('clientReply', { token: 'TT' });
@@ -162,6 +166,9 @@ check('legacy /cabinet → #/cabinet', loc.hash === '#/cabinet', loc.hash);
 set('', '/auth', '');
 router.normalizeLegacyUrl();
 check('legacy /auth → #/auth', loc.hash === '#/auth', loc.hash);
+set('', '/onboarding', '');
+router.normalizeLegacyUrl();
+check('legacy /onboarding → #/onboarding', loc.hash === '#/onboarding', loc.hash);
 set('', '/booking-done', '');
 router.normalizeLegacyUrl();
 check('legacy /booking-done → #/booking-done', loc.hash === '#/booking-done', loc.hash);

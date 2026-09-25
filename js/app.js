@@ -29,6 +29,7 @@ import { registration } from './domain/registration.js';
 // [Агент 3 · кабинет и клиенты] новые блоки кабинета и страница клиента по ссылке
 import { cabinetUi } from './views/cabinetUi.js';
 import { bookingTriageWizard } from './views/bookingTriageWizard.js';
+import { googleAuthService } from './services/googleAuthService.js';
 
 const portalVm = new PortalViewModel();
 const authVm = new AuthViewModel();
@@ -111,7 +112,7 @@ function computeBasePath() {
   let p = location.pathname;
   if (p.endsWith('/index.html')) p = p.slice(0, -'index.html'.length);
   // legacy-сегменты в пути (ссылки до перехода на hash-роутинг)
-  p = p.replace(/\/(psy\/[^/]+|book\/[^/]+|cabinet|auth|booking-done|reply)\/?$/i, '');
+  p = p.replace(/\/(psy\/[^/]+|book\/[^/]+|cabinet|auth|onboarding|booking-done|reply)\/?$/i, '');
   return p.endsWith('/') ? p : p + '/';
 }
 const BASE = computeBasePath();
@@ -125,6 +126,7 @@ const hashPath = {
   psy: slug => `/psy/${encodeURIComponent(slug)}`,
   book: slug => `/book/${encodeURIComponent(slug)}`,
   cabinet: () => '/cabinet',
+  onboarding: () => '/onboarding',
   auth: mode => (mode && mode !== 'login') ? `/auth?mode=${encodeURIComponent(mode)}` : '/auth',
   success: () => '/booking-done',
   reply: token => `/reply?reply=${encodeURIComponent(token)}`
@@ -135,6 +137,7 @@ const urlFor = {
   psy: slug => `${siteBase()}#${hashPath.psy(slug)}`,
   book: slug => `${siteBase()}#${hashPath.book(slug)}`,
   cabinet: () => `${siteBase()}#/cabinet`,
+  onboarding: () => `${siteBase()}#/onboarding`,
   auth: () => `${siteBase()}#/auth`,
   success: () => `${siteBase()}#/booking-done`,
   reply: token => `${siteBase()}#${hashPath.reply(token)}`,
@@ -147,6 +150,7 @@ function routeUrl(r) {
   if (r.name === 'booking' && r.params.slug) return urlFor.book(r.params.slug);
   if (r.name === 'portal') return urlFor.home();
   if (r.name === 'cabinet') return urlFor.cabinet();
+  if (r.name === 'onboarding') return urlFor.onboarding();
   if (r.name === 'auth') return `${siteBase()}#${hashPath.auth(r.params && r.params.mode)}`;
   if (r.name === 'success') return urlFor.success();
   if (r.name === 'clientReply' && r.params.token) return urlFor.reply(r.params.token);
@@ -186,6 +190,7 @@ function routeFromUrl() {
     m = path.match(/^\/psy\/([^/]+)\/?$/);
     if (m) return safeSlug('profile', m[1]);
     if (/^\/cabinet\/?$/.test(path)) return { name: 'cabinet', params: {} };
+    if (/^\/onboarding\/?$/.test(path)) return { name: 'onboarding', params: {} };
     if (/^\/auth\/?$/.test(path)) return { name: 'auth', params: { mode: qs.get('mode') || 'login' } };
     if (/^\/booking-done\/?$/.test(path)) return { name: 'success', params: {} };
     if (/^\/reply\/?$/.test(path)) {
@@ -208,6 +213,7 @@ function routeFromUrl() {
     return safeSlug('profile', m[1]);
   }
   if (/\/cabinet\/?$/.test(location.pathname)) return { name: 'cabinet', params: {} };
+  if (/\/onboarding\/?$/.test(location.pathname)) return { name: 'onboarding', params: {} };
   if (/\/auth\/?$/.test(location.pathname)) return { name: 'auth', params: { mode: qs.get('mode') || 'login' } };
   if (/\/booking-done\/?$/.test(location.pathname)) return { name: 'success', params: {} };
   return { name: 'portal', params: {} };
@@ -217,6 +223,18 @@ function navigate(name, params = {}, { push = true } = {}) {
   route = { name, params };
   if (name === 'cabinet' && !authService.isAuthenticated()) {
     route = { name: 'auth', params: { mode: 'login' } };
+  }
+  // Онбординг доступен только при живой сессии Supabase Auth: без неё RPC
+  // complete_psychologist_profile всё равно откажет, а пользователь увидит
+  // непонятную ошибку вместо формы входа.
+  if (name === 'onboarding' && !googleAuthService.hasSession()) {
+    route = { name: 'auth', params: { mode: 'login' } };
+  }
+  // Нельзя обойти форму заполнения, набрав #/cabinet: публичный каталог
+  // такой кабинет всё равно не показывает, а обязательные поля пусты.
+  if (name === 'cabinet' && authService.isAuthenticated()
+      && cabinetVm.psychologist?.profileCompleted === false) {
+    route = { name: 'onboarding', params: {} };
   }
   if (push) {
     // Hash History: запись в location.hash создаёт нативную запись истории;
@@ -238,6 +256,13 @@ window.addEventListener('hashchange', () => {
   route = r;
   if (route.name === 'cabinet' && !authService.isAuthenticated()) {
     route = { name: 'auth', params: { mode: 'login' } };
+  }
+  if (route.name === 'onboarding' && !googleAuthService.hasSession()) {
+    route = { name: 'auth', params: { mode: 'login' } };
+  }
+  if (route.name === 'cabinet' && authService.isAuthenticated()
+      && cabinetVm.psychologist?.profileCompleted === false) {
+    route = { name: 'onboarding', params: {} };
   }
   render();
   window.scrollTo(0, 0);
@@ -285,6 +310,7 @@ function render() {
     profile: 'page-profile',
     auth: 'page-auth',
     cabinet: 'page-cabinet',
+    onboarding: 'page-onboarding',
     booking: 'page-booking',
     success: 'page-success',
     clientReply: 'page-client-reply'
@@ -297,6 +323,7 @@ function render() {
   if (route.name === 'profile') renderProfile();
   if (route.name === 'auth') renderAuth();
   if (route.name === 'cabinet') renderCabinet();
+  if (route.name === 'onboarding') renderOnboarding();
   if (route.name === 'booking') renderBooking();
   if (route.name === 'success') renderSuccess();
   if (route.name === 'clientReply') renderClientReply();
@@ -481,84 +508,86 @@ function renderPortal() {
   }).join('');
 }
 
-/**
- * Собрать обязательные поля регистрации с формы.
- * Полный список (email, fullName, phone, specialization, city, about) должен
- * доехать до сервера: профиль создаётся один раз, и потерянное поле потом
- * неотличимо от незаполненного.
- */
-function collectAuthRegFields() {
-  if (authVm.mode !== 'register') return;
-  authVm.fullName = $('#auth-fullname')?.value || '';
-  authVm.phone = $('#auth-phone')?.value || '';
-  authVm.specialization = $('#auth-spec')?.value || 'Психолог';
-  authVm.city = $('#auth-city')?.value || '';
-  authVm.about = $('#auth-about')?.value || '';
-}
-
 function renderAuth() {
-  if (route.params.mode) authVm.setMode(route.params.mode);
-  // После перезагрузки страницы возвращаем шаг ввода кода и ТОТ ЖЕ канал
-  // доставки (ожидание хранится в safeStorage — см. domain/registration).
-  authVm.resumePendingVerification();
   const title = $('#auth-title');
   const subtitle = $('#auth-subtitle');
-  const emailStep = $('#auth-step-email');
-  const codeStep = $('#auth-step-code');
-  const regFields = $('#auth-reg-fields');
+  if (title) title.textContent = 'Вход в кабинет';
+  if (subtitle) subtitle.textContent = 'Войдите через Google. Это единственный способ входа специалиста.';
+
   const err = $('#auth-error');
-  const hint = $('#auth-code-hint');
-  const resend = $('#auth-resend');
-
-  if (title) title.textContent = authVm.mode === 'register' ? 'Регистрация специалиста' : 'Вход в кабинет';
-  if (subtitle) {
-    subtitle.textContent = authVm.mode === 'register'
-      ? 'Создайте кабинет: код придёт на email'
-      : 'Войдите по коду, отправленному на email';
-  }
-
-  emailStep?.classList.toggle('hidden', authVm.step !== 'email');
-  codeStep?.classList.toggle('hidden', authVm.step !== 'code');
-  regFields?.classList.toggle('hidden', authVm.mode !== 'register' || authVm.step !== 'code');
-  const passWrap = $('#auth-pass-wrap');
-  passWrap?.classList.toggle('hidden', authVm.mode !== 'register'); // при входе пароль не нужен
-
-  $('#auth-email') && ($('#auth-email').value = authVm.email);
-  $('#auth-code') && ($('#auth-code').value = authVm.code);
-  const regVals = {
-    '#auth-fullname': authVm.fullName,
-    '#auth-phone': authVm.phone,
-    '#auth-spec': authVm.specialization,
-    '#auth-city': authVm.city,
-    '#auth-about': authVm.about
-  };
-  for (const [sel, val] of Object.entries(regVals)) {
-    const el = $(sel);
-    if (el && el.value !== val) el.value = val || '';
-  }
   if (err) {
     err.textContent = authVm.error || '';
     err.classList.toggle('hidden', !authVm.error);
   }
-  if (hint) {
-    // Текст — из use case (registration.verificationHint): в запасном канале
-    // Supabase Auth в письме ссылка, а не код, и форма обязана это говорить.
-    hint.textContent = authVm.step === 'code' ? authVm.codeHint : '';
-  }
-  if (resend) {
-    resend.textContent = authVm.resendLabel;
-    resend.disabled = authVm.resendIn > 0;
-    resend.classList.toggle('opacity-50', authVm.resendIn > 0);
-    resend.classList.toggle('cursor-not-allowed', authVm.resendIn > 0);
-  }
 
-  // mode tabs
-  $$('[data-auth-mode]').forEach(btn => {
-    const on = btn.dataset.authMode === authVm.mode;
-    btn.classList.toggle('bg-indigo-600', on);
-    btn.classList.toggle('text-white', on);
-    btn.classList.toggle('bg-slate-100', !on);
-  });
+  // Кнопка Google — единственный вход. Без конфигурации не «успешно нажимается».
+  const googleBtn = $('#btn-google-signin');
+  const googleLabel = $('#btn-google-label');
+  if (googleBtn) {
+    googleBtn.disabled = !!authVm.googleBusy;
+    if (googleLabel) {
+      googleLabel.textContent = authVm.googleBusy ? 'Переходим в Google…' : 'Войти через Google';
+    }
+  }
+  const gStatus = $('#auth-google-status');
+  if (gStatus) {
+    gStatus.textContent = authVm.googleError || '';
+    gStatus.classList.toggle('hidden', !authVm.googleError);
+  }
+  const gResolution = $('#auth-google-resolution');
+  if (gResolution) {
+    gResolution.textContent = authVm.googleResolution || '';
+    gResolution.classList.toggle('hidden', !authVm.googleResolution);
+  }
+  const gRef = $('#auth-google-ref');
+  if (gRef) {
+    gRef.textContent = authVm.googleRef ? `Код обращения: ${authVm.googleRef}` : '';
+    gRef.classList.toggle('hidden', !authVm.googleRef);
+  }
+}
+
+/**
+ * Онбординг после первого входа через Google: профиль создан сервером, но
+ * обязательные поля ещё пустые, поэтому кабинет не публикуется в каталоге.
+ *
+ * Сохраняются ТОЛЬКО поля существующей схемы `psychologists`
+ * (full_name, phone, specialization, city, about) — через
+ * RPC complete_psychologist_profile, который один и выставляет
+ * profile_completed. email/is_active/owner_id/slug клиент не трогает.
+ */
+function renderOnboarding() {
+  const user = googleAuthService.getCurrentUser() || googleAuthService.getCachedUser();
+  const emailEl = $('#onb-email');
+  if (emailEl) emailEl.textContent = user?.email || '';
+
+  const nameEl = $('#onb-name');
+  const psy = cabinetVm.psychologist;
+  if (nameEl && !nameEl.value && psy?.fullName) nameEl.value = psy.fullName;
+  const specEl = $('#onb-spec');
+  if (specEl && !specEl.value) specEl.value = psy?.specialization || 'Психолог';
+
+  const err = $('#onb-error');
+  if (err) {
+    err.textContent = authVm.onboardingError || '';
+    err.classList.toggle('hidden', !authVm.onboardingError);
+  }
+  const submit = $('#onb-submit');
+  if (submit) submit.disabled = !!authVm.busy;
+}
+
+/** Показать имя/email вошедшего пользователя в сайдбаре кабинета. */
+function renderCabinetAccount() {
+  const wrap = $('#cab-account');
+  if (!wrap) return;
+  const user = googleAuthService.getCurrentUser() || googleAuthService.getCachedUser();
+  const psy = cabinetVm.psychologist;
+  const email = user?.email || psy?.email || '';
+  const name = user?.name || psy?.fullName || '';
+  wrap.classList.toggle('hidden', !email && !name);
+  const nameEl = $('#cab-account-name');
+  const mailEl = $('#cab-account-email');
+  if (nameEl) nameEl.textContent = name || email;
+  if (mailEl) mailEl.textContent = email || '';
 }
 
 function renderCabinet() {
@@ -566,6 +595,7 @@ function renderCabinet() {
     navigate('auth', { mode: 'login' });
     return;
   }
+  renderCabinetAccount();
   const p = cabinetVm.psychologist;
   $('#cab-name') && ($('#cab-name').textContent = p.fullName);
   $('#cab-spec') && ($('#cab-spec').textContent = p.specialization + (cabinetVm.vaultUnlocked ? ' · 🔒 сейф открыт' : ' · сейф закрыт'));
@@ -2068,60 +2098,62 @@ function bindEvents() {
     renderPortal();
   });
 
-  // Auth. Шаги входа — настоящие <form> (Enter отправляет, менеджеры паролей
-  // видят форму), логика та же, что была у кнопок: слушаем submit, а не click.
-  $$('[data-auth-mode]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      authVm.setMode(btn.dataset.authMode);
-      renderAuth();
-    });
-  });
-  $('#auth-step-email')?.addEventListener('submit', async e => {
-    e.preventDefault();
-    authVm.email = $('#auth-email')?.value || '';
-    collectAuthRegFields();
-    await authVm.requestCode();
+  // ——— Единственный вход специалиста: Google (Supabase Auth OAuth + PKCE) ———
+  $('#btn-google-signin')?.addEventListener('click', async () => {
+    if (authVm.googleBusy) return;
+    authVm.googleBusy = true;
+    authVm.setGoogleError('', '');
     renderAuth();
-  });
-  $('#auth-resend')?.addEventListener('click', async () => {
-    if (authVm.resendIn > 0) return;
-    await authVm.requestCode();
-    renderAuth();
-  });
-  $('#auth-step-code')?.addEventListener('submit', async e => {
-    e.preventDefault();
-    authVm.email = $('#auth-email')?.value || authVm.email;
-    authVm.code = $('#auth-code')?.value || '';
-    authVm.password = $('#auth-password')?.value || '';
-    collectAuthRegFields();
-    // обязательные поля регистрации проверяем до обращения к серверу:
-    // код одноразовый, и тратить его на заведомо неполный профиль нельзя
-    const missing = authVm.profileError;
-    if (missing) {
-      authVm.error = missing;
+    try {
+      // Успех = переход на accounts.google.com и возврат на callback
+      // приложения; продолжение — в boot() через consumeGoogleRedirect().
+      await googleAuthService.startGoogleSignIn({ returnTo: '#/cabinet' });
+    } catch (ex) {
+      authVm.googleBusy = false;
+      const fail = googleAuthService.publicAuthFailure('start_failed', ex);
+      authVm.setGoogleError(fail.message, fail.resolution || '', fail.correlationId || '');
       renderAuth();
-      return;
     }
-    const psy = await authVm.confirmCode();
-    renderAuth();
-    if (psy) {
-      // кабинет — с сервера (clients/sessions/settings/blocks/tasks/notes/entries/waiting)
-      try { await cabinetApi.refresh(psy.id); } catch (e) { console.warn('pull cabinet', e); }
+  });
+
+  // ——— Онбординг: заполнение профиля после первого входа через Google ———
+  $('#onb-form')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    if (authVm.busy) return;
+    authVm.onboardingError = '';
+    authVm.busy = true;
+    renderOnboarding();
+    try {
+      const res = await googleAuthService.completeProfile({
+        fullName: $('#onb-name')?.value || '',
+        phone: $('#onb-phone')?.value || '',
+        specialization: $('#onb-spec')?.value || '',
+        city: $('#onb-city')?.value || '',
+        about: $('#onb-about')?.value || ''
+      });
+      if (!res.ok) {
+        authVm.onboardingError = res.message;
+        renderOnboarding();
+        return;
+      }
+      // Профиль — с сервера: там же выставлен profile_completed.
+      const loaded = await registration.loadOwnedProfile(res.id);
+      if (!loaded.ok) {
+        authVm.onboardingError = loaded.message || 'Не удалось перечитать профиль';
+        renderOnboarding();
+        return;
+      }
+      try { await cabinetApi.refresh(loaded.psychologist.id); }
+      catch (e) { console.warn('[onboarding] pull cabinet', e?.message || e); }
       await cabinetVm.refreshClients();
-      startTelegramLoops(psy.id);
+      startTelegramLoops(loaded.psychologist.id);
+      showToast('Профиль заполнен, кабинет открыт');
       navigate('cabinet');
+    } finally {
+      authVm.busy = false;
     }
   });
-  $('#auth-code')?.addEventListener('input', e => {
-    // только латиница/цифры, верхний регистр — код из письма вводится без ошибок
-    e.target.value = String(e.target.value).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
-  });
-  $('#auth-back-email')?.addEventListener('click', () => {
-    authVm.step = 'email';
-    authVm.error = '';
-    authVm.notify();
-    renderAuth();
-  });
+  $('#onb-logout')?.addEventListener('click', () => { doLogout(); });
 
   // Cabinet nav
   document.addEventListener('click', e => {
@@ -2171,8 +2203,7 @@ function bindEvents() {
   $('#btn-add-client')?.addEventListener('click', () => openClientModal());
   $('#btn-add-service')?.addEventListener('click', () => openServiceModal());
   $('#btn-logout')?.addEventListener('click', () => {
-    authVm.logout();
-    navigate('portal');
+    doLogout();
   });
   $('#btn-save-profile')?.addEventListener('click', () => {
     const p = cabinetVm.psychologist;
@@ -2728,6 +2759,56 @@ window.enableDemoData = () => {
   render();  // перерисовать ТЕКУЩИЙ маршрут: глубокие ссылки /psy|/book ждут каталог
 };
 
+/**
+ * Завершить вход через Google: сессия уже получена (PKCE обменян), дальше —
+ * атомарная привязка/создание кабинета на сервере (RPC
+ * link_or_create_psychologist_for_google) и загрузка профиля.
+ *
+ * @returns {Promise<{name:string, params:object}>} маршрут, куда идти дальше:
+ *   onboarding — профиль ещё не заполнен; cabinet — всё готово;
+ *   auth — привязка не удалась, причина показана рядом с кнопкой Google.
+ */
+async function finishGoogleLogin() {
+  const linked = await googleAuthService.linkOrCreateCabinet();
+  if (!linked.ok) {
+    // Сессия GoTrue без кабинета бесполезна и мешает войти другим аккаунтом.
+    try { await googleAuthService.signOut(); } catch { /* сеть необязательна */ }
+    authVm.setGoogleError(linked.head, linked.resolution);
+    return { name: 'auth', params: { mode: 'login' } };
+  }
+  const loaded = await registration.loadOwnedProfile(linked.id);
+  if (!loaded.ok) {
+    authVm.setGoogleError(loaded.message || linked.head, linked.resolution);
+    return { name: 'auth', params: { mode: 'login' } };
+  }
+  if (!linked.profileCompleted) {
+    return { name: 'onboarding', params: {} };
+  }
+  try { await cabinetApi.refresh(loaded.psychologist.id); }
+  catch (e) { console.warn('[boot] pull cabinet after google', e?.message || e); }
+  await cabinetVm.refreshClients();
+  startTelegramLoops(loaded.psychologist.id);
+  showToast('Вход через Google выполнен');
+  return { name: 'cabinet', params: {} };
+}
+
+/**
+ * Выход из аккаунта.
+ *
+ * Порядок важен: сначала гасим сессию Supabase Auth на сервере (для этого
+ * нужен ещё живой access token), затем чистим локальное состояние. Сессия
+ * одна и та же для входа по коду из письма и для входа через Google, поэтому
+ * выход гасит обе.
+ */
+async function doLogout() {
+  try { await googleAuthService.signOut(); }
+  catch (e) { console.warn('[logout] supabase', e?.message || e); }
+  authVm.logout();
+  authVm.setGoogleError('', '');
+  authVm.onboardingError = '';
+  navigate('portal');
+}
+
 function boot() {
   bindEvents();
   (async () => {
@@ -2735,40 +2816,25 @@ function boot() {
     // legacy-ссылки без # нормализуются в hash без перезагрузки
     bookingVm.onAvailability = () => { if (route.name === 'booking') renderBooking(); };
 
-    // ——— issue #23: Supabase Auth redirect (magic-link / OTP error) ———
-    // Должен выполниться ДО normalizeLegacyUrl/routeFromUrl: иначе bare
-    // `#error=otp_expired…` или `#access_token=…` молча станет portal.
-    let redirectLogin = null;
+    // ——— Возврат после OAuth Google (`?code=…`, PKCE). Email/OTP redirect
+    // психолога больше не обрабатывается (issue #88).
+    let googleReturn = null;
     try {
-      redirectLogin = await registration.consumeAuthRedirect();
+      googleReturn = await googleAuthService.consumeGoogleRedirect();
     } catch (e) {
-      console.warn('[boot] auth redirect', e?.message || e);
-      redirectLogin = { ok: false, reason: 'exception', message: String(e?.message || e) };
+      googleReturn = googleAuthService.publicAuthFailure('exception', e);
     }
-    if (redirectLogin?.ok && redirectLogin.psychologist) {
-      try { await cabinetApi.refresh(redirectLogin.psychologist.id); }
-      catch (e) { console.warn('[boot] pull cabinet after redirect', e?.message || e); }
-      startTelegramLoops(redirectLogin.psychologist.id);
+    if (googleReturn?.kind === 'session') {
+      const target = await finishGoogleLogin();
       normalizeLegacyUrl();
-      navigate('cabinet', {}, { push: false });
+      navigate(target.name, target.params || {}, { push: true });
       await loadServerCatalog();
-      showToast(redirectLogin.message || 'Вход выполнен');
       return;
     }
-    if (redirectLogin && redirectLogin.reason === 'auth-error') {
-      authVm.error = redirectLogin.message || 'Ссылка из письма недействительна. Запросите новый код.';
-      authVm.step = 'email';
+    if (googleReturn?.kind === 'error') {
+      authVm.setGoogleError(googleReturn.message, googleReturn.resolution || '', googleReturn.correlationId || '');
       normalizeLegacyUrl();
       route = { name: 'auth', params: { mode: 'login' } };
-      navigate('auth', { mode: 'login' }, { push: false });
-      await loadServerCatalog();
-      return;
-    }
-    if (redirectLogin && redirectLogin.reason && redirectLogin.reason !== 'none' && redirectLogin.message) {
-      // session arrived but claim/load failed — keep user on auth with message
-      authVm.error = redirectLogin.message;
-      authVm.email = redirectLogin.email || authVm.email;
-      normalizeLegacyUrl();
       navigate('auth', { mode: 'login' }, { push: false });
       await loadServerCatalog();
       return;
@@ -2782,6 +2848,9 @@ function boot() {
     // записи кабинета молча не уходили на сервер.
     const restored = await registration.restoreAuthenticatedState();
     if (restored.authenticated && restored.psychologist) {
+      // Имя/email вошедшего — из GoTrue (auth/v1/user), а не из локального
+      // JWT: отображение обязано совпадать с тем, что знает сервер.
+      await googleAuthService.refreshUser().catch(() => {});
       try { await cabinetApi.refresh(restored.psychologist.id); }
       catch (e) { console.warn('[boot] pull cabinet', e?.message || e); }
       startTelegramLoops(restored.psychologist.id);
@@ -2795,6 +2864,15 @@ function boot() {
 
     route = routeFromUrl();
     if (route.name === 'cabinet' && !authService.isAuthenticated()) {
+      route = { name: 'auth', params: { mode: 'login' } };
+    }
+    // Профиль не заполнен (первый вход через Google) → онбординг, а не
+    // полупустой кабинет, который к тому же не публикуется в каталоге.
+    if (route.name === 'cabinet' && authService.isAuthenticated()
+        && cabinetVm.psychologist?.profileCompleted === false) {
+      route = { name: 'onboarding', params: {} };
+    }
+    if (route.name === 'onboarding' && !googleAuthService.hasSession()) {
       route = { name: 'auth', params: { mode: 'login' } };
     }
     navigate(route.name, route.params, { push: false });
