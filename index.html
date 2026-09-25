@@ -589,6 +589,13 @@
       </div>
     </header>
     <div id="book-body" class="max-w-3xl mx-auto px-4 py-10">
+      <!-- issue #74: плейсхолдер «загрузка / не найден / нет связи» живёт ОТДЕЛЬНО
+           от разметки мастера. Раньше заглушка «Специалист не найден» ставилась
+           через innerHTML прямо в #book-body и безвозвратно стирала статическую
+           разметку шагов (#book-step-*, #book-services, …) — после загрузки
+           каталога рисовать мастер было уже некуда. -->
+      <div id="book-placeholder" class="hidden" role="status" aria-live="polite"></div>
+      <div id="book-wizard-root">
       <div class="rounded-2xl bg-indigo-50 p-5 mb-8 flex items-center gap-4">
         <img id="book-psy-photo" alt="" class="hidden w-14 h-14 rounded-xl object-cover shrink-0">
         <div class="flex-1 min-w-0">
@@ -653,6 +660,7 @@
         </div>
         <p id="book-nav-hint" class="text-xs text-slate-400 mt-2.5 text-center"></p>
       </div>
+      </div><!-- /book-wizard-root (issue #74) -->
     </div>
   </div>
 

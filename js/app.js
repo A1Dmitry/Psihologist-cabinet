@@ -1431,7 +1431,15 @@ function renderProfile() {
   const body = $('#prof-body');
   if (!body) return;
   if (!p || !p.isActive) {
-    body.innerHTML = '<div class="text-center py-20 text-slate-400">Страница не найдена. <button class="text-indigo-600" onclick="navigate(\'portal\')">К каталогу</button></div>';
+    // issue #74: та же каноническая правила, что и в renderBooking — «не найдено»
+    // показываем только когда каталог точно загружен. Пока он грузится, первый
+    // визит по прямой ссылке /psy/{slug} не должен пугать «Страница не найдена».
+    const catalogReady = portalVm.source === 'server' || portalVm.source === 'demo';
+    body.innerHTML = catalogReady
+      ? '<div class="text-center py-20 text-slate-400">Страница не найдена. <button class="text-indigo-600" onclick="navigate(\'portal\')">К каталогу</button></div>'
+      : (portalVm.source === 'none'
+        ? '<div class="text-center py-20 text-slate-400">Нет связи с сервером данных. <button class="text-indigo-600" onclick="retryServerData()">Повторить</button></div>'
+        : '<div class="text-center py-20 text-slate-400" aria-busy="true">Загружаем каталог с сервера…</div>');
     // честный ответ для поисковиков: несуществующая карточка не индексируется.
     // Пока каталог ещё грузится, noindex НЕ ставим — иначе валидная страница
     // успела бы попасть под noindex на первой отрисовке.
@@ -1605,17 +1613,35 @@ function renderBooking() {
   }
   // ==== КОНЕЦ новой функциональности ====
   if (!bookingVm.psychologist) {
-    const body = $('#book-body');
-    if (body) {
-      body.innerHTML = '<div class="text-center py-20 text-slate-400">Специалист не найден. <button class="text-indigo-600" onclick="navigate(\'portal\')">К каталогу</button></div>';
+    // issue #74: пока каталог ещё грузится, «не найден» показывать нельзя —
+    // специалист придёт вместе с серверными данными, и это будет ТА ЖЕ самая
+    // страница (первый визит по прямой ссылке /book/{slug} при пустом кэше).
+    // Заглушка рисуется в отдельном контейнере #book-placeholder, а разметка
+    // мастера только скрывается: раньше «Специалист не найден» ставился через
+    // innerHTML прямо в #book-body и безвозвратно стирал #book-step-*,
+    // #book-services и т.д. — после загрузки каталога рисовать было некуда.
+    const catalogReady = portalVm.source === 'server' || portalVm.source === 'demo';
+    const ph = $('#book-placeholder');
+    if (ph) {
+      ph.innerHTML = catalogReady
+        ? '<div class="text-center py-20 text-slate-400">Специалист не найден. <button class="text-indigo-600" onclick="navigate(\'portal\')">К каталогу</button></div>'
+        : (portalVm.source === 'none'
+          ? '<div class="text-center py-20 text-slate-400">Нет связи с сервером данных. <button class="text-indigo-600" onclick="retryServerData()">Повторить</button></div>'
+          : '<div class="text-center py-20 text-slate-400" aria-busy="true">Загружаем каталог с сервера…</div>');
+      ph.classList.remove('hidden');
     }
+    $('#book-wizard-root')?.classList.add('hidden');
     // честный ответ для поисковиков: пустая страница записи не индексируется
     // (только когда каталог точно загружен — см. комментарий в renderProfile).
     try {
-      if (portalVm.source === 'server' || portalVm.source === 'demo') applyNoIndex('booking: специалист не найден');
+      if (catalogReady) applyNoIndex('booking: специалист не найден');
     } catch (e) { console.warn('seo', e); }
     return;
   }
+  // issue #74: специалист нашёлся (каталог догрузился) — вернуть разметку
+  // мастера, если до этого её скрывал плейсхолдер «загрузка/не найдено».
+  $('#book-placeholder')?.classList.add('hidden');
+  $('#book-wizard-root')?.classList.remove('hidden');
   if (bookingVm.done) {
     navigate('success');
     return;
