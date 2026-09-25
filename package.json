@@ -10,6 +10,7 @@
     "verify:authui": "node tests/auth-ui-pending.mjs",
     "verify:authcode": "node tests/auth-code-edge.mjs",
     "verify:timezone": "node tests/timezone-domain.mjs",
+    "verify:ics": "node tests/ics-event.mjs",
     "verify:mapper": "node tests/session-mapper.mjs",
     "verify:security": "node tests/security-regression.mjs",
     "dev": "python3 devserver.py 8765"

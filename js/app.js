@@ -18,7 +18,11 @@ import { supabaseApi } from './services/supabaseApi.js';
 import { reportClientError } from './services/errorLogService.js';
 import { isSupabaseConfigured } from './services/supabaseConfig.js';
 import { applyProfileSeo, applyPortalSeo, applyBookingSeo, applyNoIndex } from './services/seoService.js';
-import { googleAddLink } from './services/calendarService.js';
+// ?v= — cache-busting (та же конвенция, что у entry-скрипта в index.html):
+// preview-прокси/браузер кешит URL модуля без query (issue #65, 2026-09-25:
+// рядом с новым app.js отдавался старый кэшированный calendarService.js →
+// SyntaxError: does not provide an export named 'icsEventBlob').
+import { googleAddLink, icsEventBlob, icsEventFileName } from './services/calendarService.js?v=20260925-ics';
 import { todayStr, zoneCity } from './services/timezoneService.js';
 import { resolveDurationMinutes, DEFAULT_DURATION_MIN } from './domain/duration.js';
 import { registration } from './domain/registration.js';
@@ -1888,10 +1892,30 @@ function renderClientReply() {
   const msg = $('#reply-message');
   const actions = $('#reply-actions');
   const done = $('#reply-done');
+  const icsEl = $('#reply-ics');
   if (!r) {
     if (msg) msg.textContent = 'Напоминание не найдено. Сначала отправьте due-напоминание из кабинета.';
     actions?.classList.add('hidden');
+    icsEl?.classList.add('hidden');
     return;
+  }
+  // issue #65: клиент добавляет событие в любой календарь (.ics).
+  // В запросе переноса время ещё не подтверждено, в отказе встречи нет —
+  // артефакт показываем только для живой, подтверждённой записи.
+  const session = db.sessions.find(s => s.id === r.sessionId);
+  const psy = session ? db.psychologists.find(x => x.id === session.psychologistId) : null;
+  const svc = session ? db.services.find(x => x.id === session.serviceId) : null;
+  if (session && psy && r.kind !== 'reschedule_request' && r.status !== 'declined') {
+    wireIcsDownload(
+      icsEl,
+      icsParamsForSession(session, psy, svc, {
+        timezone: db.settingsOf(psy.id)?.timezone,
+        url: psy.slug ? urlFor.psy(psy.slug) : ''
+      }),
+      icsEventFileName(psy.fullName, session.date, session.time)
+    );
+  } else {
+    icsEl?.classList.add('hidden');
   }
   if (msg) msg.textContent = r.messageBody || 'Подтвердите или отмените запись.';
   const yesBtn = $('#btn-reply-yes');
@@ -1915,15 +1939,51 @@ function renderClientReply() {
   }
 }
 
+/**
+ * Issue #65: привязка <a> к .ics-артефакту созданной записи
+ * (download через Blob; тот же контракт данных, что у gcal-link).
+ */
+function wireIcsDownload(el, params, filename) {
+  if (!el) return;
+  try {
+    const url = URL.createObjectURL(icsEventBlob(params));
+    if (el.dataset.icsUrl) URL.revokeObjectURL(el.dataset.icsUrl);
+    el.href = url;
+    el.download = filename;
+    el.dataset.icsUrl = url;
+    el.classList.remove('hidden');
+  } catch (e) {
+    console.warn('[ics] не удалось сформировать .ics', e);
+    el.classList.add('hidden');
+  }
+}
+
+/** Параметры .ics-артефакта для записи (единая точка — issue #65). */
+function icsParamsForSession(s, p, sv, { timezone, url = '' } = {}) {
+  return {
+    title: `${sv?.name || 'Консультация'} · ${p.fullName}`,
+    date: s.date,
+    time: s.time,
+    durationMin: resolveDurationMinutes({ durationMin: s.durationMin, service: sv }),
+    location: s.meetLink || '',
+    details: p.greeting || '',
+    url,
+    timezone: timezone || 'Europe/Minsk',
+    uid: `psyportal-session-${s.id}`
+  };
+}
+
 function renderSuccess() {
   $('#success-text') && ($('#success-text').textContent = bookingVm.successText || 'Заявка принята');
-  // «Добавить в Google Calendar» (аналог Calendly/Booksy) — для созданной записи
+  // «Добавить в Google Calendar» (аналог Calendly/Booksy) + «Добавить в календарь»
+  // (.ics — Apple/Outlook/Google/Яндекс, issue #65) — для созданной записи
   const box = $('#success-gcal');
   if (!box) return;
   const s = bookingVm.createdSessionId ? db.sessions.find(x => x.id === bookingVm.createdSessionId) : null;
   const p = bookingVm.psychologist;
   const sv = bookingVm.selectedService;
   if (s && p) {
+    const tz = bookingVm.settings?.timezone || 'Europe/Minsk';
     box.href = googleAddLink({
       title: `${sv?.name || 'Консультация'} · ${p.fullName}`,
       date: s.date,
@@ -1931,11 +1991,17 @@ function renderSuccess() {
       durationMin: resolveDurationMinutes({ durationMin: s.durationMin, service: sv }),
       location: s.meetLink || '',
       details: p.greeting || '',
-      timezone: bookingVm.settings?.timezone || 'Europe/Minsk'
+      timezone: tz
     });
     box.classList.remove('hidden');
+    wireIcsDownload(
+      $('#success-ics'),
+      icsParamsForSession(s, p, sv, { timezone: tz, url: urlFor.psy(p.slug) }),
+      icsEventFileName(p.fullName, s.date, s.time)
+    );
   } else {
     box.classList.add('hidden');
+    $('#success-ics')?.classList.add('hidden');
   }
 }
 
