@@ -241,8 +241,35 @@ console.log('\n── auth-code (настоящий исходник Edge Functi
   const h = await loadHandler();
   const opts = await h(new Request('https://x/', { method: 'OPTIONS' }));
   ok('OPTIONS → 200 + CORS', () => { eq(opts.status, 200); eq(opts.headers.get('Access-Control-Allow-Origin'), '*'); });
+  // Preflight проверяется браузером ДВУМЯ условиями: статус 2xx И разрешённые
+  // методы/заголовки. Нехватка `content-type` в Allow-Headers или `POST`
+  // в Allow-Methods даёт ту же консольную CORS-ошибку, что и 404/401, —
+  // поэтому контракт запинен полностью, а не только по Allow-Origin.
+  ok('OPTIONS → Allow-Methods содержит POST и OPTIONS', () => {
+    const m = opts.headers.get('Access-Control-Allow-Methods') || '';
+    truthy(/post/i.test(m) && /options/i.test(m), m);
+  });
+  ok('OPTIONS → Allow-Headers содержит content-type (SPA шлёт JSON)', () => {
+    const hh = opts.headers.get('Access-Control-Allow-Headers') || '';
+    truthy(/content-type/i.test(hh), hh);
+  });
+  ok('OPTIONS → Allow-Headers содержит apikey/x-client-info/authorization', () => {
+    const hh = (opts.headers.get('Access-Control-Allow-Headers') || '').toLowerCase();
+    ['apikey', 'x-client-info', 'authorization'].forEach(k =>
+      truthy(hh.includes(k), `нет ${k} в ${hh}`));
+  });
   const bad = await h(new Request('https://x/', { method: 'GET' }));
   ok('GET → 405', () => eq(bad.status, 405));
+  // Ошибочные ответы тоже несут CORS: иначе браузер съест тело ошибки и
+  // пользователь увидит «Failed to fetch» вместо причины.
+  const errRes = await h(new Request('https://x/', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'request', email: 'not-an-email' })
+  }));
+  ok('ошибка 400 несёт CORS-заголовки (иначе причина не видна)', () => {
+    eq(errRes.status, 400);
+    eq(errRes.headers.get('Access-Control-Allow-Origin'), '*');
+  });
 }
 
 // 2. Валидация email

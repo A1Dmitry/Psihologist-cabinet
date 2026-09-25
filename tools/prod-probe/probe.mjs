@@ -140,8 +140,12 @@ for (const fn of ['auth-code', 'telegram-notify']) {
  *   HTTP 200 + Access-Control-Allow-Origin + Allow-Methods: POST, OPTIONS.
  */
 async function probePreflight(fn) {
-  // Origin реального приложения: именно он в консоли владельца.
-  const origin = String(APPLICATION_URL || '').replace(/\/+$/, '');
+  // Origin РОВНО как у браузера: scheme://host[:port], без пути. Браузерный
+  // Origin никогда не содержит path — с путем это был бы другой запрос.
+  const origin = (() => {
+    try { const u = new URL(APPLICATION_URL); return u.origin; }
+    catch { return String(APPLICATION_URL || '').replace(/\/+$/, ''); }
+  })();
   try {
     const res = await fetch(`${TARGET_URL}/functions/v1/${fn}`, {
       method: 'OPTIONS',
