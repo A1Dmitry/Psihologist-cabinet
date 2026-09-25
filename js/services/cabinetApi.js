@@ -97,14 +97,14 @@ export const cabinetApi = {
       db.clients.push(client);
     });
     // длительность записи резолвится канонически: снимок → услуга → шаг сетки → дефолт
-    const serviceById = new Map(db.services.map(sv => [sv.id, sv]));
+    const serviceById = new Map((db.services || []).map(sv => [sv.id, sv]));
     const slotStepMin = r.settings?.slot_step_min ?? null;
-    db.sessions = db.sessions.filter(x => x.psychologistId !== psyId)
+    db.sessions = (db.sessions || []).filter(x => x.psychologistId !== psyId)
       .concat((r.sessions || []).map(row => mapSession(row, {
         service: serviceById.get(row.service_id) || null,
         slotStepMin
       })));
-    db.scheduleBlocks = db.scheduleBlocks.filter(x => x.psychologistId !== psyId)
+    db.scheduleBlocks = (db.scheduleBlocks || []).filter(x => x.psychologistId !== psyId)
       .concat((r.blocks || []).map(row => new ScheduleBlock({
         id: row.id, psychologistId: row.psychologist_id,
         dateFrom: row.date_from, dateTo: row.date_to || row.date_from,
@@ -118,30 +118,30 @@ export const cabinetApi = {
         isClosed: !!row.is_closed, openFrom: row.open_from || '', openTo: row.open_to || '',
         title: row.title || '', createdAt: row.created_at
       })));
-    db.tasks = db.tasks.filter(x => x.psychologistId !== psyId)
+    db.tasks = (db.tasks || []).filter(x => x.psychologistId !== psyId)
       .concat((r.tasks || []).map(row => new Task({
         id: row.id, psychologistId: row.psychologist_id, title: row.title || '',
         details: row.details || '', dueDate: row.due_date || '', clientId: row.client_id || null,
         done: !!row.done, createdAt: row.created_at
       })));
-    db.notes = db.notes.filter(x => x.psychologistId !== psyId)
+    db.notes = (db.notes || []).filter(x => x.psychologistId !== psyId)
       .concat((r.notes || []).map(row => new PsyNote({
         id: row.id, psychologistId: row.psychologist_id, title: row.title || '',
         body: row.body || '', date: row.date || '', pinned: !!row.pinned, createdAt: row.created_at
       })));
-    db.clientEntries = db.clientEntries.filter(x => x.psychologistId !== psyId)
+    db.clientEntries = (db.clientEntries || []).filter(x => x.psychologistId !== psyId)
       .concat((r.entries || []).map(row => new ClientEntry({
         id: row.id, psychologistId: row.psychologist_id, clientId: row.client_id,
         sessionId: row.session_id || null, date: row.date || '', text: row.text || '', createdAt: row.created_at
       })));
-    db.waitingItems = db.waitingItems.filter(x => x.psychologistId !== psyId)
+    db.waitingItems = (db.waitingItems || []).filter(x => x.psychologistId !== psyId)
       .concat((r.waiting || []).map(row => new WaitingItem({
         id: row.id, psychologistId: row.psychologist_id, name: row.name || '',
         phone: row.phone || '', note: row.note || '', createdAt: row.created_at
       })));
     if (r.settings) {
-      const prev = db.settings.find(x => x.psychologistId === psyId);
-      db.settings = db.settings.filter(x => x.psychologistId !== psyId);
+      const prev = (db.settings || []).find(x => x.psychologistId === psyId);
+      db.settings = (db.settings || []).filter(x => x.psychologistId !== psyId);
       db.settings.push(new SessionSettings({
         psychologistId: psyId,
         workHours: r.settings.work_hours || 'Пн–Пт 10:00–19:00',
