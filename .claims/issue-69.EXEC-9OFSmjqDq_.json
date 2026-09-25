@@ -1,0 +1,10 @@
+{
+  "schema": "executor-claim/v1",
+  "issue": 69,
+  "executor": "EXEC-9OFSmjqDq_",
+  "branch": "arena/01a0d7f9-psihologist-cabinet",
+  "state": "active",
+  "taken_at": "2026-09-25T10:28:12.648Z",
+  "expires_at": "2026-09-25T11:58:12.648Z",
+  "ttl_minutes": 90
+}
