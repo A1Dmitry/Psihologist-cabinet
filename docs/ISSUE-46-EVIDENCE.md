@@ -126,6 +126,10 @@ POST /rest/v1/rpc/claim_psychologist_profile {zz_…:1}      → PGRST202
 | TASK 5: анти-спам не обходится будущими датами | сценарий переведён на будущие даты (счётчик по `created_at`) | `tests/db-contract.mjs`, `tests/security-regression.mjs` T03 |
 | TASK 1: канал инспекции прода | `tools/prod-probe/probe.mjs` + workflow `prod-probe.yml` (read-only, без секретов) | прогон в GitHub Actions, отчёт комментарием в PR #47 |
 | TASK 1: SQL для владельца | `docs/OWNER-CHECKLIST-E2E.md`, Блок 7 — `pg_proc`/гранты/RLS/ownership | документ |
+| TASK 3: оба входа → один профиль | сценарий «два входа»: тот же `sub` приходит по ссылке → тот же `psychologist.id`, тот же `owner_id`, дубля нет (прежний тест брал другой email и инвариант не покрывал) | `tests/registration-flow.mjs`, 6 проверок |
+| TASK 4/5: чем владелец докажет прод | `tools/prod-e2e.mjs`: сценарий tenant isolation своей живой сессией + флаг `--link` (вход по ссылке, origin не localhost, тот же профиль; токены не печатаются) | инструмент (запуск на машине владельца) |
+| TASK 7: независимый Challenger | `docs/ISSUE-46-CHALLENGER-KIT.md` — 8 атак (A–H) с командами, критериями FAIL и формой отчёта; исполнителем НЕ сертифицирован | документ |
+| «green CI маскирует failure» | CI раньше не запускал проверки проекта вовсе: добавлен workflow `Quality Gate` (`node tools/verify_all.mjs` + смоук маршрутов), деплой Pages ждёт его через `needs: quality-gate` | прогон в Actions: шаги `Install dev dependencies` / `Run project gate` / `Smoke routes` — success |
 
 ### Красные наборы на старте (найдено и исправлено)
 
@@ -140,6 +144,17 @@ POST /rest/v1/rpc/claim_psychologist_profile {zz_…:1}      → PGRST202
 
 После фикса: `node tools/verify_all.mjs` → **22/22 набора зелёные, exit 0**;
 `BASE_URL=http://127.0.0.1:8765 python3 verify_pages.py` → **ALL PASS** (12 проверок).
+
+**Внешнее подтверждение гейта (АУДИТОР: ВНЕШНИЙ):** тот же гейт выполнен в
+GitHub Actions (workflow `Quality Gate`, job `verify`) — шаги `Install dev
+dependencies`, `Run project gate (node tools/verify_all.mjs)` (14 с, как локально,
+т.е. с тремя запусками настоящего PostgreSQL) и `Smoke routes against a real
+devserver` — `success`. Проверено через API jobs, а не по «зелёной галочке».
+
+**Контроль фальсификации гейта:** подмена канонической константы
+(`DEFAULT_DURATION_MIN 60 → 45`) даёт `node tools/verify_all.mjs` → **exit 1**,
+2 красных набора (`timezone-domain`, `availability-parity`); после отката — снова
+22/22. Т.е. гейт реагирует на регрессию, а не всегда зелёный.
 
 ## 5. Definition of Done #46 — честный статус
 
