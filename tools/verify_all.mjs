@@ -45,6 +45,7 @@ const SUITES = [
   ['D1 recovery: parity-матрица client↔server', 'node', ['tests/availability-parity.mjs']],
   ['D1 recovery: E2E записи (valid/blocked/unauthorized)', 'node', ['tests/booking-e2e.mjs']],
   ['Poka-Yoke тест-харнеса (детерминированные выходы)', 'node', ['tests/harness-guard.mjs']],
+  ['Claim-протокол исполнителей (ID EXEC-…, карточки, конфликты выбора Issue)', 'node', ['tests/executor-claims.mjs']],
   ['Кабинет: серии, условия, мини-кабинет, пояса', 'node', ['tools/verify_cabinet.mjs']],
   ['Авторизация: каналы кода, сессия, write-through', 'node', ['verify_auth.mjs']],
   ['UI входа: ожидание кода переживает перезагрузку', 'node', ['tests/auth-ui-pending.mjs']],
@@ -62,7 +63,7 @@ const SUITE_TIMEOUT_MS = Number(process.env.VERIFY_SUITE_TIMEOUT_MS || 300000);
 // Тестовый шов (по образцу VERIFY_APP_ENTRY): прогнать только указанные файлы
 // наборов. Нужен tests/harness-guard.mjs, чтобы негативные контроли самого
 // гейта (silent-набор, «FAIL с отступом») выполнялись за миллисекунды, а не
-// прогоняли все 24 набора с шестью стартами PostgreSQL. Reduced-прогон явно
+// прогоняли все 27 наборов с шестью стартами PostgreSQL. Reduced-прогон явно
 // помечается в выводе и не является полным гейтом.
 const ONLY = (process.env.VERIFY_ONLY || '').split(',').map(s => s.trim()).filter(Boolean);
 // Дополнительные наборы вне SUITES (абсолютные пути) — тот же шов для guard'а:

@@ -10,6 +10,14 @@ body:
         Неизвестное отмечайте «не установлено / не выполнено», укажите владельца и следующий шаг.
         Заполненная форма, merge и зелёный CI не доказывают завершение.
         Не публикуйте токены, секреты и персональные данные.
+  - type: input
+    id: executor
+    attributes:
+      label: "Исполнитель (EXEC-XXXXXXXXXX)"
+      description: "Свой ID: `node tools/claim.mjs id`. Перед началом работы Issue обязателен claim: `node tools/claim.mjs take <номер>` (RULES §6.17, docs/EXECUTOR-CLAIMS.md)."
+      placeholder: "EXEC-XXXXXXXXXX"
+    validations:
+      required: false
   - type: textarea
     id: goal
     attributes:

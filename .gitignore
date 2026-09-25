@@ -9,6 +9,10 @@ node_modules/
 package-lock.json
 npm-debug.log*
 
+# Локальная идентичность исполнителя (seed для EXEC-ID) — не коммитится.
+# Карточки .claims/** коммитятся: это история «кто держит Issue» в ветке.
+.executor-seed
+
 # Данные встроенного PostgreSQL, который поднимают тесты схемы (tools/dbtest)
 .pgdata/
 /tmp/
