@@ -26,6 +26,8 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const SUITES = [
   ['Доменные правила: пояс, календарь, длительность', 'node', ['tests/timezone-domain.mjs']],
+  ['.ics «Добавить в календарь» для клиента: VCALENDAR, TZ, полночь, UTF-8 (#65)', 'node', ['tests/ics-event.mjs']],
+  ['.ics E2E: success-страница + reply-ссылка клиента (#65)', 'node', ['tests/ics-success-page.mjs']],
   ['Канонический маппер сессий', 'node', ['tests/session-mapper.mjs']],
   ['D1: Availability + Booking Policy Engine (домен)', 'node', ['tests/availability-policy.mjs']],
   ['D1: перенос на каноническом engine (suggestSlots)', 'node', ['tests/suggest-slots.mjs']],
