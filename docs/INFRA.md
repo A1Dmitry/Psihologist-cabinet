@@ -132,6 +132,15 @@
    > равенство контрактов двух функций, покрытие заголовков фронтенда —
    > с falsification-контролем) + поведенческая проверка `OPTIONS`
    > в `tests/auth-code-edge.mjs`.
+   >
+   > **Единственный ключ в клиентском бандле — publishable/anon.** В панели
+   > Supabase `anon public` и `service_role` лежат рядом и отличаются одной
+   > подписью JWT; `service_role` в статическом SPA = полный обход RLS (P0,
+   > `docs/RULES.md` §6.10). Поэтому `tests/no-committed-secrets.mjs` декодирует
+   > КАЖДЫЙ JWT в `index.html` / `js/**` / `css/**` и требует `role=anon` того же
+   > проекта, что `SUPABASE_URL` (grep по литералу `service_role` бесполезен:
+   > payload закодирован в base64url — первая версия теста содержала именно эту
+   > дыру и falsification её не поймал).
 
    > **Симптом после клика по ссылке из письма (issue #23):**
    > ```
