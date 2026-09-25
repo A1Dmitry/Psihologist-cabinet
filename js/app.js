@@ -2003,7 +2003,6 @@ function renderSuccess() {
     box.classList.add('hidden');
     $('#success-ics')?.classList.add('hidden');
   }
-  wrap?.classList.remove('hidden');
 }
 
 // ——— Event bindings ———
