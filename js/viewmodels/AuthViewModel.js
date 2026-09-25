@@ -15,6 +15,7 @@ export class AuthViewModel extends BaseViewModel {
     super();
     this.mode = 'login'; // login | register
     this.step = 'email'; // email | code
+    this.channel = null; // 'fn' | 'otp' — канал доставки текущего кода (из use case)
     this.email = '';
     this.code = '';
     this.fullName = '';
@@ -31,6 +32,15 @@ export class AuthViewModel extends BaseViewModel {
     const m = Math.floor(this.resendIn / 60);
     const s = String(this.resendIn % 60).padStart(2, '0');
     return `Повторная отправка через ${m}:${s}`;
+  }
+
+  /**
+   * Подсказка под полем кода. Текст зависит от канала: запасной канал
+   * Supabase Auth по умолчанию присылает ССЫЛКУ, а не код, и обещать код
+   * в этом случае нельзя (текст — в каноническом use case, не здесь).
+   */
+  get codeHint() {
+    return registration.verificationHint(this.channel, this.email);
   }
 
   /** Поля профиля, которые уходят в use case. */
@@ -80,6 +90,7 @@ export class AuthViewModel extends BaseViewModel {
       // кода — сервер (auth-code) знает код, pending на этом устройстве не нужен.
       if (fromLetter && this.email && !this.error) {
         this.step = 'code';
+        this.channel = registration.VerificationChannel.FN;
         this._startWindow(120);
         return true;
       }
@@ -90,6 +101,7 @@ export class AuthViewModel extends BaseViewModel {
     if (remainingMs > 0) {
       this.email = record.email;
       this.step = 'code';
+      this.channel = record.channel || null;
       this._startWindow(Math.ceil(remainingMs / 1000));
       return true;
     }
@@ -111,6 +123,7 @@ export class AuthViewModel extends BaseViewModel {
   setMode(mode) {
     this.mode = mode === 'register' ? 'register' : 'login';
     this.step = 'email';
+    this.channel = null;
     this.code = '';
     this.error = '';
     this.notify();
@@ -136,6 +149,7 @@ export class AuthViewModel extends BaseViewModel {
         return false;
       }
       this.step = 'code';
+      this.channel = res.channel || null;
       this._startWindow();
       this.showToast(res.message);
       return true;
