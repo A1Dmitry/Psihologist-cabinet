@@ -12,9 +12,12 @@
 
 ## Main SHA и активная ветка
 
-- **Актуальный `main`:** `d28ae942d60cf3eecf2626aea84e30cd791abbff` (merge PR #52; Challenger-аудит — `docs/ISSUE-46-CHALLENGER.md`)
-- **Активная исполнительская ветка:** `arena/01a0d702-psihologist-cabinet` → **PR #53**
-- Влито в main 2026-09-25: #47 (`b1dbf1a`), #48 (`ca3b23b`), #52 (`d28ae94`)
+- **Актуальный `main`:** `3d4210de` (merge PR #53 — Challenger #46 + честность гейта/деплоя/probe)
+- **Main Re-Audit `3d4210d` (2026-09-25):** гейт 25/25 наборов, 1180 проверок, exit 0; смоук 12 PASS, ALL PASS;
+  Pages: `quality-gate` 06:13:43→06:14:12Z, `deploy` 06:14:16→06:14:37Z (деплой после гейта)
+- **Наблюдение F4 в живом CI:** `Deploy Supabase Edge Functions` на `3d4210d` — `deploy-functions` **failure**
+  на шаге «Production reachability (gateway 404 = NOT deployed)» — ожидаемое красное, пока функции не задеплоены
+- Влито в main 2026-09-25: #47 (`b1dbf1a`), #48 (`ca3b23b`), #52 (`d28ae94`), #53 (`3d4210d`)
 - Исторические baseline: `dcb4093`, `0320c40`, `5d5636d` (PR #44), `03c6fa5` (PR #43), `87e3951`, `4d490d2`.
 
 ## Исполнение issue #46 (P0 EXECUTOR) — что сделано
@@ -164,7 +167,6 @@ MAIN → AUDIT → DEFECT/REQUIREMENT → ISSUE → PRODUCER → TESTS → CHALL
 
 ---
 
-*Синхронизировано: 2026-09-25 UTC; `main` @ `d28ae94`, ветка `arena/01a0d702` →
-PR #53. Документ фиксирует repo-state и LIVE-факты прода (срез 05:53Z): схема
+*Синхронизировано: 2026-09-25 UTC; `main` @ `3d4210d` (PR #53 merged). Документ фиксирует repo-state и LIVE-факты прода (срез 05:53Z): схема
 применена владельцем, блокеры — Edge Functions и `create_booking` для anon.
 Документ НЕ сертифицирует production-готовность: реальный E2E не проведён.*

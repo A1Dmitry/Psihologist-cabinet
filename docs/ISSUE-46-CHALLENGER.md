@@ -315,11 +315,14 @@ Producer в одном конвейере; независимую перепро
 | **F3** — документация описывала прод до 05:14Z | `ISSUE-46-EVIDENCE.md` §2bis + §5/§6/§6.1, `docs/INFRA.md` п.2/4/5, `docs/CURRENT-STATE.md` (main SHA, прод-таблица, контуры, next actions) синхронизированы со срезом 05:53Z | факты §4 этого отчёта; повторный probe на PR верифицирует срез |
 | Закрытие #46 | `docs/OWNER-CHECKLIST-E2E.md` Блок 9 — пошаговый путь «что осталось»: деплой функций, SQL по `create_booking` (+`notify pgrst, 'reload schema'`), URL/сессия, доказательства, закрытие | чек-лист §6.1 в `ISSUE-46-EVIDENCE.md` |
 
-**Границы:** исправления проверены локально (гейт 25/25, 1180 проверок, exit 0;
-`verify_pages.py` — ALL PASS) и внешне (Quality Gate + probe на PR #53). Красный
-статус `supabase-deploy.yml` «по факту недоступности функций» наблюдается только
-на следующем запуске этого workflow (push в `supabase/functions/**` или ручной
-dispatch) — до этого момента это проверенная чтением структура, а не наблюдение.
+**Границы (снято 2026-09-25 после merge):** исправления проверены локально
+(гейт 25/25, 1180 проверок, exit 0; `verify_pages.py` — ALL PASS) и внешне.
+После merge PR #53 в main (`3d4210d`) красный статус `supabase-deploy.yml`
+**наблюдался фактически**: run `36101918509` — `deploy-functions` упал на шаге
+«Production reachability (gateway 404 = NOT deployed)», при этом `quality-gate`
+в том же прогоне — success. Pages-деплой на том же SHA прошёл после гейта
+(`quality-gate` 06:13:43→06:14:12Z, `deploy` 06:14:16→06:14:37Z, run `36101918450`).
+Main Re-Audit нового main: гейт 25/25, 1180 проверок, exit 0; смоук 12 PASS.
 
 ---
 
