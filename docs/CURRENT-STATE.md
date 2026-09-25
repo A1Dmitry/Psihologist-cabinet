@@ -12,14 +12,14 @@
 
 ## Main SHA и активная ветка
 
-- **Актуальный `main`:** `3ebce1c8` (merge PR #56 — демо-оплата не врёт «оплата прошла» при живом сервере, #21 п.4)
+- **Актуальный `main`:** `938e7f60` (merge PR #58 — Challenger #51/#54 — docs-only)
 - **Main Re-Audit `3ebce1c` (2026-09-25, сессия `arena/01a0d75b`):** гейт **26/26** наборов, **1227** проверок,
   exit 0; независимый Challenger #51/#54 — `docs/ISSUE-51-54-CHALLENGER.md`
 - **Main Re-Audit `3d4210d` (2026-09-25):** гейт 25/25 наборов, 1180 проверок, exit 0; смоук 12 PASS, ALL PASS;
   Pages: `quality-gate` 06:13:43→06:14:12Z, `deploy` 06:14:16→06:14:37Z (деплой после гейта)
 - **Наблюдение F4 в живом CI:** `Deploy Supabase Edge Functions` на `3d4210d` — `deploy-functions` **failure**
   на шаге «Production reachability (gateway 404 = NOT deployed)» — ожидаемое красное, пока функции не задеплоены
-- Влито в main 2026-09-25: #47 (`b1dbf1a`), #48 (`ca3b23b`), #52 (`d28ae94`), #53 (`3d4210d`), #56 (`3ebce1c`)
+- Влито в main 2026-09-25: #47 (`b1dbf1a`), #48 (`ca3b23b`), #52 (`d28ae94`), #53 (`3d4210d`), #56 (`3ebce1c`), #58 (`938e7f6`)
 - Исторические baseline: `dcb4093`, `0320c40`, `5d5636d` (PR #44), `03c6fa5` (PR #43), `87e3951`, `4d490d2`.
 
 ## Исполнение issue #46 (P0 EXECUTOR) — что сделано
@@ -107,7 +107,7 @@ Root cause (FACT по внешнему каналу): `supabase/schema.sql` бы
 | #21 | P1 | Server-authoritative booking — repo merged, включая п.4: демо-оплата при живом Supabase больше не пишет «оплата прошла» (local-only UX + negative `tests/demo-pay-honesty.mjs`); production-гейт: `create_booking` для anon недоступен (LIVE); Challenger + Main Re-Audit OPEN |
 | #22 | P2 | Tenant isolation / anti-spam — repo merged + тесты; `client_risks` закрыт в проде (LIVE) |
 | #34 | P1 | Challenger recovery + свежий Main Re-Audit — OPEN (проверялся 4d490d2, main ушёл на ca3b23b) |
-| #36 | P2 | Harness false-green — implementation merged + независимый Challenger PASS на ca3b23b; к закрытию владельцем; follow-up — #51 |
+| #36 | P2 | Harness false-green — **CLOSED**: свежий независимый Challenger на `5f20349` ≡ `938e7f6` (`docs/ISSUE-36-CHALLENGER.md`): сырьё A1/A2/B/C повторено, все три канала красные; гейт 26/26 |
 | #51 | P2 | Silent suite (0 проверок, exit 0) — **CLOSED**: независимый Challenger + Main Re-Audit на `3ebce1c` (`docs/ISSUE-51-54-CHALLENGER.md`): повтор атаки C2 → гейт красный; 26/26 зелёные |
 | #54 | P2 | Probe-сводка «drift 0» без измерений — **CLOSED**: Challenger PASS (`docs/ISSUE-51-54-CHALLENGER.md`): blackhole → `измерено: 0/26`, `HTTP_0` устранён, workflow-гейт на `unreachable>0`, live-прогон читаем (Actions 06:55Z) |
 | #50 | P2 | Docs resync — этот файл, `INFRA.md` и `ISSUE-46-EVIDENCE.md` синхронизированы с продом (05:53Z); остаток #50 — RECOVERY-ORCHESTRATION/ROADMAP, Challenger + Main Re-Audit |
@@ -115,7 +115,8 @@ Root cause (FACT по внешнему каналу): `supabase/schema.sql` бы
 | #27–#31 | BA | Продуктовый backlog; не дефекты |
 
 Закрыты 2026-09-25 и перепроверены: #15 (Quality Gate DONE), #49 (probe-мусор),
-#51 и #54 (независимый Challenger + Main Re-Audit, `docs/ISSUE-51-54-CHALLENGER.md`).
+#21, #22, #34 (владельцем), #51, #54 (`docs/ISSUE-51-54-CHALLENGER.md`),
+#36 (`docs/ISSUE-36-CHALLENGER.md`).
 Закрыты ранее: #7, #8, #11, #14, #18, #19, #23, #30, #33 (вердикты — триаж §3).
 
 ## Canonical authentication contract
@@ -150,7 +151,7 @@ MAIN → AUDIT → DEFECT/REQUIREMENT → ISSUE → PRODUCER → TESTS → CHALL
 1. production-активация владельцем: деплой `auth-code` / `telegram-notify` + SQL по
    `create_booking` (схема SR-004/SR-D1 уже применена 2026-09-25) — `docs/OWNER-CHECKLIST-E2E.md`;
 2. реальный registration E2E после деплоя (код и ссылка) — `tools/prod-e2e.mjs`;
-3. закрытие #36 и #46 владельцем по готовым evidence (Challenger PASS) + Main Re-Audit;
+3. закрытие #46 владельцем по готовым evidence (Challenger PASS) + Main Re-Audit;
 4. свежий Challenger по #34 на актуальном SHA и завершение #50 (RECOVERY/ROADMAP).
 
 ## Next actions — dependency order
@@ -160,8 +161,8 @@ MAIN → AUDIT → DEFECT/REQUIREMENT → ISSUE → PRODUCER → TESTS → CHALL
 3. Владелец: Блок 7 (SQL: `pg_proc` + гранты `create_booking`; при корректной сигнатуре — reload кэша PostgREST).
 4. Повторный прогон `Production read-only probe`: ждём `измерено: 26/26` и `drift 0` по Edge Functions.
 5. Владелец: Блок 5 (`tools/prod-e2e.mjs --email … --link …`) → реальный E2E: код, ссылка, reload, повторный вход.
-6. Закрытие #36/#46 по готовому evidence (#51/#54 закрыты — Challenger PASS,
-   `docs/ISSUE-51-54-CHALLENGER.md`), затем фичи BA-очереди (#27–#31).
+6. Закрытие #46 по готовому evidence (#36/#51/#54 закрыты — Challenger PASS,
+   `docs/ISSUE-36-CHALLENGER.md`, `docs/ISSUE-51-54-CHALLENGER.md`), затем фичи BA-очереди (#27–#31).
 
 ## Historical documents
 
