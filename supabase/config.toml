@@ -2,15 +2,19 @@
 # project_id — публичный ref проекта (НЕ секрет): см. Dashboard → Project Settings → General.
 project_id = "phiavtroybgwyjdhqqkh"
 
-# Edge Functions вызываются с публичных страниц без пользовательской JWT-сессии
-# (auth-code — до входа, telegram-notify — со страницы записи), поэтому
-# JWT-gateway у них выключен. Авторизация реализована внутри функций:
-#   - auth-code: сам и выдаёт сессию после проверки одноразового кода из письма;
-#   - telegram-notify: не возвращает данных, читает токен бота сервисным ключом.
+# Edge Function вызывается с публичных страниц без пользовательской JWT-сессии
+# (telegram-notify — со страницы записи), поэтому JWT-gateway у неё выключен.
+# Авторизация реализована внутри функции: telegram-notify не возвращает данных
+# и читает токен бота сервисным ключом.
 # CLI (>= v1.178) применяет эти флаги при `supabase functions deploy`
 # (при деплое из Dashboard флаг задаётся вручную / --no-verify-jwt).
-[functions.auth-code]
-verify_jwt = false
-
+#
+# `auth-code` здесь НАМЕРЕННО отсутствует: вход специалиста — только Google
+# OAuth через Supabase Auth (#88), почтовый код входа отменён, функция не
+# должна деплоиться или восстанавливаться (#35, коррекция 2026-09-25).
+# Отсутствие секции — тоже защита: случайный `functions deploy auth-code`
+# уедет с verify_jwt=true (fail-closed), а не как анонимная выдача кодов.
+# Исходник supabase/functions/auth-code/ сохранён как legacy-контракт под
+# тестами (tests/auth-code-edge.mjs, tests/cors-contract.mjs), в прод не идёт.
 [functions.telegram-notify]
 verify_jwt = false

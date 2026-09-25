@@ -13,6 +13,15 @@ name: Deploy Supabase Edge Functions
 # прод-проверка честно логирует NOT_DEPLOYED, CI при этом не блокирует main.
 # Когда секреты заданы и деплой выполнялся, неответ = красный (деплой не прошёл)
 # — зелёный статус означает «endpoint поднят» (#35).
+#
+# ОБЪЁМ ДЕПЛОЯ (каноническая коррекция #35 от 2026-09-25, #88): вход
+# специалиста — ТОЛЬКО Google OAuth через Supabase Auth. Почтовый код входа
+# отменён, поэтому Edge Function `auth-code` больше НЕ деплоится этим
+# workflow и НЕ должна отвечать в проде: «must not be deployed or restored».
+# Деплоится единственная функция — `telegram-notify` (серверные уведомления
+# владельца; вызывает js/services/telegramService.js). Финальный шаг проверяет
+# оба факта: telegram-notify отвечает, auth-code отсутствует. Появление
+# снятой функции в проде — это возрождение отменённого пути входа и красный.
 
 on:
   push:
@@ -46,7 +55,8 @@ jobs:
         if: ${{ env.SUPABASE_ACCESS_TOKEN == '' || env.SUPABASE_PROJECT_ID == '' }}
         run: |
           echo "::notice::SUPABASE_ACCESS_TOKEN (secret) или SUPABASE_PROJECT_ID (variable) не заданы."
-          echo "Деплой вручную: supabase functions deploy auth-code telegram-notify (см. docs/INFRA.md)."
+          echo "Деплой вручную: supabase functions deploy telegram-notify (см. docs/INFRA.md)."
+          echo "auth-code снята (#35/#88) и не деплоится: вход специалиста — только Google OAuth."
 
       - name: Checkout
         if: ${{ env.SUPABASE_ACCESS_TOKEN != '' && env.SUPABASE_PROJECT_ID != '' }}
@@ -56,23 +66,23 @@ jobs:
         if: ${{ env.SUPABASE_ACCESS_TOKEN != '' && env.SUPABASE_PROJECT_ID != '' }}
         uses: supabase/setup-cli@v1
 
-      # --no-verify-jwt продублирован флагом: функции вызываются до входа/анонимно
-      # (см. supabase/config.toml — там же задокументирована модель авторизации).
+      # --no-verify-jwt продублирован флагом: функция вызывается анонимно,
+      # до входа (см. supabase/config.toml — там же задокументирована модель
+      # авторизации). `auth-code` намеренно НЕ деплоится: она снята (#35/#88).
       - name: Deploy functions
         if: ${{ env.SUPABASE_ACCESS_TOKEN != '' && env.SUPABASE_PROJECT_ID != '' }}
         run: |
-          supabase functions deploy auth-code --project-ref "$SUPABASE_PROJECT_ID" --no-verify-jwt
           supabase functions deploy telegram-notify --project-ref "$SUPABASE_PROJECT_ID" --no-verify-jwt
 
-      # Функции должны отвечать (не 404/401): пустой POST → 400 от auth-code,
-      # 400 от telegram-notify. Ранний детект случайного отката verify_jwt.
-      # Плюс НАСТОЯЩИЙ браузерный preflight: именно он ломал вход психолога
+      # Функция должна отвечать (не 404/401): пустой POST → 400 от
+      # telegram-notify. Ранний детект случайного отката verify_jwt.
+      # Плюс НАСТОЯЩИЙ браузерный preflight: именно он ломал вызов функции
       # («blocked by CORS policy … It does not have HTTP ok status»), а браузер
       # не показывает статус OPTIONS — поэтому проверяем его здесь.
       - name: Smoke check functions are reachable
         if: ${{ env.SUPABASE_ACCESS_TOKEN != '' && env.SUPABASE_PROJECT_ID != '' }}
         run: |
-          for fn in auth-code telegram-notify; do
+          for fn in telegram-notify; do
             code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
               "https://${SUPABASE_PROJECT_ID}.supabase.co/functions/v1/${fn}" \
               -H "Content-Type: application/json" -d '{}')
@@ -89,7 +99,7 @@ jobs:
         env:
           ORIGIN: https://a1dmitry.github.io
         run: |
-          for fn in auth-code telegram-notify; do
+          for fn in telegram-notify; do
             hdrs=$(curl -s -D - -o /dev/null -X OPTIONS \
               "https://${SUPABASE_PROJECT_ID}.supabase.co/functions/v1/${fn}" \
               -H "Origin: ${ORIGIN}" \
@@ -121,38 +131,83 @@ jobs:
           HAS_SECRETS: ${{ secrets.SUPABASE_ACCESS_TOKEN != '' && vars.SUPABASE_PROJECT_ID != '' }}
         run: |
           missing=0
-          for fn in auth-code telegram-notify; do
-            code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+          revived=0
+          unknown=0
+
+          # curl при недоступности адреса сам печатает 000 и выходит ненулевым,
+          # поэтому `|| echo 000` давал «000000» и ветка 000 никогда не
+          # срабатывала (найденный дефект: «нет сети» читалось как «отвечает»).
+          probe() {
+            local c
+            c=$(curl -s -o /dev/null -w "%{http_code}" "$@" || true)
+            [ -n "$c" ] || c=000
+            printf '%s' "$c"
+          }
+
+          # 1) Требуемая функция: telegram-notify обязана отвечать (не 404).
+          for fn in telegram-notify; do
+            code=$(probe -X POST \
               "https://${PROJECT_REF}.supabase.co/functions/v1/${fn}" \
-              -H "Content-Type: application/json" -d '{}' || echo 000)
+              -H "Content-Type: application/json" -d '{}')
             echo "$fn -> HTTP $code"
             case "$code" in
               404|000) missing=1 ;;
             esac
           done
-          # Браузерный preflight auth-code: 2xx + Access-Control-Allow-Origin.
+
+          # 2) Браузерный preflight telegram-notify: 2xx + Access-Control-Allow-Origin.
           # Без него SPA не может вызвать функцию вообще («CORS-ошибка»).
           hdrs=$(curl -s -D - -o /dev/null -X OPTIONS \
-            "https://${PROJECT_REF}.supabase.co/functions/v1/auth-code" \
+            "https://${PROJECT_REF}.supabase.co/functions/v1/telegram-notify" \
             -H "Origin: ${ORIGIN}" \
             -H "Access-Control-Request-Method: POST" \
             -H "Access-Control-Request-Headers: authorization, x-client-info, apikey, content-type" || true)
           pcode=$(printf '%s' "$hdrs" | head -1 | tr -d '\r' | awk '{print $2}')
           porigin=$(printf '%s' "$hdrs" | grep -i '^access-control-allow-origin:' | tr -d '\r' | awk '{print $2}')
-          echo "auth-code preflight -> HTTP ${pcode:-нет ответа} · allow-origin=${porigin:-—}"
+          echo "telegram-notify preflight -> HTTP ${pcode:-нет ответа} · allow-origin=${porigin:-—}"
           if [ -z "$pcode" ] || [ "$pcode" -lt 200 ] || [ "$pcode" -ge 300 ] || [ -z "$porigin" ]; then
             echo "preflight not ok: HTTP ${pcode:-нет ответа}, allow-origin=${porigin:-—}"
             missing=1
           fi
+
+          # 3) Снятая функция: auth-code НЕ должна отвечать (#35 «must not be
+          # deployed or restored», #88 — вход только Google OAuth). Отсутствие
+          # доказывается фактом gateway-404; «нет сети» (000) — это НЕ
+          # доказательство отсутствия, а неизмеренность.
+          retired_code=$(probe -X POST \
+            "https://${PROJECT_REF}.supabase.co/functions/v1/auth-code" \
+            -H "Content-Type: application/json" -d '{}')
+          echo "auth-code (снята) -> HTTP $retired_code"
+          case "$retired_code" in
+            404) echo "auth-code отсутствует в проде — соответствует канону (#35/#88)." ;;
+            # 000 = ответа не было вовсе: это НЕ доказательство отсутствия.
+            # Считать такое «возрождением» нельзя — иначе мёртвая сеть красит
+            # прогон ложным обвинением (тот же класс дефекта, что #54).
+            000) echo "::notice::auth-code: ответ не получен (нет сети) — факт отсутствия НЕ измерен."; unknown=1 ;;
+            *)   revived=1 ;;
+          esac
+
+          # Возрождение отменённого пути входа — красный ВСЕГДА, независимо от
+          # секретов: это живая анонимная функция выдачи кодов, которой по канону
+          # быть не должно. К «ожиданию владельца» это отношения не имеет.
+          if [ "$revived" = "1" ]; then
+            echo "::error::auth-code отвечает в проде (HTTP $retired_code) — возрождён отменённый путь входа. Канон: #35/#88 (вход специалиста только Google OAuth), функция не должна быть задеплоена."
+            echo "::error::Действие владельца: Supabase Dashboard → Edge Functions → удалить auth-code (или supabase functions delete auth-code --project-ref ${PROJECT_REF})."
+            exit 1
+          fi
+
           if [ "$missing" = "1" ]; then
             if [ "$HAS_SECRETS" = "true" ]; then
-              echo "::error::Edge Functions не отвечают в проде (404/нет сети/preflight): деплой не выполнен или откатился. Блокер #35/#46."
-              echo "::error::Действие владельца: docs/OWNER-CHECKLIST-E2E.md, Блок 1 (SUPABASE_ACCESS_TOKEN + SUPABASE_PROJECT_ID → supabase functions deploy ... --no-verify-jwt)."
+              echo "::error::telegram-notify не отвечает в проде (404/нет сети/preflight): деплой не выполнен или откатился. Блокер #35."
+              echo "::error::Действие владельца: docs/OWNER-CHECKLIST-E2E.md, Блок 1 (SUPABASE_ACCESS_TOKEN + SUPABASE_PROJECT_ID → supabase functions deploy telegram-notify --no-verify-jwt)."
               exit 1
             else
-              echo "::warning::Edge Functions не отвечают в проде (404/нет сети/preflight): деплой не выполнен — требуется действие владельца (блокер #35). CI остаётся зелёным (advisory), прод-проверка — в прод-зонде."
+              echo "::warning::telegram-notify не отвечает в проде (404/нет сети/preflight): деплой не выполнен — требуется действие владельца (блокер #35). CI остаётся зелёным (advisory), прод-проверка — в прод-зонде."
               echo "::notice::Действие владельца: docs/OWNER-CHECKLIST-E2E.md, Блок 1. Факт NOT_DEPLOYED зафиксирован в логе, но не красит ветку красным до настройки секретов."
               exit 0
             fi
           fi
-          echo "Edge Functions отвечают в проде — статус зелёный обоснован."
+          if [ "$unknown" = "1" ]; then
+            echo "::warning::Прод-состояние измерено не полностью: по снятой auth-code ответа не получили. Это не «всё чисто»."
+          fi
+          echo "telegram-notify отвечает в проде, снятая auth-code отсутствует — статус зелёный обоснован."

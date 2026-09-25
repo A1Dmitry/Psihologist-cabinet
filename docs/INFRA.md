@@ -18,8 +18,13 @@
   anon key публичный by design, секретом не является). Роадмап и регламент
   подключения к БД через официальный Supabase MCP Server см. в
   `docs/ROADMAP-DATABASE-CONNECTION.md`.
-- **Почта:** Resend через Edge Function `auth-code` (вход по одноразовому коду).
-- **Telegram:** Edge Function `telegram-notify` (токен бота только на сервере).
+- **Почта:** ~~Resend через Edge Function `auth-code` (вход по одноразовому коду)~~
+  — **СНЯТО** (#88, коррекция #35 от 2026-09-25): вход специалиста только
+  Google OAuth через Supabase Auth, почтовый код входа отменён. Функция
+  `auth-code` не деплоится и не должна отвечать в проде; SMTP/Resend для входа
+  больше не требуется.
+- **Telegram:** Edge Function `telegram-notify` (токен бота только на сервере) —
+  единственная функция, которая деплоится.
 
 ## Статус продакшена (чек-лист)
 
@@ -84,13 +89,16 @@
    - **Вручную:**
      ```bash
      npm i -g supabase && supabase login
-     supabase functions deploy auth-code --project-ref phiavtroybgwyjdhqqkh --no-verify-jwt
      supabase functions deploy telegram-notify --project-ref phiavtroybgwyjdhqqkh --no-verify-jwt
+     # auth-code СНЯТА (#35/#88) — не деплоим. Если была задеплоена ранее:
+     supabase functions delete auth-code --project-ref phiavtroybgwyjdhqqkh
      ```
-     (`verify_jwt=false` зашит и в `supabase/config.toml` — флаг дублирует его на случай старого CLI.)
+     (`verify_jwt=false` зашит и в `supabase/config.toml` — флаг дублирует его на случай старого CLI.
+     Секции `[functions.auth-code]` в `config.toml` больше нет: случайный деплой
+     снятой функции уедет с `verify_jwt=true`, то есть fail-closed.)
      Функция доступна без пользовательского JWT по назначению; до публичного
      использования нужны server-side IP rate limit и CAPTCHA/эквивалент поверх
-     существующих email cooldown/лимита попыток. Не помещать service-role key
+     существующих лимитов. Не помещать service-role key
      во frontend или в этот request.
 
    > **Симптом «функция не задеплоена» в браузере — CORS-ошибка, а не 404.**
