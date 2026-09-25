@@ -26,6 +26,10 @@ on:
 
 permissions:
   contents: read
+  # отчёт публикуется комментарием к PR: логи run'а из песочницы исполнителя
+  # не скачиваются (egress до results-receiver.actions.githubusercontent.com
+  # закрыт), а api.github.com доступен — поэтому evidence живёт в PR.
+  pull-requests: write
 
 concurrency:
   group: prod-probe
@@ -43,9 +47,9 @@ jobs:
         with:
           node-version: '22'
 
-      # Человекочитаемый отчёт — в лог запуска (это и есть evidence).
+      # Человекочитаемый отчёт — в лог запуска.
       - name: Run read-only production probe
-        run: node tools/prod-probe/probe.mjs
+        run: node tools/prod-probe/probe.mjs | tee /tmp/prod-probe-report.txt
 
       # Тот же прогон машиночитаемым JSON — артефактом, чтобы отчёт можно было
       # приложить к issue/re-audit без копипасты из лога.
@@ -59,3 +63,23 @@ jobs:
           path: /tmp/prod-probe-report.json
           if-no-files-found: ignore
           retention-days: 30
+
+      # Evidence — комментарием к PR (см. блок permissions).
+      - name: Publish evidence to pull request
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          {
+            echo "## Production read-only probe (issue #46, TASK 1/2/5)"
+            echo
+            echo "Канал: PostgREST/GoTrue с публичным anon key. Секреты не использовались."
+            echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} · SHA: \`${SHA}\` · $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo
+            echo '```text'
+            cat /tmp/prod-probe-report.txt
+            echo '```'
+          } > /tmp/prod-probe-comment.md
+          gh pr comment "$PR" --body-file /tmp/prod-probe-comment.md
