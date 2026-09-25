@@ -16,7 +16,8 @@ import { clientCabinetService, MATERIAL_KINDS } from '../services/clientCabinetS
 import { cabinetStatsService, moneyLabel } from '../services/cabinetStatsService.js';
 import {
   timezoneService, todayStr, weekdayOf, addDaysStr, daysFromToday,
-  weekdayTimeLabel, zoneCity, sessionZoneLabel, sessionZoneHint, WEEKDAY_NAMES_SHORT
+  weekdayTimeLabel, zoneCity, sessionZoneLabel, sessionZoneHint, WEEKDAY_NAMES_SHORT,
+  addMinutesToTime, timeToMinutes
 } from '../services/timezoneService.js';
 import { DEFAULT_DURATION_MIN } from '../domain/duration.js';
 
@@ -167,6 +168,13 @@ export class CabinetViewModel extends BaseViewModel {
       .sort((a, b) => a.time.localeCompare(b.time));
   }
 
+  /** Блокировки, покрывающие выбранный день расписания (личное время / отпуск). */
+  get blocksOnSelectedDate() {
+    const d = this.selectedDate;
+    if (!d) return [];
+    return this.blocks.filter(b => b.covers(d));
+  }
+
   get weekStats() {
     const from = daysFromToday(-6);
     const list = this.sessions.filter(s => s.date >= from && s.status !== 'cancelled');
@@ -200,8 +208,17 @@ export class CabinetViewModel extends BaseViewModel {
   // ——— Commands ———
   saveSession(form) {
     if (!this.psyId) return false;
-    if (!form.clientId || !form.serviceId || !form.date || !form.time) {
-      this.error = 'Заполните обязательные поля';
+    const personal = form.purpose === 'personal' || !form.clientId;
+    if (personal && !form.id) {
+      return this.addPersonalBlock(form);
+    }
+    if (!form.date || !form.time) {
+      this.error = 'Укажите дату и время';
+      this.notify();
+      return false;
+    }
+    if (!form.clientId) {
+      this.error = 'Для встречи выберите клиента или переключитесь на «Личное время»';
       this.notify();
       return false;
     }
@@ -209,7 +226,7 @@ export class CabinetViewModel extends BaseViewModel {
     const payload = {
       psychologistId: this.psyId,
       clientId: form.clientId,
-      serviceId: form.serviceId,
+      serviceId: form.serviceId || null,
       date: form.date,
       time: form.time,
       status: form.status || 'confirmed',
@@ -552,6 +569,55 @@ export class CabinetViewModel extends BaseViewModel {
       [ScheduleBlockKind.HOLIDAY]: 'Праздник',
       [ScheduleBlockKind.OTHER]: 'Другое'
     };
+  }
+
+  /**
+   * Личное время психолога: блокировка слота или периода, без клиента.
+   * Публичная запись видит это как busy (schedule_blocks), не как сессию.
+   */
+  addPersonalBlock(form) {
+    if (!this.psyId) return false;
+    const dateFrom = form.date || form.dateFrom;
+    if (!dateFrom) {
+      this.error = 'Укажите дату, которую нужно закрыть от записи';
+      this.notify();
+      return false;
+    }
+    const dateTo = form.dateTo || dateFrom;
+    if (dateTo < dateFrom) {
+      this.error = 'Дата окончания раньше даты начала';
+      this.notify();
+      return false;
+    }
+    let timeFrom = form.time || form.timeFrom || '';
+    let timeTo = form.timeTo || '';
+    // Один слот без «по»: закрываем канонический час, а не весь день.
+    if (timeFrom && !timeTo && dateTo === dateFrom) {
+      const start = timeToMinutes(timeFrom);
+      const span = Number(form.durationMin) || DEFAULT_DURATION_MIN;
+      timeTo = (start != null && start + span >= 24 * 60)
+        ? '23:59'
+        : addMinutesToTime(timeFrom, span);
+    }
+    if (timeFrom && timeTo && timeTo <= timeFrom && dateTo === dateFrom) {
+      this.error = 'Время окончания должно быть позже начала';
+      this.notify();
+      return false;
+    }
+    const ok = this.addBlock({
+      dateFrom,
+      dateTo,
+      timeFrom,
+      timeTo,
+      kind: form.kind || ScheduleBlockKind.BUSY,
+      title: form.blockTitle || form.title || 'Личное время',
+      note: form.note || ''
+    });
+    if (!ok) {
+      this.error = this.error || 'Не удалось закрыть время';
+      this.notify();
+    }
+    return ok;
   }
 
   addBlock(form) {

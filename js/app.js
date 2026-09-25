@@ -672,13 +672,24 @@ function renderCabSchedule() {
     });
   }
   const list = cabinetVm.sessionsOnSelectedDate;
+  const dayBlocks = cabinetVm.blocksOnSelectedDate;
   const box = $('#sch-list');
   if (!box) return;
-  if (!list.length) {
-    box.innerHTML = '<div class="p-8 text-center text-slate-400 text-sm">Нет сессий</div>';
+  if (!list.length && !dayBlocks.length) {
+    box.innerHTML = '<div class="p-8 text-center text-slate-400 text-sm">Нет сессий и блокировок</div>';
     return;
   }
-  box.innerHTML = list.map(s => {
+  const blockRows = dayBlocks.map(b => `
+    <div class="flex items-center gap-4 p-4 border-b last:border-0 bg-slate-50">
+      <div class="font-mono text-sm text-slate-500 w-14">${esc(b.timeFrom || 'день')}</div>
+      <div class="flex-1">
+        <div class="font-medium">${esc(b.title || 'Личное время')}</div>
+        <div class="text-sm text-slate-500">закрыто от записи${b.dateTo && b.dateTo !== b.dateFrom ? ` · до ${esc(b.dateTo)}` : ''}${b.timeFrom ? ` · ${esc(b.timeFrom)}–${esc(b.timeTo || '')}` : ' · весь день'}</div>
+      </div>
+      <span class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">${esc(cabinetVm.blockKindLabels[b.kind] || 'Занят')}</span>
+      <button data-del-block="${esc(b.id)}" class="text-sm text-rose-500">Снять</button>
+    </div>`).join('');
+  box.innerHTML = blockRows + list.map(s => {
     const cl = cabinetVm.clientById(s.clientId);
     const sv = cabinetVm.serviceById(s.serviceId);
     const gcal = googleAddLink({
@@ -877,9 +888,6 @@ function renderCabBlocks() {
       </div>
       <button data-del-block="${esc(b.id)}" class="text-rose-500 shrink-0">Снять</button>
     </div>`).join('');
-  box.querySelectorAll('[data-del-block]').forEach(btn => {
-    btn.onclick = () => { cabinetVm.removeBlock(btn.dataset.delBlock); renderCabinet(); };
-  });
   renderCabOverrides();
 }
 
@@ -2020,6 +2028,11 @@ function bindEvents() {
       cabinetVm.deleteSession(ds.dataset.delSession);
       renderCabinet();
     }
+    const dbk = e.target.closest('[data-del-block]');
+    if (dbk) {
+      cabinetVm.removeBlock(dbk.dataset.delBlock);
+      renderCabinet();
+    }
     const ec = e.target.closest('[data-edit-client]');
     if (ec) openClientModal(ec.dataset.editClient);
     const dc = e.target.closest('[data-del-client]');
@@ -2214,13 +2227,34 @@ function bindEvents() {
   });
 
   // Session modal
+  const syncSessPurpose = () => {
+    const personal = $('#sess-purpose-personal')?.checked;
+    $('#sess-meeting-fields')?.classList.toggle('hidden', !!personal);
+    $('#sess-reschedule-block')?.classList.toggle('hidden', !!personal);
+    $('#sess-status-wrap')?.classList.toggle('hidden', !!personal);
+    $('#sess-video-wrap')?.classList.toggle('hidden', !!personal);
+    $('#sess-date-to-wrap')?.classList.toggle('hidden', !personal);
+    $('#sess-time-to-wrap')?.classList.toggle('hidden', !personal);
+    $('#sess-block-title-wrap')?.classList.toggle('hidden', !personal);
+    $('#sess-personal-hint')?.classList.toggle('hidden', !personal);
+    const title = $('#sess-modal-title');
+    if (title) title.textContent = personal ? 'Личное время' : 'Сессия';
+  };
+  $('#sess-purpose-meeting')?.addEventListener('change', syncSessPurpose);
+  $('#sess-purpose-personal')?.addEventListener('change', syncSessPurpose);
+
   $('#sess-save')?.addEventListener('click', () => {
+    const personal = $('#sess-purpose-personal')?.checked;
     const ok = cabinetVm.saveSession({
       id: $('#sess-id')?.value || null,
-      clientId: $('#sess-client')?.value,
+      purpose: personal ? 'personal' : 'meeting',
+      clientId: personal ? '' : $('#sess-client')?.value,
       serviceId: $('#sess-service')?.value,
       date: $('#sess-date')?.value,
+      dateTo: $('#sess-date-to')?.value,
       time: $('#sess-time')?.value,
+      timeTo: $('#sess-time-to')?.value,
+      blockTitle: $('#sess-block-title')?.value,
       status: $('#sess-status')?.value,
       note: $('#sess-note')?.value,
       videoPlatform: $('#sess-platform')?.value,
@@ -2443,11 +2477,17 @@ function openSessionModal(sessionId, preselectClientId) {
   $('#sess-id').value = s?.id || '';
   const clSel = $('#sess-client');
   const svSel = $('#sess-service');
-  clSel.innerHTML = cabinetVm.clients.map(c => `<option value="${c.id}">${c.name}</option>`).join('') || '<option value="">Нет клиентов</option>';
-  svSel.innerHTML = cabinetVm.services.map(x => `<option value="${x.id}">${x.name} (${x.priceLabel()})</option>`).join('');
+  clSel.innerHTML = '<option value="">— без клиента (личное время) —</option>' +
+    cabinetVm.clients.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  svSel.innerHTML = '<option value="">— без услуги —</option>' +
+    cabinetVm.services.map(x => `<option value="${x.id}">${esc(x.name)} (${esc(x.priceLabel())})</option>`).join('');
+  const meetingRadio = $('#sess-purpose-meeting');
+  const personalRadio = $('#sess-purpose-personal');
   if (s) {
-    clSel.value = s.clientId;
-    svSel.value = s.serviceId;
+    if (meetingRadio) meetingRadio.checked = true;
+    if (personalRadio) personalRadio.checked = false;
+    clSel.value = s.clientId || '';
+    svSel.value = s.serviceId || '';
     $('#sess-date').value = s.date;
     $('#sess-time').value = s.time;
     $('#sess-status').value = s.status;
@@ -2455,8 +2495,14 @@ function openSessionModal(sessionId, preselectClientId) {
     $('#sess-platform').value = s.videoPlatform || '';
     $('#sess-meet').value = s.meetLink || '';
   } else {
-    $('#sess-date').value = new Date().toISOString().slice(0, 10);
+    const startPersonal = !preselectClientId && !cabinetVm.clients.length;
+    if (meetingRadio) meetingRadio.checked = !startPersonal;
+    if (personalRadio) personalRadio.checked = !!startPersonal;
+    $('#sess-date').value = cabinetVm.selectedDate || new Date().toISOString().slice(0, 10);
+    $('#sess-date-to') && ($('#sess-date-to').value = '');
     $('#sess-time').value = '10:00';
+    $('#sess-time-to') && ($('#sess-time-to').value = '');
+    $('#sess-block-title') && ($('#sess-block-title').value = '');
     $('#sess-status').value = 'confirmed';
     $('#sess-note').value = '';
     $('#sess-platform').value = '';
@@ -2467,6 +2513,17 @@ function openSessionModal(sessionId, preselectClientId) {
   }
   const plat = $('#sess-platform').value;
   $('#sess-meet-wrap')?.classList.toggle('hidden', !['google_meet', 'zoom', 'other'].includes(plat));
+  const personal = $('#sess-purpose-personal')?.checked;
+  $('#sess-meeting-fields')?.classList.toggle('hidden', !!personal);
+  $('#sess-reschedule-block')?.classList.toggle('hidden', !!personal);
+  $('#sess-status-wrap')?.classList.toggle('hidden', !!personal);
+  $('#sess-video-wrap')?.classList.toggle('hidden', !!personal);
+  $('#sess-date-to-wrap')?.classList.toggle('hidden', !personal);
+  $('#sess-time-to-wrap')?.classList.toggle('hidden', !personal);
+  $('#sess-block-title-wrap')?.classList.toggle('hidden', !personal);
+  $('#sess-personal-hint')?.classList.toggle('hidden', !personal);
+  const title = $('#sess-modal-title');
+  if (title) title.textContent = personal ? 'Личное время' : 'Сессия';
   openModal('modal-session');
 }
 

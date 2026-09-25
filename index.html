@@ -697,21 +697,41 @@
   <!-- Modals -->
   <div id="modal-session" class="fixed inset-0 z-50 hidden items-center justify-center modal-bg p-4">
     <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl max-h-[90vh] overflow-y-auto">
-      <h3 class="text-lg font-bold mb-4">Сессия</h3>
+      <h3 id="sess-modal-title" class="text-lg font-bold mb-4">Сессия</h3>
       <input type="hidden" id="sess-id">
       <div class="space-y-3 text-sm">
-        <div><label class="font-medium">Клиент</label><select id="sess-client" class="w-full mt-1 px-3 py-2 rounded-xl border"></select></div>
-        <div><label class="font-medium">Услуга</label><select id="sess-service" class="w-full mt-1 px-3 py-2 rounded-xl border"></select></div>
+        <div class="grid grid-cols-2 gap-2">
+          <label class="flex items-center gap-2 rounded-xl border px-3 py-2 cursor-pointer">
+            <input type="radio" name="sess-purpose" id="sess-purpose-meeting" value="meeting" checked class="accent-indigo-600">
+            <span>Встреча</span>
+          </label>
+          <label class="flex items-center gap-2 rounded-xl border px-3 py-2 cursor-pointer">
+            <input type="radio" name="sess-purpose" id="sess-purpose-personal" value="personal" class="accent-indigo-600">
+            <span>Личное время</span>
+          </label>
+        </div>
+        <p id="sess-personal-hint" class="text-xs text-slate-500 hidden">Закроет слот или период от онлайн-записи. Клиент не нужен. Заметка видна только вам.</p>
+        <div id="sess-meeting-fields" class="space-y-3">
+          <div><label class="font-medium">Клиент</label><select id="sess-client" class="w-full mt-1 px-3 py-2 rounded-xl border"></select></div>
+          <div><label class="font-medium">Услуга <span class="text-slate-400 font-normal">(необязательно)</span></label><select id="sess-service" class="w-full mt-1 px-3 py-2 rounded-xl border"></select></div>
+        </div>
         <div class="grid grid-cols-2 gap-3">
           <div><label class="font-medium">Дата</label><input type="date" id="sess-date" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+          <div id="sess-date-to-wrap" class="hidden"><label class="font-medium">Дата по</label><input type="date" id="sess-date-to" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
           <div><label class="font-medium">Время</label><input type="time" id="sess-time" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+          <div id="sess-time-to-wrap" class="hidden"><label class="font-medium">Время по</label><input type="time" id="sess-time-to" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
+        </div>
+        <div id="sess-block-title-wrap" class="hidden">
+          <label class="font-medium">Задача / заголовок</label>
+          <input id="sess-block-title" placeholder="Например: бухгалтерия, учёба, отпуск" class="w-full mt-1 px-3 py-2 rounded-xl border">
+          <p class="text-xs text-slate-400 mt-1">Пустые «время с/по» — весь день. «Дата по» закрывает период целиком.</p>
         </div>
         <div id="sess-reschedule-block" class="rounded-xl bg-amber-50 border border-amber-100 p-3 space-y-2">
           <p class="text-xs text-amber-900">При смене даты/времени клиенту уйдёт запрос <strong>подтвердить согласие</strong> на перенос.</p>
           <input type="text" id="sess-change-reason" placeholder="Причина переноса (увидит клиент)" class="w-full px-3 py-2 rounded-xl border text-sm">
           <label class="flex gap-2 text-xs text-slate-600"><input type="checkbox" id="sess-notify-client" checked class="accent-indigo-600"> Уведомить клиента и ждать согласия</label>
         </div>
-        <div><label class="font-medium">Статус</label>
+        <div id="sess-status-wrap"><label class="font-medium">Статус</label>
           <select id="sess-status" class="w-full mt-1 px-3 py-2 rounded-xl border">
             <option value="confirmed">Подтверждено</option>
             <option value="pending">Ожидает</option>
@@ -720,7 +740,7 @@
             <option value="cancelled">Отменено</option>
           </select>
         </div>
-        <div>
+        <div id="sess-video-wrap">
           <label class="font-medium">Видеосвязь</label>
           <select id="sess-platform" class="w-full mt-1 px-3 py-2 rounded-xl border">
             <option value="">— очно —</option>
@@ -790,6 +810,6 @@
     </div>
   </div>
 
-  <script type="module" src="%BASE%js/app.js?v=20260925a"></script>
+  <script type="module" src="%BASE%js/app.js?v=20260925b"></script>
 </body>
 </html>

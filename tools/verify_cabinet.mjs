@@ -364,7 +364,8 @@ console.log('\n10. Разметка index.html под новые блоки');
   ok(dups.length === 0, 'нет дублей id в разметке', dups.join(', '));
   for (const need of ['page-cabinet', 'cab3-schedule-zone', 'cab3-series', 'cab3-requests',
     'cab3-journal-requests', 'cab3-client-extra', 'cab3-stats', 'cc-root', 'cc-reply-wrap',
-    'reply-message', 'reply-actions', 'btn-reply-yes', 'btn-reply-no', 'reply-done']) {
+    'reply-message', 'reply-actions', 'btn-reply-yes', 'btn-reply-no', 'reply-done',
+    'sess-purpose-personal', 'sess-date-to', 'sess-time-to', 'sess-block-title']) {
     ok(ids.includes(need), `разметка: есть #${need}`);
   }
   ok(htmlSrc.includes('js/views/cabinetUi.js') || true, 'cabinetUi подключается из app.js (не из разметки)');
