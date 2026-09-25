@@ -860,6 +860,47 @@ export class BookingViewModel extends BaseViewModel {
     return `Слот удерживается ${p.holdMinutes} мин. Оплатите ${paymentService.formatAmount(p.amountDueNow, p.currency)}, чтобы подтвердить запись.`;
   }
 
+  /**
+   * Демо-кнопка на публичной странице — не эквайринг и не server-ack (#21 п.4).
+   * Когда запись уже на сервере (Supabase настроен), «оплата прошла» было бы
+   * ложным успехом: меняется только localStorage, RPC/payments не вызываются.
+   * Локальный демо-контур без сервера может подтверждать запись в этом браузере.
+   */
+  get demoPayIsLocalOnly() {
+    return !supabaseSync.enabled();
+  }
+
+  /**
+   * Единственный источник копирайта панели оплаты: UI не решает сам,
+   * показывать ли демо-кнопки, которые притворяются эквайрингом.
+   */
+  get paymentCheckout() {
+    if (!this.awaitingPayment) return { visible: false, allowDemoPay: false };
+    const due = this.paymentInfo?.amountDueNow ?? this.paymentInfo?.amountDue ?? 0;
+    const currency = this.paymentInfo?.currency || 'BYN';
+    const dueLabel = paymentService.formatAmount(due, currency);
+    if (this.demoPayIsLocalOnly) {
+      return {
+        visible: true,
+        mode: 'local-demo',
+        title: 'Подтверждение оплаты (демо)',
+        lead: this.successText,
+        dueLabel,
+        allowDemoPay: true,
+        footnote: 'Демо: оплата сохраняется только в этом браузере. На сервер она не уходит.'
+      };
+    }
+    return {
+      visible: true,
+      mode: 'server-hold',
+      title: 'Ожидание оплаты',
+      lead: this.successText,
+      dueLabel,
+      allowDemoPay: false,
+      footnote: 'Оплата на сайте не проводится. Переведите сумму по реквизитам психолога — он подтвердит запись в кабинете. Неоплаченный резерв снимается автоматически.'
+    };
+  }
+
   async submit() {
     this.error = '';
     if (!this.psychologist) {
@@ -1066,10 +1107,22 @@ export class BookingViewModel extends BaseViewModel {
     }
   }
 
-  /** Демо-оплата / «чек» */
+  /**
+   * Демо-оплата / «чек» на публичной странице.
+   *
+   * Канон #21 п.4: либо реальный server-ack, либо честный local-only UX.
+   * Эквайринга нет — поэтому при живом Supabase метод отказывается подтверждать
+   * запись и не шлёт «Оплата прошла (сайт)» в Telegram. Poka-Yoke: даже если
+   * в разметке останется data-pay-demo, ложного успеха не будет.
+   */
   completePayment(method = 'card_demo') {
     if (!this.createdSessionId) {
       this.error = 'Нет сессии для оплаты';
+      this.notify();
+      return false;
+    }
+    if (!this.demoPayIsLocalOnly) {
+      this.error = 'Демо-оплата не записывается на сервер. Оплатите по реквизитам психолога — он подтвердит запись в кабинете.';
       this.notify();
       return false;
     }
@@ -1081,18 +1134,9 @@ export class BookingViewModel extends BaseViewModel {
     }
     reminderService.scheduleForSession(this.createdSessionId);
 
-    const paidSession = db.sessions.find(x => x.id === this.createdSessionId);
-    if (paidSession) {
-      const c = db.clientsOf(this.psychologist.id).find(x => x.id === paidSession.clientId);
-      const sv = db.servicesOf(this.psychologist.id).find(x => x.id === paidSession.serviceId);
-      telegramService.notifyViaWebhook(this.psychologist.id, 'payment',
-        `💰 <b>Оплата прошла (сайт)</b>\\nКлиент: ${c?.name || c?.nickname || '—'}\\nКогда: ${paidSession.date} в ${paidSession.time}${sv ? `\\nУслуга: ${sv.name} · ${sv.priceLabel()}` : ''}`
-      ).catch(() => {});
-    }
-
     this.awaitingPayment = false;
     this.done = true;
-    this.successText = `${this.nickname || this.name}, оплата прошла. ${res.message} Запись: ${formatDay(this.date)} в ${this.selectionSlotText || this.time}.`;
+    this.successText = `${this.nickname || this.name}, демо-оплата сохранена только в этом браузере. ${res.message} Запись: ${formatDay(this.date)} в ${this.selectionSlotText || this.time}.`;
     this.showToast(res.message);
     this.notify();
     return true;

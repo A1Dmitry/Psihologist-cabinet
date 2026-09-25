@@ -1837,18 +1837,19 @@ function renderBooking() {
     formBlock?.classList.add('hidden');
     if (payActions) {
       payActions.classList.remove('hidden');
-      const due = bookingVm.paymentInfo?.amountDueNow ?? 0;
-      const cur = bookingVm.paymentInfo?.currency || 'BYN';
-      payActions.innerHTML = `
-        <div class="rounded-2xl border border-orange-200 bg-orange-50 p-6 space-y-4">
-          <h3 class="font-bold text-lg text-orange-900">Подтверждение оплаты</h3>
-          <p class="text-sm text-orange-900/80">${bookingVm.successText}</p>
-          <p class="text-sm">К оплате сейчас: <strong>${paymentService.formatAmount(due, cur)}</strong></p>
+      const checkout = bookingVm.paymentCheckout;
+      const demoButtons = checkout.allowDemoPay ? `
           <div class="flex flex-col sm:flex-row gap-2">
             <button type="button" data-pay-demo="card_demo" class="px-5 py-2.5 rounded-full bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">Оплатить картой (демо)</button>
             <button type="button" data-pay-demo="transfer" class="px-5 py-2.5 rounded-full border border-indigo-300 text-indigo-700 text-sm font-medium">Я перевёл(а) / чек</button>
-          </div>
-          <p class="text-xs text-slate-500">После оплаты запись считается подтверждённой. Неоплаченный резерв снимается автоматически.</p>
+          </div>` : '';
+      payActions.innerHTML = `
+        <div class="rounded-2xl border border-orange-200 bg-orange-50 p-6 space-y-4">
+          <h3 class="font-bold text-lg text-orange-900">${checkout.title || 'Ожидание оплаты'}</h3>
+          <p class="text-sm text-orange-900/80">${checkout.lead || ''}</p>
+          <p class="text-sm">К оплате сейчас: <strong>${checkout.dueLabel || ''}</strong></p>
+          ${demoButtons}
+          <p class="text-xs text-slate-500">${checkout.footnote || ''}</p>
         </div>`;
     }
   } else {
