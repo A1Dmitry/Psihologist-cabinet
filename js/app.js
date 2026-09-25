@@ -2604,6 +2604,12 @@ function boot() {
       try { await cabinetApi.refresh(restored.psychologist.id); }
       catch (e) { console.warn('[boot] pull cabinet', e?.message || e); }
       startTelegramLoops(restored.psychologist.id);
+    } else if (restored.message) {
+      // Кабинет не открыт по внятной причине (отключённый аккаунт, сессия
+      // старше месяца, профиль не привязан). Без этого пользователь видел бы
+      // пустую форму входа и не понимал, что произошло (issue #40/#46).
+      authVm.error = restored.message;
+      authVm.step = 'email';
     }
 
     route = routeFromUrl();

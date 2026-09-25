@@ -450,78 +450,122 @@ begin
                            'schedule_overrides','tasks','psy_notes','client_entries']
   loop
     execute format('drop policy if exists owner_all on %I', t);
+    execute format('drop policy if exists owner_select on %I', t);
+    execute format('drop policy if exists owner_modify on %I', t);
+    execute format('drop policy if exists owner_update on %I', t);
+    execute format('drop policy if exists owner_delete on %I', t);
   end loop;
 end $$;
 
-create policy owner_all on psychologists
-  for all to authenticated
-  using (owner_id = auth.uid()) with check (owner_id = auth.uid());
+-- ——— Каноническое правило доступа владельца (issue #40/#46) ———
+-- «Свой кабинет» = owner_id = auth.uid() И кабинет активен. Одна реализация на
+-- все таблицы: раньше предикат `owner_id = auth.uid()` был продублирован в 13
+-- политиках, и отключение специалиста (is_active = false) не закрывало доступ —
+-- сессия, выданная до отключения, продолжала читать/писать чужие уже данные.
+-- Без security definer: подзапрос к psychologists проходит через её же политику
+-- owner_select, т.е. привилегий не добавляет (least privilege).
+create or replace function public.is_active_own_psychologist(p_psychologist_id text)
+returns boolean
+language sql
+stable
+set search_path = public
+as $$
+  select exists (
+    select 1 from psychologists p
+    where p.id = p_psychologist_id
+      and p.is_active
+      and p.owner_id = auth.uid()
+  );
+$$;
+
+revoke execute on function public.is_active_own_psychologist(text) from public, anon;
+grant execute on function public.is_active_own_psychologist(text) to authenticated;
+
+-- Свой профиль владелец читает даже отключённым: кабинету нужно показать
+-- причину («учётная запись отключена»), а не пустой экран.
+create policy owner_select on psychologists
+  for select to authenticated
+  using (owner_id = auth.uid());
+
+-- Писать (и создавать записи) может только владелец АКТИВНОГО кабинета.
+create policy owner_modify on psychologists
+  for insert to authenticated
+  with check (owner_id = auth.uid() and is_active);
+
+create policy owner_update on psychologists
+  for update to authenticated
+  using (owner_id = auth.uid() and is_active)
+  with check (owner_id = auth.uid() and is_active);
+
+create policy owner_delete on psychologists
+  for delete to authenticated
+  using (owner_id = auth.uid() and is_active);
 
 -- остальные таблицы — по принадлежности психологу
 create policy owner_all on services
   for all to authenticated
-  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
-  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+  using (public.is_active_own_psychologist(psychologist_id))
+  with check (public.is_active_own_psychologist(psychologist_id));
 
 create policy owner_all on clients
   for all to authenticated
-  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
-  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+  using (public.is_active_own_psychologist(psychologist_id))
+  with check (public.is_active_own_psychologist(psychologist_id));
 
 create policy owner_all on sessions
   for all to authenticated
-  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
-  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+  using (public.is_active_own_psychologist(psychologist_id))
+  with check (public.is_active_own_psychologist(psychologist_id));
 
 create policy owner_all on session_settings
   for all to authenticated
-  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
-  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+  using (public.is_active_own_psychologist(psychologist_id))
+  with check (public.is_active_own_psychologist(psychologist_id));
 
 create policy owner_all on payments
   for all to authenticated
-  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
-  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+  using (public.is_active_own_psychologist(psychologist_id))
+  with check (public.is_active_own_psychologist(psychologist_id));
 
 create policy owner_all on waiting_items
   for all to authenticated
-  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
-  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+  using (public.is_active_own_psychologist(psychologist_id))
+  with check (public.is_active_own_psychologist(psychologist_id));
 
 create policy owner_all on booking_attempts
   for all to authenticated
-  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
-  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+  using (public.is_active_own_psychologist(psychologist_id))
+  with check (public.is_active_own_psychologist(psychologist_id));
 
 create policy owner_all on session_reminders
   for all to authenticated
-  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
-  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+  using (public.is_active_own_psychologist(psychologist_id))
+  with check (public.is_active_own_psychologist(psychologist_id));
 
 create policy owner_all on schedule_blocks
   for all to authenticated
-  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
-  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+  using (public.is_active_own_psychologist(psychologist_id))
+  with check (public.is_active_own_psychologist(psychologist_id));
 
 create policy owner_all on schedule_overrides
   for all to authenticated
-  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
-  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+  using (public.is_active_own_psychologist(psychologist_id))
+  with check (public.is_active_own_psychologist(psychologist_id));
 
 create policy owner_all on tasks
   for all to authenticated
-  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
-  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+  using (public.is_active_own_psychologist(psychologist_id))
+  with check (public.is_active_own_psychologist(psychologist_id));
 
 create policy owner_all on psy_notes
   for all to authenticated
-  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
-  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+  using (public.is_active_own_psychologist(psychologist_id))
+  with check (public.is_active_own_psychologist(psychologist_id));
 
 create policy owner_all on client_entries
   for all to authenticated
-  using (psychologist_id in (select id from psychologists where owner_id = auth.uid()))
-  with check (psychologist_id in (select id from psychologists where owner_id = auth.uid()));
+  using (public.is_active_own_psychologist(psychologist_id))
+  with check (public.is_active_own_psychologist(psychologist_id));
 
 -- услуги/цены публичны (как на сайте специалиста) — anon читает активные
 drop policy if exists anon_read_services on services;
@@ -1201,6 +1245,7 @@ declare
   v_id    text;
   v_owner uuid := auth.uid();
   v_cur   uuid;
+  v_is_active boolean;
   v_base  text;
   v_slug  text;
   v_i     int := 0;
@@ -1217,7 +1262,7 @@ begin
   -- имя по умолчанию — локальная часть email (профиль не остаётся без имени)
   v_name := coalesce(v_name, split_part(v_email, '@', 1));
 
-  select id, owner_id into v_id, v_cur
+  select id, owner_id, is_active into v_id, v_cur, v_is_active
   from psychologists
   where lower(trim(email)) = v_email
   order by created_at
@@ -1232,9 +1277,21 @@ begin
       );
     end if;
 
+    -- Отключённый кабинет входом НЕ реактивируется (issue #40, п.8 / #46, TASK 3).
+    -- Раньше UPDATE ниже безусловно ставил is_active = true: деактивация
+    -- специалиста отменялась его же следующим входом. Реактивация — только
+    -- явным действием владельца (service_role / SQL Editor), не login-операцией.
+    if not v_is_active then
+      return jsonb_build_object(
+        'ok', false,
+        'inactive', true,
+        'error', 'Учётная запись отключена. Для восстановления доступа обратитесь к администратору портала.'
+      );
+    end if;
+
     update psychologists
     set owner_id       = coalesce(owner_id, v_owner),
-        is_active      = true,
+        -- is_active НЕ трогаем: см. проверку выше
         -- дозаполняем только пустое: существующие данные специалиста не затираем
         full_name      = nullif(trim(full_name), '') || '',
         phone          = case when coalesce(trim(phone), '') = '' then coalesce(trim(p_phone), '') else phone end,

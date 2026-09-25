@@ -40,14 +40,40 @@ export function setAuthToken(token) {
   userToken = token || null;
 }
 
+/**
+ * `iat` из JWT (секунды) — момент выпуска конкретного access-токена.
+ * ВНИМАНИЕ: при refresh GoTrue выдаёт НОВЫЙ токен со свежим `iat`, поэтому
+ * для абсолютного срока сессии (issue #40, п.7) этого мало: «когда сессия
+ * началась» храним отдельно в `issued_at` и не сбрасываем при продлении.
+ */
+export function tokenIssuedAt(token) {
+  try {
+    const payload = String(token || '').split('.')[1] || '';
+    const json = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+    const iat = Number(json?.iat);
+    return Number.isFinite(iat) && iat > 0 ? iat : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Сохранить сессию GoTrue (access/refresh/expires) и выставить токен. */
 export function persistSession(session) {
   if (!session?.access_token) return null;
+  const prev = readPersistedSession();
+  // Продление той же сессии (тот же sub) сохраняет исходную отметку выдачи;
+  // вход ДРУГОГО пользователя начинает отсчёт заново.
+  const sameOwner = !!prev?.access_token
+    && !!userIdFromToken(prev.access_token)
+    && userIdFromToken(prev.access_token) === userIdFromToken(session.access_token);
   const stored = {
     access_token: session.access_token,
     refresh_token: session.refresh_token || '',
     expires_at: session.expires_at ?? null,
-    token_type: session.token_type || 'bearer'
+    token_type: session.token_type || 'bearer',
+    issued_at: (sameOwner && prev.issued_at)
+      ? prev.issued_at
+      : (tokenIssuedAt(session.access_token) || Math.floor(Date.now() / 1000))
   };
   safeStorage.setJSON(SESSION_KEY, stored);
   setAuthToken(stored.access_token);
