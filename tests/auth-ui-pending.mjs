@@ -12,6 +12,9 @@
  * импортируется НАСТОЯЩИЙ js/app.js (вместе с boot() и renderAuth).
  */
 
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
 /* ——— DOM/хранилище ——— */
 function fakeEl() {
   const t = function () {};
@@ -58,6 +61,7 @@ globalThis.FileReader = class {};
 
 /* ——— сервер: только запрос кода,verify здесь не нужен ——— */
 const calls = [];
+let fnUp = true; // false = Edge Function auth-code не задеплоена (прод 2026-09-25)
 globalThis.fetch = async (url, opts = {}) => {
   const u = String(url);
   const body = opts.body ? JSON.parse(opts.body) : {};
@@ -70,9 +74,11 @@ globalThis.fetch = async (url, opts = {}) => {
     json: async () => json
   });
   if (u.includes('/functions/v1/auth-code')) {
+    if (!fnUp) return resp(404, { code: 'NOT_FOUND', message: 'Requested function was not found' });
     if (body.action === 'request') return resp(200, { ok: true, ttl_seconds: 120 });
     return resp(400, { ok: false, error: 'Неизвестное действие' });
   }
+  if (u.includes('/auth/v1/otp')) return resp(200, {});
   if (u.includes('/rest/v1/')) return resp(200, []);
   return resp(404, { msg: 'nf' });
 };
@@ -121,6 +127,43 @@ ok('истёкшее окно: явное сообщение «запросит�
   /новый код/i.test(stale.error || ''), stale.error);
 ok('истёкшее окно: протухшее ожидание удалено из хранилища',
   registration.pendingVerification() === null);
+
+// ——— 4. Подсказка канала: форма обязана говорить правду о письме ———
+// Дефект, найденный на живом проде (2026-09-25): владелец получил ССЫЛКУ
+// (запасной канал Supabase), кода в письме не было, а renderAuth() писал
+// «Код отправлен: 6–8 букв и цифр» в элемент #auth-code-hint, которого в
+// index.html не существовало — подсказка не отображалась вовсе.
+const html = readFileSync(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf-8');
+const iStep = html.indexOf('id="auth-step-code"');
+const iHint = html.indexOf('id="auth-code-hint"');
+const iPass = html.indexOf('id="auth-pass-wrap"');
+ok('index.html: элемент #auth-code-hint существует', iHint > 0, String(iHint));
+ok('index.html: подсказка внутри шага ввода кода',
+  iStep > 0 && iHint > iStep && iPass > iHint, `${iStep}/${iHint}/${iPass}`);
+
+ok('канал fn: подсказка обещает код 6–8 символов',
+  /6–8/.test(authVm.codeHint) && authVm.channel === 'fn', authVm.codeHint);
+
+fnUp = false; // прод: функция не задеплоена → запасной канал
+authVm.email = 'fallback@example.by';
+const otpRequested = await authVm.requestCode();
+ok('нет Edge Function: запрос кода переключил канал на otp',
+  otpRequested === true && authVm.channel === 'otp', String(authVm.channel));
+ok('канал otp: подсказка говорит про ССЫЛКУ, а не про код',
+  /ссылка/i.test(authVm.codeHint) && !/^Код отправлен/.test(authVm.codeHint), authVm.codeHint);
+ok('канал otp: подсказка называет причину и лечение (auth-code)',
+  /auth-code/i.test(authVm.codeHint), authVm.codeHint);
+ok('канал otp: сообщение use case не обещает код в письме',
+  !/Код отправлен/.test(String(authVm.error || '')) && /ссылка/i.test(authVm.codeHint));
+fnUp = true;
+
+// после перезагрузки канал восстанавливается вместе с ожиданием → та же подсказка
+const afterReload = new AuthViewModel();
+afterReload.resumePendingVerification();
+ok('после перезагрузки канал восстановлен из ожидания',
+  afterReload.channel === 'otp', String(afterReload.channel));
+ok('после перезагрузки подсказка та же (про ссылку)',
+  /ссылка/i.test(afterReload.codeHint), afterReload.codeHint);
 
 const failed = checks.filter(([, pass]) => !pass).length;
 console.log(failed ? `\n${failed} FAILED` : '\nALL PASS');

@@ -902,6 +902,40 @@ check('два входа: дубль профиля НЕ создан',
 check('два входа: сессия одна и та же по sub (нет второго токена входа)',
   dual.userIdFromToken(dual.registration.currentSession()?.access_token) === sameSub);
 
+/* ============================================================================
+ * 11. Подсказка канала доставки (находка на живом проде, 2026-09-25)
+ *     Владелец получил письмом ССЫЛКУ и вошёл по ней; короткого кода не было:
+ *     `auth-code` в проде не задеплоена → клиент переключился на запасной канал
+ *     Supabase Auth, чей шаблон Magic Link рендерит {{ .ConfirmationURL }} без
+ *     {{ .Token }}. Форма при этом обещала «код 6–8 букв и цифр».
+ * ========================================================================== */
+check('подсказка канала fn обещает код 6–8 символов',
+  /6–8/.test(m.registration.verificationHint('fn', 'a@example.by'))
+  && /a@example\.by/.test(m.registration.verificationHint('fn', 'a@example.by')));
+check('подсказка канала otp говорит про ссылку, а не про код',
+  /ссылка/i.test(m.registration.verificationHint('otp', 'a@example.by'))
+  && !/^Код отправлен/.test(m.registration.verificationHint('otp', 'a@example.by')));
+check('подсказка канала otp называет причину (auth-code) и временную меру ({{ .Token }})',
+  /auth-code/i.test(m.registration.verificationHint('otp', ''))
+  && /\.Token/.test(m.registration.verificationHint('otp', '')));
+check('verificationHint доступна через контракт use case',
+  typeof m.registration.verificationHint === 'function');
+
+// сообщение use case в запасном канале не обещает код, которого в письме нет
+const hintMod = await loadFreshModules();
+dbState.fnDeployed = false;
+const hintRes = await hintMod.registration.requestVerification('hint@example.by');
+check('запасной канал: ok=true и channel=otp',
+  hintRes.ok === true && hintRes.channel === 'otp', JSON.stringify(hintRes));
+check('запасной канал: сообщение не обещает «Код отправлен»',
+  !/Код отправлен/.test(hintRes.message || ''), hintRes.message);
+check('запасной канал: сообщение говорит про ссылку',
+  /ссылка/i.test(hintRes.message || ''), hintRes.message);
+dbState.fnDeployed = true;
+const fnRes = await hintMod.registration.requestVerification('hint2@example.by');
+check('основной канал: сообщение по-прежнему про код и 2 минуты',
+  /Код отправлен/.test(fnRes.message || '') && /2 минуты/.test(fnRes.message || ''), fnRes.message);
+
 const failed = results.filter(r => !r[1]).length;
 realConsoleLog(failed ? `\n${failed} FAILED` : '\nALL PASS');
 process.exit(failed ? 1 : 0);
