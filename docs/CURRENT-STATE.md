@@ -6,7 +6,8 @@
 
 ## Main SHA
 
-- **Актуальный `main`:** `03c6fa57e1a53f5be9e450eeebf389865f4cc51d`
+- **Актуальный `main`:** `df59b57cfb692f47bd08d162042c65e721be4963`
+- **Предыдущий synchronized commit:** `6a259cb816543a6dee5a70d5ddf154f4b6bd3a47` — corrected current-state/auth contract.
 - **Merge PR #44:** `5d5636db74ba41fbbb19fb7ad358181f4fcdc327` — recovery Quality Gate #36.
 - **Merge PR #43:** `03c6fa57e1a53f5be9e450eeebf389865f4cc51d` — Supabase MCP roadmap.
 - `87e3951`, `4d490d2` и более ранние SHA — исторические baseline.
@@ -117,7 +118,7 @@ Rules:
 - The link must never point to `localhost`; it must use the production application origin and correct callback/token contract.
 - Both methods resolve the same `auth.uid()` → psychologist ownership path.
 - Do not create a second authentication engine.
-- Issue #40 must be corrected to describe the link as an additional entry method, not as a forbidden alternative.
+- Issue #40 now defines the link as an additional entry method, not as a forbidden alternative.
 
 This is a specification correction, not a reason to duplicate implementation.
 
@@ -162,7 +163,7 @@ Current blockers:
 
 ## Next actions — dependency order, no duplicate implementation
 
-1. **Independent Challenger #36** on the actual merged main, including negative controls for async/import/bootstrap failures.
+1. **Independent Challenger #36** on the current main, including negative controls for async/import/bootstrap failures.
 2. **Production DB verification** through the planned Supabase MCP/read-only path: `pg_proc`, schema objects, grants, RLS/policies, `create_booking` overloads.
 3. **Implement the corrected dual-entry auth contract**: manual OTP + email-link, one canonical session/ownership path.
 4. Owner-side production activation for #35/#18; then real registration and booking E2E.
@@ -187,4 +188,4 @@ The current state is this file, not a historical report.
 
 ---
 
-*Синхронизировано: 2026-09-25 UTC; current main @ `03c6fa57e1a53f5be9e450eeebf389865f4cc51d`. Эта запись синхронизирует repo-state и известные verification gaps; она не сертифицирует production.*
+*Синхронизировано: 2026-09-25 UTC; current main @ `df59b57cfb692f47bd08d162042c65e721be4963`. Эта запись синхронизирует repo-state и известные verification gaps; она не сертифицирует production.*
