@@ -54,7 +54,7 @@
   <!-- Tailwind CSS — предсобранный файл вместо runtime CDN (cdn.tailwindcss.com
        не для продакшена). Пересборка: см. tailwind.config.js и css/tailwind.src.css;
        полнота набора классов проверяется tools/verify_tailwind.mjs. -->
-  <link rel="stylesheet" href="%BASE%css/tailwind.css?v=20260925-triage">
+  <link rel="stylesheet" href="%BASE%css/tailwind.css?v=20260925-ics">
 </head>
 <body class="bg-slate-50 text-slate-800 antialiased min-h-screen">
   <div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] hidden"></div>
@@ -675,6 +675,9 @@
           <button id="btn-reply-no" class="w-full py-3 rounded-full border border-rose-300 text-rose-700 font-medium">Отказаться / отменить</button>
         </div>
         <p id="reply-done" class="hidden text-emerald-700 font-medium mt-4"></p>
+        <a id="reply-ics" class="hidden mt-6 inline-flex items-center gap-2 px-6 py-2.5 rounded-full border border-slate-300 text-sm font-medium text-slate-700 hover:bg-slate-50" download>
+          📆 Добавить в календарь (.ics)
+        </a>
       </div>
     </main>
   </div>
@@ -686,9 +689,14 @@
         <div class="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 text-3xl flex items-center justify-center mx-auto mb-6">✓</div>
         <h2 class="text-2xl font-bold mb-3">Заявка принята</h2>
         <p id="success-text" class="text-slate-600 mb-6">—</p>
-        <a id="success-gcal" class="hidden mb-8 inline-flex items-center gap-2 px-6 py-2.5 rounded-full border border-slate-300 text-sm font-medium text-slate-700 hover:bg-slate-50" target="_blank" rel="noopener">
-          📅 Добавить в Google Calendar
-        </a>
+        <div class="flex flex-col items-center gap-3 mb-8">
+          <a id="success-ics" class="hidden inline-flex items-center gap-2 px-6 py-2.5 rounded-full bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700" download>
+            📆 Добавить в календарь (.ics)
+          </a>
+          <a id="success-gcal" class="hidden inline-flex items-center gap-2 px-6 py-2.5 rounded-full border border-slate-300 text-sm font-medium text-slate-700 hover:bg-slate-50" target="_blank" rel="noopener">
+            📅 Добавить в Google Calendar
+          </a>
+        </div>
         <button onclick="navigate('portal')" class="px-8 py-3 rounded-full bg-indigo-600 text-white font-medium">К каталогу</button>
       </div>
     </div>
@@ -810,6 +818,6 @@
     </div>
   </div>
 
-  <script type="module" src="%BASE%js/app.js?v=20260925-triage"></script>
+  <script type="module" src="%BASE%js/app.js?v=20260925-ics"></script>
 </body>
 </html>
