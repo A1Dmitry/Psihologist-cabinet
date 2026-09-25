@@ -1,24 +1,84 @@
 # Recovery orchestration — dependency ledger
 
-> АУДИТОР: САМ — сверка GitHub Issues, PR и `origin/main`, 2026-09-24 UTC. Это **маршрут выполнения**, не новый источник требований или свидетельство завершения. Канонические критерии находятся в связанных Issues; актуальное состояние проекта — в `CURRENT-STATE.md` после синхронизации #19.
+> **АУДИТОР: САМ** — repo-level synchronization audit, 2026-09-25 UTC. Это маршрут выполнения, а не новый источник требований и не production-сертификация. Канонические критерии находятся в связанных Issues; актуальное состояние — `docs/CURRENT-STATE.md`.
 
-**Baseline:** `origin/main` = `87e3951241fd18f2cc24afa2b6502247a7fee73b` при проверке 2026-09-24. На этом SHA `CURRENT-STATE.md` описывает прежний цикл; открытый PR #38 обновляет его для #19, но на момент сверки не merged. После каждого merge перечитать фактический HEAD; этот SHA не следует считать неизменным.
+**Current main:** `03c6fa57e1a53f5be9e450eeebf389865f4cc51d`
 
-| Очередь | Canonical issue | Условие перехода (не заменяет DoD Issue) | На момент сверки |
+**Исторические baseline:** `87e3951` и `4d490d2` относятся к предыдущим циклам и не должны использоваться как current main.
+
+| Очередь | Canonical issue | Условие перехода | Текущее состояние |
 |---|---|---|---|
-| P0 | [#19](https://github.com/A1Dmitry/Psihologist-cabinet/issues/19) | Review/merge [PR #38](https://github.com/A1Dmitry/Psihologist-cabinet/pull/38), сверить документацию с новым main; исторические отчёты не переписывать | OPEN; PR OPEN |
-| P1 | [#36](https://github.com/A1Dmitry/Psihologist-cabinet/issues/36) | Отрицательные контроли async/import/bootstrap дают nonzero, положительные проходят; независимая проверка | OPEN |
-| P2 | [#35](https://github.com/A1Dmitry/Psihologist-cabinet/issues/35) | Деплой не skipped; endpoint и failure propagation подтверждены live. Нет доступа/credentials → BLOCKED | OPEN; production сейчас не подтверждён |
-| P3 | [#18](https://github.com/A1Dmitry/Psihologist-cabinet/issues/18) | Реальная доставка, deployed URL без localhost, session после reload, logout/login и запрет private data без авторизации | OPEN; зависит от #35 |
-| P4 | [#21](https://github.com/A1Dmitry/Psihologist-cabinet/issues/21) | Live canonical RPC без overload ambiguity; сервер владеет money/status/duration/hold; forged fields и duplicate/expired-hold атаки | OPEN; local schema/tests ≠ production |
-| P5 | [#22](https://github.com/A1Dmitry/Psihologist-cabinet/issues/22) | Live отрицательные anonymous/cross-tenant read/write проверки на итоговом контракте #21 | OPEN |
+| P0 | #18 | Production schema/config, deployed functions, real email/OTP, claim, cabinet, reload, repeat login | OPEN / production blocked or unproven |
+| P1 | #35 | `auth-code`/`telegram-notify` deployed; endpoint smoke; failure propagation; raw live evidence | OPEN / deployment not independently proven |
+| P1 | #36 | Negative controls for async/import/bootstrap failures; positive path; independent Challenger | IMPLEMENTATION MERGED / VERIFICATION OPEN |
+| P1 | #34 | Fresh Challenger + Main Re-Audit on current main and production evidence | OPEN |
+| P1 | #33 | D1 recovery independently verified on current main + production gate | IMPLEMENTATION MERGED / MAIN RE-AUDIT OPEN |
+| P1 | #21 | Production canonical `create_booking`, no overload ambiguity, server-owned money/status/duration/hold | REPO MERGED / PRODUCTION OPEN |
+| P2 | #22 | Production tenant-isolation and anti-spam negative tests | REPO MERGED / PRODUCTION OPEN |
+| P1 | #19 | Current-state synchronized with current main; independent Challenger + Main Re-Audit | SYNCHRONIZED / VERIFICATION OPEN |
+| P1 | #40 | Canonical psychologist auth contract agreed and implemented | REQUIREMENTS OPEN |
+| P1 | #41 | Client Google identity contract implemented and production E2E verified | REQUIREMENTS OPEN |
 
-#21 можно разрабатывать параллельно с #18 после #35, но его live gate зависит от применения production schema. #22 проверять после #21. **Не объявлять закрытие #19 по одному PR и не объявлять production success по зелёному CI.** Последний найденный run `supabase-deploy.yml`: `35990183772` (`success`, SHA `c20caaf…`); #35 документирует skipped deploy, но текущий live-статус в этой сессии не проверен.
+## Dependency rules
 
-## Последующие гейты без дублирования задач
+1. **#36 Challenger before closure.** PR #44 being merged is not sufficient evidence.
+2. **Production verification is a separate axis.** Local/embedded PostgreSQL, green CI, source files and merge are not production evidence.
+3. **#21/#22 production gates depend on production schema verification.** First inspect `pg_proc`, tables, grants, policies/RLS and overloads; only then repair drift.
+4. **#18/#35 require owner-side production credentials/configuration.** Agents must not invent or expose secrets.
+5. **Authentication contract must be reconciled before implementation.** `TASK-P0-SUPABASE-PORTAL.md` and Issue #40 currently describe different entry semantics (email confirmation/redirect vs manual OTP code entry). Resolve this once; do not create two auth engines.
+6. **#19 synchronization follows every subsequent main merge.** Never restore an historical SHA as current.
+7. **No duplicate domain implementations.** Availability, booking policy, auth, payment, notification and calendar state each have one canonical owner.
 
-- **Challenger:** уже предусмотрен [#34](https://github.com/A1Dmitry/Psihologist-cabinet/issues/34) (TASK 2–9, 11–12). Независимый от авторов изменений проверяющий повторяет false-green, missing deployment, localhost redirect, expired token, unauthorized/private and cross-tenant access, forged payment, duplicate booking, expired hold и broken endpoint. Для каждого: PASS / FAIL / BLOCKED / UNKNOWN, SHA, дата, среда и raw evidence без секретов. FAIL возвращается в соответствующий canonical issue.
-- **Main Re-Audit:** #34 TASK 10: fresh main HEAD после исправлений, quality gate с отрицательными контролями, production endpoints, registration/booking/security evidence и сопоставление с CURRENT-STATE. Не путать с проверкой PR или прежнего main.
-- **Closure:** `RULES.md` §6 и DoD каждого issue: merge/green tests не закрывают production или security issue; внешняя проверка отдельно от producer report. Новая issue только если доказана отдельная проблема, не покрываемая #18/#19/#21/#22/#35/#36 или #34.
+## Next execution sequence
 
-**Состояние маршрута:** PARTIALLY_COMPLETED только в смысле инвентаризации зависимостей; ни один downstream gate этой записью не пройден. Новых Issues создано: **0**. GitHub comment в #34 из этой сессии отклонён API (`Resource not accessible by integration`); маршрут сохранён здесь, без заявления о публикации в issue. Следующий шаг: review/merge #38 уполномоченным участником, затем работа по #36.
+```text
+CURRENT-STATE sync @ 03c6fa5
+        ↓
+#36 independent Challenger
+        ↓
+production DB inspection (Supabase MCP / authorized SQL)
+        ↓
+resolve P0/#40 auth contract
+        ↓
+owner-side #35/#18 production activation
+        ↓
+real registration + booking E2E
+        ↓
+#21/#22 production security/booking verification
+        ↓
+#34 Main Re-Audit on the new main
+        ↓
+STANDARDIZE / close only the gates whose DoD is actually satisfied
+```
+
+## Challenger / Main Re-Audit contract
+
+For every significant gate classify evidence as:
+
+- `FACT` — directly inspected repository/GitHub state;
+- `LIVE EVIDENCE` — directly reproduced in production;
+- `INFERENCE` — derived from verified facts;
+- `UNKNOWN` — not independently verifiable in the current environment.
+
+The final report must contain exact SHA, date, environment, commands/scenarios, actual result, limitations and raw failure evidence where safe. Never include OTPs, access/refresh tokens, service-role keys or private clinical data.
+
+## Closure rule
+
+```text
+MAIN
+→ AUDIT
+→ DEFECT / REQUIREMENT
+→ ISSUE
+→ PRODUCER
+→ TESTS
+→ CHALLENGER
+→ MERGE
+→ MAIN RE-AUDIT
+→ STANDARDIZE
+```
+
+A merge or green CI does not close a production/security gate. If a required P0/P1 condition remains `UNKNOWN`, `BLOCKED` or `FAIL`, keep the relevant gate open.
+
+---
+
+*Синхронизировано: 2026-09-25 UTC; current main @ `03c6fa57e1a53f5be9e450eeebf389865f4cc51d`.*
