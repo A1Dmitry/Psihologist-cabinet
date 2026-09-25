@@ -171,6 +171,20 @@ try {
   check('третье применение: create_booking по-прежнему один (идемпотентность)',
     cb2.length === 1 && arity(cb2[0]) === 22, JSON.stringify(cb2));
 
+  /* ========================================================================
+   * 6. Ровно то, что делает владелец в Блоке 2: схема ЦЕЛИКОМ + seed, повторно
+   * ====================================================================== */
+  await db.applySchema({ seed: true });
+  await db.applySchema({ seed: true });
+  const psyCount = await db.count('psychologists', `where id = 'psy_catalog_19'`);
+  check('seed повторно: референс-профиль ровно один (on conflict)', psyCount === 1, String(psyCount));
+  const svcDupes = await db.query(`
+    select id, count(*) n from services group by id having count(*) > 1`);
+  check('seed повторно: дублей услуг нет', svcDupes.length === 0, JSON.stringify(svcDupes));
+  const cbAfterSeed = await signatures('create_booking');
+  check('seed повторно: create_booking по-прежнему один',
+    cbAfterSeed.length === 1 && arity(cbAfterSeed[0]) === 22, JSON.stringify(cbAfterSeed));
+
   // и функционально: полный путь записи после всех пере применений
   const uid = await db.createAuthUser('conv@example.by');
   const claim = await db.rpc('claim_psychologist_profile', {

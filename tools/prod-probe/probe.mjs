@@ -119,10 +119,17 @@ try {
   const defs = Object.keys(r.json?.definitions || {}).sort();
   const rpcs = Object.keys(r.json?.paths || {})
     .filter(p => p.startsWith('/rpc/')).map(p => p.slice(5)).sort();
+  // Supabase закрывает корневой OpenAPI-спец для anon: «Only the service_role
+  // API key can be used for this endpoint». Полный инвентарь объектов — только
+  // SQL-каналом владельца (docs/OWNER-CHECKLIST-E2E.md, Блок 7).
+  const ownerOnly = /service_role/i.test(r.json?.hint || r.json?.message || '');
   rec('B inventory', 'GET /rest/v1/ (OpenAPI root)', {
-    verdict: r.status === 200 ? `OK(tables/views=${defs.length}, rpc=${rpcs.length})` : `HTTP_${r.status}`,
+    verdict: r.status === 200 ? `OK(tables/views=${defs.length}, rpc=${rpcs.length})`
+      : (ownerOnly ? 'OWNER_ONLY(service_role)' : `HTTP_${r.status}`),
     status: r.status,
-    detail: `objects: ${defs.join(', ')}\n${' '.repeat(26)}rpc: ${rpcs.join(', ')}`
+    detail: r.status === 200
+      ? `objects: ${defs.join(', ')}\n${' '.repeat(26)}rpc: ${rpcs.join(', ')}`
+      : brief(r.json?.hint || r.json?.message || r.text, 220)
   });
 } catch (e) {
   rec('B inventory', 'GET /rest/v1/', { verdict: 'NETWORK_ERROR', detail: brief(e) });

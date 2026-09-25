@@ -154,7 +154,25 @@ anon (иначе публичная запись не работает).
 
 **FAIL:** `{"code":"NOT_FOUND"}` от gateway, либо `PGRST202` на `create_booking`.
 
-## H. Зелёный CI маскирует провал
+## H. После применения схемы в проде осталось несколько сигнатур RPC
+
+**Что опровергаем:** «миграция оставляет ровно одну каноническую сигнатуру».
+`create or replace function` при другой арности создаёт ВТОРУЮ функцию с тем же
+именем — схема применяется «без ошибок», а PostgREST перестаёт резолвить вызов.
+
+```bash
+node tests/schema-convergence.mjs      # 21 проверка на настоящем PostgreSQL
+```
+```sql
+-- на проде (Блок 7, запрос 1): строк с proname='create_booking' должно быть РОВНО одна
+select p.proname, pg_get_function_identity_arguments(p.oid) as args
+from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.proname in ('create_booking','claim_psychologist_profile');
+```
+
+**FAIL:** больше одной строки на функцию, либо арность не 22 / не 6.
+
+## I. Зелёный CI маскирует провал
 
 **Что опровергаем:** «зелёный CI = задача выполнена».
 
@@ -191,7 +209,8 @@ D чужой кабинет:             PASS/FAIL/UNKNOWN  <evidence>
 E дубль профиля:             PASS/FAIL/UNKNOWN  <evidence>
 F client-controlled money:   PASS/FAIL/UNKNOWN  <evidence>
 G endpoint в проде:          PASS/FAIL/UNKNOWN  <evidence>
-H CI не маскирует:           PASS/FAIL/UNKNOWN  <evidence>
+H одна сигнатура RPC:        PASS/FAIL/UNKNOWN  <evidence>
+I CI не маскирует:           PASS/FAIL/UNKNOWN  <evidence>
 
 Новые дефекты (Issue + Root Cause):
 Остаточный риск:

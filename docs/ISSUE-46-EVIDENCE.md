@@ -67,6 +67,12 @@ GET https://phiavtroybgwyjdhqqkh.supabase.co/functions/v1/telegram-notify
 | `auth_login_codes` (строки) | anon получает `[]` → RLS без политик = default deny | LIVE, OK |
 | `public_profiles` | 2 активные анкеты: `наталия-михайловская-19`, `a1dmitry` | LIVE, OK |
 
+Полный инвентарь объектов этим каналом снять нельзя: `GET /rest/v1/` (корневой
+OpenAPI-спец) Supabase закрывает для anon —
+`{"message":"Invalid API key","hint":"Only the service_role API key can be used for this endpoint."}`
+(LIVE). Поэтому перечень объектов/сигнатур/политик — только SQL-каналом владельца
+(Блок 7); зонд закрывает то, что видно с публичным ключом.
+
 **Вывод (INFERENCE, высокая уверенность):** production-схема — более ранняя
 генерация `supabase/schema.sql`: SR-001/SR-003 применены, **SR-004 и SR-D1 не
 применены**. Root cause: `supabase/schema.sql` не переприменялся целиком
@@ -125,10 +131,11 @@ POST /rest/v1/rpc/claim_psychologist_profile {zz_…:1}      → PGRST202
 | TASK 5: client не подменяет оплату/статус/длительность | без изменений (уже server-derived), но проверка **перестала быть ложно-зелёной**: сценарий T02 раньше отклонялся расписанием и не выполнялся | `tests/security-regression.mjs` → T02 теперь реально исполняется |
 | TASK 5: анти-спам не обходится будущими датами | сценарий переведён на будущие даты (счётчик по `created_at`) | `tests/db-contract.mjs`, `tests/security-regression.mjs` T03 |
 | TASK 1: канал инспекции прода | `tools/prod-probe/probe.mjs` + workflow `prod-probe.yml` (read-only, без секретов) | прогон в GitHub Actions, отчёт комментарием в PR #47 |
-| TASK 1: SQL для владельца | `docs/OWNER-CHECKLIST-E2E.md`, Блок 7 — `pg_proc`/гранты/RLS/ownership | документ |
+| TASK 1: SQL для владельца | `docs/OWNER-CHECKLIST-E2E.md`, Блок 7 — `pg_proc`/гранты/RLS/ownership (гранты — через `pg_proc.proacl`, т.к. `information_schema.routine_privileges` гранты anon/authenticated не показывает) | документ |
+| TASK 5: единственная сигнатура `create_booking` после миграции | схема снимает перегрузки динамически (по `pg_proc`), а не списком 4 известных: `create or replace` при другой арности создаёт ВТОРУЮ функцию, и прод остаётся сломанным при зелёном применении | `tests/schema-convergence.mjs` — 21 проверка на настоящем PostgreSQL, включая повторное применение схемы+seed |
 | TASK 3: оба входа → один профиль | сценарий «два входа»: тот же `sub` приходит по ссылке → тот же `psychologist.id`, тот же `owner_id`, дубля нет (прежний тест брал другой email и инвариант не покрывал) | `tests/registration-flow.mjs`, 6 проверок |
 | TASK 4/5: чем владелец докажет прод | `tools/prod-e2e.mjs`: сценарий tenant isolation своей живой сессией + флаг `--link` (вход по ссылке, origin не localhost, тот же профиль; токены не печатаются) | инструмент (запуск на машине владельца) |
-| TASK 7: независимый Challenger | `docs/ISSUE-46-CHALLENGER-KIT.md` — 8 атак (A–H) с командами, критериями FAIL и формой отчёта; исполнителем НЕ сертифицирован | документ |
+| TASK 7: независимый Challenger | `docs/ISSUE-46-CHALLENGER-KIT.md` — 9 атак (A–I) с командами, критериями FAIL и формой отчёта; исполнителем НЕ сертифицирован | документ |
 | «green CI маскирует failure» | CI раньше не запускал проверки проекта вовсе: добавлен workflow `Quality Gate` (`node tools/verify_all.mjs` + смоук маршрутов), деплой Pages ждёт его через `needs: quality-gate` | прогон в Actions: шаги `Install dev dependencies` / `Run project gate` / `Smoke routes` — success |
 
 ### Красные наборы на старте (найдено и исправлено)
