@@ -863,6 +863,45 @@ check('сессия на 29-й день ещё жива (граница — ме
 check('без отметки issued_at — fail-closed (возраст недоказуем)',
   act.registration.isBeyondMaxSessionAge({ access_token: aged.access_token }) === true);
 
+/* ============================================================================
+ * 10. Оба входа — ОДНА canonical-сессия и ОДИН профиль (issue #46, TASK 3)
+ *     Существующий сценарий consumeAuthRedirect брал ДРУГОЙ email, поэтому
+ *     главный инвариант задачи («manual OTP и email link разрешают одного
+ *     психолога, дубль не создаётся») до этого не проверялся.
+ * ========================================================================== */
+const dual = await loadFreshModules();
+dual.registration.signOut();
+await dual.registration.requestVerification(EMAIL);
+const byCode = await dual.registration.completeVerification(EMAIL, dbState.issuedCode, PROFILE);
+check('два входа: вход по коду выполнен', byCode.ok === true, byCode.message || '');
+
+// тот же Supabase-пользователь (тот же sub) приходит по ссылке из письма
+const sameSub = dbState.users.get(EMAIL)?.id;
+const linkJwt = fakeJwt(sameSub, EMAIL);
+globalThis.location = {
+  href: `https://a1dmitry.github.io/Psihologist-cabinet/#access_token=${linkJwt}&refresh_token=rt_${sameSub}&expires_in=3600&token_type=bearer`,
+  hash: `#access_token=${linkJwt}&refresh_token=rt_${sameSub}&expires_in=3600&token_type=bearer`,
+  search: '',
+  pathname: '/Psihologist-cabinet/',
+  hostname: 'a1dmitry.github.io',
+  origin: 'https://a1dmitry.github.io'
+};
+globalThis.history = { replaceState() {} };
+const byLink = await dual.registration.consumeAuthRedirect(PROFILE);
+check('два входа: вход по ссылке из письма выполнен', byLink.ok === true,
+  byLink.message || JSON.stringify(byLink));
+check('два входа: ТОТ ЖЕ psychologist.id (одна identity на оба входа)',
+  byLink.psychologist?.id === byCode.psychologist?.id,
+  `${byLink.psychologist?.id} vs ${byCode.psychologist?.id}`);
+check('два входа: один и тот же owner_id == auth.uid()',
+  byLink.ownerId === byCode.ownerId && byLink.ownerId === sameSub,
+  `${byLink.ownerId} vs ${byCode.ownerId} vs ${sameSub}`);
+check('два входа: дубль профиля НЕ создан',
+  [...dbState.psychologists.values()].filter(p => p.email === EMAIL).length === 1,
+  String([...dbState.psychologists.values()].filter(p => p.email === EMAIL).length));
+check('два входа: сессия одна и та же по sub (нет второго токена входа)',
+  dual.userIdFromToken(dual.registration.currentSession()?.access_token) === sameSub);
+
 const failed = results.filter(r => !r[1]).length;
 realConsoleLog(failed ? `\n${failed} FAILED` : '\nALL PASS');
 process.exit(failed ? 1 : 0);
