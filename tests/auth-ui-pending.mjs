@@ -128,11 +128,10 @@ ok('истёкшее окно: явное сообщение «запросит�
 ok('истёкшее окно: протухшее ожидание удалено из хранилища',
   registration.pendingVerification() === null);
 
-// ——— 4. Подсказка канала: форма обязана говорить правду о письме ———
-// Дефект, найденный на живом проде (2026-09-25): владелец получил ССЫЛКУ
-// (запасной канал Supabase), кода в письме не было, а renderAuth() писал
-// «Код отправлен: 6–8 букв и цифр» в элемент #auth-code-hint, которого в
-// index.html не существовало — подсказка не отображалась вовсе.
+// ——— 4. Подсказка канала и отсутствие fallback ———
+// Исторически владелец получил Auth-ссылку, когда прежняя версия переключалась
+// на Supabase OTP. Новый контракт fail-closed: Auth OTP не вызывается ни при
+// 404, ни при status=0; подсказка legacy OTP остаётся только для старых писем.
 const html = readFileSync(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf-8');
 const iStep = html.indexOf('id="auth-step-code"');
 const iHint = html.indexOf('id="auth-code-hint"');
@@ -144,26 +143,34 @@ ok('index.html: подсказка внутри шага ввода кода',
 ok('канал fn: подсказка обещает код 6–8 символов',
   /6–8/.test(authVm.codeHint) && authVm.channel === 'fn', authVm.codeHint);
 
-fnUp = false; // прод: функция не задеплоена → запасной канал
+// Нет pending-кода: новая попытка при 404 должна остаться fail-closed.
+registration.clearPendingVerification();
+authVm.step = 'email';
+authVm.channel = null;
+authVm.error = '';
+fnUp = false;
 authVm.email = 'fallback@example.by';
+const otpCallsBefore = calls.filter(url => url.includes('/auth/v1/otp')).length;
+const fnCallsBefore = calls.filter(url => url.includes('/functions/v1/auth-code')).length;
 const otpRequested = await authVm.requestCode();
-ok('нет Edge Function: запрос кода переключил канал на otp',
-  otpRequested === true && authVm.channel === 'otp', String(authVm.channel));
-ok('канал otp: подсказка говорит про ССЫЛКУ, а не про код',
-  /ссылка/i.test(authVm.codeHint) && !/^Код отправлен/.test(authVm.codeHint), authVm.codeHint);
-ok('канал otp: подсказка называет причину и лечение (auth-code)',
-  /auth-code/i.test(authVm.codeHint), authVm.codeHint);
-ok('канал otp: сообщение use case не обещает код в письме',
-  !/Код отправлен/.test(String(authVm.error || '')) && /ссылка/i.test(authVm.codeHint));
+ok('нет Edge Function: requestCode возвращает ошибку, не переключает канал',
+  otpRequested === false && authVm.channel !== 'otp', `${authVm.channel}: ${authVm.error}`);
+ok('нет Edge Function: UI показывает причину и deployment-направление',
+  /auth-code не найдена|deployment/i.test(authVm.error), authVm.error);
+ok('нет Edge Function: отправлен только один auth-code запрос',
+  calls.filter(url => url.includes('/functions/v1/auth-code')).length === fnCallsBefore + 1);
+ok('нет Edge Function: /auth/v1/otp не вызывается',
+  calls.filter(url => url.includes('/auth/v1/otp')).length === otpCallsBefore);
+ok('нет Edge Function: новое pending-состояние не создаётся',
+  registration.peekPendingVerification() === null);
 fnUp = true;
 
-// после перезагрузки канал восстанавливается вместе с ожиданием → та же подсказка
+// После перезагрузки отсутствует ожидание нового письма; старый legacy OTP
+// может быть восстановлен только если он действительно был сохранён ранее.
 const afterReload = new AuthViewModel();
-afterReload.resumePendingVerification();
-ok('после перезагрузки канал восстановлен из ожидания',
-  afterReload.channel === 'otp', String(afterReload.channel));
-ok('после перезагрузки подсказка та же (про ссылку)',
-  /ссылка/i.test(afterReload.codeHint), afterReload.codeHint);
+const resumedFallback = afterReload.resumePendingVerification();
+ok('после перезагрузки failed request не восстанавливает канал otp',
+  resumedFallback === false && afterReload.channel !== 'otp', String(afterReload.channel));
 
 const failed = checks.filter(([, pass]) => !pass).length;
 console.log(failed ? `\n${failed} FAILED` : '\nALL PASS');

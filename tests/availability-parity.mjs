@@ -283,8 +283,9 @@ try {
     await expectPair('P3: +9 мин при notice 10 → reject', fx, dstr(near), hhmm(near), false, utcClock(), /минимум за 10 мин/);
     const okT = plusMinutes(11);
     await expectPair('P3: +11 мин при notice 10 → ok', fx, dstr(okT), hhmm(okT), true, utcClock());
-    const ctl = plusMinutes(240);
-    await expectPair('P3-control: +240 мин → ok', fx, dstr(ctl), hhmm(ctl), true, utcClock());
+    // Control must isolate notice, not become schedule/too_long dependent on the
+    // wall-clock hour when the suite starts (late UTC + 4h could cross slotEnd).
+    await expectPair('P3-control: завтра 14:00 → ok', fx, plusDays(1), '14:00', true, utcClock());
   }
 
   // ---------- P4: maximum advance (матрица: maximum advance) ----------
@@ -362,8 +363,8 @@ try {
     check(`P11: прошлое [client=${c.ok}/${c.code} server=${s?.ok}]`,
       c.ok === false && c.code === 'past' && s?.ok === false && /прошло/i.test(s?.error || ''),
       `client=${c.reason} server=${JSON.stringify(s)}`);
-    // plusMinutes(180) после ~21:00 UTC вылезает за slotEnd 23:00 → too_long.
-    await expectPair('P11-control: будущее → ok', fx, plusDays(1), '12:00', true, utcClock());
+    // Fixed in-window time tomorrow keeps this control independent of test start hour.
+    await expectPair('P11-control: завтра 14:00 → ok', fx, plusDays(1), '14:00', true, utcClock());
   }
 
   // ---------- P12: grace band (матрица: duration overflow) — РЕГРЕСС D1-QG-003 ----------
@@ -407,10 +408,9 @@ try {
     const fx = await makePsy({ tz: 'Europe/Minsk' }); // UTC+3, без DST
     const probeDay = plusDays(2);
     await expectPair('P14: Минск, будущее → оба ok', fx, probeDay, '12:00', true, minskClock());
-    // Вчера 12:00 по Минску — всегда прошлое и внутри окна 10:00–18:00.
-    // Прежняя формула «час назад +3ч к UTC-часам» вне 08:00–16:00 UTC давала
-    // стену вне окна → client=too_long при server=past.
-    const pastD = addDays((instantToZoned(new Date(), 'Europe/Minsk') || { date: plusDays(-1) }).date, -1);
+    // Стабильная прошедшая будняя дата внутри рабочего окна: тест не должен
+    // зависеть от времени запуска (рядом с закрытием duration мог давать too_long).
+    const pastD = '2020-01-01';
     const pastT = '12:00';
     const c = await clientVerdict(fx, pastD, pastT, minskClock());
     const s = await book(fx, pastD, pastT);

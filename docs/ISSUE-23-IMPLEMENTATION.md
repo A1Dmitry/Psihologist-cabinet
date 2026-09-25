@@ -8,6 +8,8 @@
 **АУДИТОР: САМ** (Producer of this fix), 2026-09-24.  
 Независимый Challenger + production Main Re-Audit — **ещё не выполнены**.
 
+> **Обновление политики (2026-09-24):** этот отчёт фиксирует прежнюю реализацию. Auth OTP fallback при ошибке `auth-code` удалён для всех статусов; текущий login-code flow использует только `auth-code`. Продакшн-источник ранее наблюдавшегося magic link не установлен. PKCE signup callback всё ещё не завершён (см. `docs/CURRENT-STATE.md` / SR-006).
+
 **PR #24** = documentation/evidence only — **not** this implementation.
 
 ---
@@ -18,19 +20,19 @@
 
 ## 2. РЕЗУЛЬТАТ (что изменено)
 
-### Root cause (proven)
+### Historical failure modes (not all proven as the source of the observed email)
 
-1. **OTP/magic-link fallback** when `auth-code` is missing (404/CORS) used Supabase Auth emails with **Site URL often = localhost**.
-2. SPA **ignored** bare `#error=otp_expired…` / `#access_token=…` hashes (`routeFromUrl` only `#/…`).
-3. **auth-code** letter had **code only** — no app deep-link → other device had no obvious entry; pending localStorage blocked cross-device code entry.
-4. OTP request had **no `email_redirect_to`** → GoTrue defaulted to Dashboard Site URL.
+1. The then-current frontend had an **OTP/magic-link fallback** when `auth-code` returned 404/CORS; Supabase Auth could use a Site URL set to localhost. This was a possible path, not proof that it sent the specific observed message, and the fallback has since been removed.
+2. The SPA **ignored** bare `#error=otp_expired…` / `#access_token=…` hashes at the time (`routeFromUrl` only `#/…`).
+3. **auth-code** letter then had **code only** — no app deep-link → other device had no obvious entry; pending localStorage blocked cross-device code entry.
+4. The historical OTP request had **no `email_redirect_to`** → GoTrue defaulted to Dashboard Site URL.
 
 ### Fix (canonical path preserved)
 
 | Layer | Change |
 |-------|--------|
 | `js/services/supabaseConfig.js` | `APPLICATION_URL`, `resolveApplicationUrl()`, `resolveAuthEntryUrl()` — never emit loopback for mail/redirect |
-| `js/services/supabaseApi.js` | OTP sends `email_redirect_to` → real `#/auth`; `consumeAuthRedirectFromUrl()` parses success/error/PKCE; strips Auth params |
+| `js/services/supabaseApi.js` | Legacy `requestEmailOtp` sends `email_redirect_to` → real `#/auth` if explicitly called; current psychologist login does not call it. `consumeAuthRedirectFromUrl()` parses success/error/query, but PKCE signup exchange remains incomplete. |
 | `js/domain/registration.js` | `consumeAuthRedirect` / `finishAuthenticatedLogin`; cross-device FN verify without pending; expired local pending ≠ other device; friendlier `otp_expired` |
 | `js/app.js` boot | **Before** routing: consume Auth redirect → cabinet or auth error UI |
 | `js/viewmodels/AuthViewModel.js` | Deep-link `#/auth?email=` → code step on other device |
@@ -63,7 +65,7 @@ Production E2E (real email / Resend / Dashboard Site URL): **NOT RUN** from this
 
 | Stage | Status |
 |-------|--------|
-| Email request | **local proven** (FN + OTP fallback) |
+| Login-code request | **local proven** (`auth-code`); historical Auth OTP fallback has been removed |
 | Credential in mail | **local proven** (code + app link in FN letter) |
 | Real application URL | **code proven** (`APPLICATION_URL` / APP_URL poka-yoke); **prod Dashboard Site URL = owner action** |
 | Open on other device | **local proven** (no pending → FN verify; deep-link email) |

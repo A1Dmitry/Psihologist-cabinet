@@ -265,18 +265,29 @@ export const supabaseSync = {
    * Запись клиента на сервер — только через RPC create_booking:
    * сервер проверяет слот и анти-спам; PII не доступна через публичный REST.
    */
-  async pushBooking({ psychologistId, client, session }) {
+  async pushBooking({ psychologistId, client, session, clientAuthSession = null, clientIdentity = null, triageAttached = false }) {
     if (!this.enabled()) return { ok: false, localOnly: true };
+    if (triageAttached && !clientAuthSession?.access_token) {
+      return { ok: false, message: 'Для отправки результата опроса нужна подтверждённая Google-сессия' };
+    }
 
     const created = await supabaseApi.createBooking({
       p_psychologist_id: psychologistId,
       p_service_id: session.serviceId || null,
       p_session_date: session.date,
       p_session_time: session.time,
-      p_client_name: client.name || client.nickname || '',
+      p_client_name: clientIdentity?.name || client.name || client.nickname || '',
       p_client_nickname: client.nickname || client.name || '',
       p_client_phone: client.phone || '',
-      p_client_contact: client.contact || '',
+      p_client_contact: clientIdentity?.email
+        ? [
+          clientIdentity.email,
+          (clientIdentity.additionalContact ?? client.contact) &&
+          String(clientIdentity.additionalContact ?? client.contact).trim().toLowerCase() !== String(clientIdentity.email).trim().toLowerCase()
+            ? `Доп. контакт: ${String(clientIdentity.additionalContact ?? client.contact).trim()}`
+            : ''
+        ].filter(Boolean).join(' · ')
+        : client.contact || '',
       p_client_note: client.note || '',
       p_session_note: session.note || '',
       p_status: session.status || 'pending',
@@ -295,7 +306,7 @@ export const supabaseSync = {
       // T-25: факт согласия на обработку ПДн
       p_consent: !!client.consent,
       p_consent_at: client.consentAt || null
-    });
+    }, { accessToken: triageAttached ? clientAuthSession.access_token : null });
 
     if (!created?.ok) {
       return { ok: false, message: created?.error || 'Сервер отклонил запись' };

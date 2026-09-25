@@ -101,7 +101,7 @@ ok('index: поле токена', SRC.html.includes('id="tg-token"'));
 ok('index: «Найти чат»', SRC.html.includes('btn-tg-find-chat'));
 ok('index: 3 переключателя в UI', ['tg-notify-booking','tg-notify-reminders','tg-notify-payments'].every(x => SRC.html.includes(`id="${x}"`)));
 ok('index: «Проверить подключения»', SRC.html.includes('btn-tg-link-clients'));
-ok('index: cache-bust поднят', SRC.html.includes('app.js?v=20260925b'));
+ok('index: cache-bust поднят', SRC.html.includes('app.js?v=20260925-triage'));
 ok('config: NOTIFY_WEBHOOK_URL экспорт', /export const NOTIFY_WEBHOOK_URL = ''/.test(SRC.cfg));
 ok('app: outbox-цикл после входа', SRC.app.includes('startTelegramLoops(psy.id)'));
 ok('app: рендер+биндинг вкладки', SRC.app.includes('renderCabTelegram') && SRC.app.includes('bindTelegramTab'));
@@ -165,6 +165,15 @@ db.sessions.push(s1);
 const txt = telegramService.bookingText(s1, { name: '<b>Анна</b>' }, svc);
 ok('bookingText: имя/дата/время/услуга/цена', txt.includes('Анна') && txt.includes('2026-09-25') && txt.includes('10:00') && txt.includes('Консультация') && txt.includes('80'));
 ok('bookingText: HTML экранирован', txt.includes('&lt;b&gt;Анна&lt;/b&gt;') && !txt.includes('<b>Анна</b>'));
+s1.note = 'Результат самоопроса: raw_vector 0-1-1-0; clinical_summary sensitive';
+const privateText = telegramService.bookingText(s1, { name: 'Анна' }, svc);
+ok('bookingText: не отправляет комментарий/ответы опроса в Telegram',
+  !privateText.includes('raw_vector') && !privateText.includes('clinical_summary') && !privateText.includes('sensitive')
+    && privateText.includes('Дополнительная информация есть в кабинете.'));
+s1.note = '';
+const detachedNotice = telegramService.bookingText(s1, { name: 'Анна' }, svc, { hasAdditionalInfo: true });
+ok('bookingText: безопасная отметка доступна и после очистки локального note',
+  detachedNotice.includes('Дополнительная информация есть в кабинете.') && !detachedNotice.includes('raw_vector'));
 
 // 7) outbox: новые записи после watermark
 const nowIso = () => new Date().toISOString();

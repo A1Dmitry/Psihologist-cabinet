@@ -80,7 +80,7 @@ export class AuthService {
     return registration.currentSession();
   }
 
-  /** Канал доставки текущего кода: 'fn' | 'otp' | null. */
+  /** Сохранённый канал: 'fn' (current) | 'otp' (legacy pending only) | null. */
   get channel() {
     return registration.currentChannel();
   }

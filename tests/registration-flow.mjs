@@ -12,10 +12,14 @@
  *     specialization, city, about);
  *   • повторный вход тем же email не создаёт дубль;
  *   • неверный / просроченный / повторно использованный код отклоняются;
- *   • отсутствие Edge Function → запасной канал, но тот же use case;
+ *   • отсутствие Edge Function → fail closed, без дополнительного Auth OTP;
  *   • отсутствие mail-конфигурации → честная ошибка, без тихого fallback;
  *   • ошибка RPC → честная ошибка пользователю;
  *   • reload страницы сохраняет аутентифицированное состояние.
+ *
+ * Важно: это контрактный тест текущего legacy auth-code/session flow, а не
+ * доказательство безопасной invitation-only signUp-привязки или production E2E;
+ * P1 портал остаётся открытым до реализации и серверных/RLS-проверок SR-006.
  *
  * Supabase здесь заменён контрактным фейком: он хранит состояние по тем же
  * правилам (один профиль на email, owner_id из sub JWT, одноразовый код с TTL),
@@ -78,6 +82,7 @@ const dbState = {
   codes: new Map(),        // email -> { code, expiresAt, used, attempts }
   fnDeployed: true,
   fnThrows: false,       // функция есть, но сеть/CORS: fetch бросает TypeError
+  otpVerifyTypes: [],
   mailConfigured: true,
   rpcFails: false,
   issuedCode: null,
@@ -135,6 +140,9 @@ globalThis.fetch = async (url, opts = {}) => {
     if (!dbState.fnDeployed) return resp(404, { msg: 'Function not found' });
     if (dbState.fnThrows) throw new TypeError('Failed to fetch'); // CORS-маскировка 404
     if (body.action === 'request') {
+      if (body.email === 'rate-limit@example.by') {
+        return resp(429, { ok: false, error: 'Слишком часто: подождите около 30 секунд' });
+      }
       if (!dbState.mailConfigured) {
         return resp(500, { ok: false, error: 'Почта не настроена: задайте секрет RESEND_API_KEY (supabase secrets set RESEND_API_KEY=re_...)' });
       }
@@ -199,7 +207,7 @@ globalThis.fetch = async (url, opts = {}) => {
     return resp(400, { ok: false, error: 'Неизвестное действие' });
   }
 
-  // —— GoTrue: сессия по hashed_token / OTP / refresh ——
+  // —— GoTrue: сессия по hashed_token / legacy OTP / refresh ——
   if (u.includes('/auth/v1/verify')) {
     if (body.token_hash) {
       const sub = String(body.token_hash).replace(/^ht_/, '');
@@ -212,7 +220,9 @@ globalThis.fetch = async (url, opts = {}) => {
         token_type: 'bearer'
       });
     }
-    // запасной канал Supabase OTP
+    // Legacy compatibility fixture; current request flow must never request it.
+    dbState.otpVerifyTypes.push(body.type);
+    if (body.type !== 'email') return resp(400, { msg: 'Invalid OTP type' });
     const rec = dbState.codes.get(body.email);
     if (!rec || rec.used || rec.code !== body.token) return resp(400, { msg: 'Invalid token' });
     if (rec.expiresAt < dbState.clock()) return resp(400, { msg: 'otp_expired' });
@@ -338,7 +348,7 @@ if (process.argv[2] === '--pending') {
   const verified = await reg.verifyVerification(snap.email, snap.code);
   const transportCalls = logCalls.slice(before);
   out.push(['reload: код принят сохранённым каналом', verified.ok === true, JSON.stringify(verified)]);
-  out.push(['reload: канал не переключился на запасной OTP',
+  out.push(['reload: legacy pending сохраняет auth-code канал',
     !transportCalls.some(u => u.includes('/auth/v1/otp')), transportCalls.join(' | ')]);
   out.push(['reload: новый код не запрашивался (транспорт тот же)',
     !transportCalls.some(u => u.includes('/functions/v1/auth-code') && /"action":"request"/.test(u)),
@@ -510,45 +520,51 @@ check('повторно использованный код: погашен на
 otp.registration.signOut();
 check('повторно использованный код: выход гасит сессию', otp.supabaseApi.hasSession() === false);
 
+// Legacy pending Supabase OTPs can still be completed; GoTrue requires type=email.
+const legacyOtp = await loadFreshModules();
+dbState.codes.set('legacy-otp@example.by', {
+  code: '654321', expiresAt: dbState.clock() + TTL_MS, used: false, attempts: 0
+});
+const otpVerifyStart = dbState.otpVerifyTypes.length;
+const legacyOtpSession = await legacyOtp.supabaseApi.verifyEmailOtp('LEGACY-OTP@EXAMPLE.BY', '654321');
+check('legacy pending OTP: verify использует type=email',
+  legacyOtpSession?.access_token && dbState.otpVerifyTypes.at(-1) === 'email');
+check('legacy pending OTP: тип не перебирается', dbState.otpVerifyTypes.length === otpVerifyStart + 1);
+
 /* ============================================================================
- * 5. Каналы: нет Edge Function / нет почтовой конфигурации / ошибка RPC
+ * 5. Auth-code канонический канал: unavailable / rate limit / no duplicate OTP
  * ========================================================================== */
 const chan = await loadFreshModules();
 dbState.fnDeployed = false;
-const fallback = await chan.registration.requestVerification('fallback@example.by');
-check('нет Edge Function: включён запасной канал Supabase OTP',
-  fallback.ok === true && fallback.channel === 'otp', JSON.stringify(fallback));
-const fallbackLogin = await chan.registration.completeVerification('fallback@example.by', dbState.issuedCode, PROFILE);
-check('нет Edge Function: вход через запасной канал выполнен', fallbackLogin.ok === true, fallbackLogin.message || '');
-check('нет Edge Function: профиль создан тем же use case (owner_id задан)',
-  [...dbState.psychologists.values()].find(p => p.email === 'fallback@example.by')?.owner_id === fallbackLogin.ownerId);
+dbState.lastOtpBody = null;
+const missingFn = await chan.registration.requestVerification('missing@example.by');
+check('нет Edge Function: запрос закрывается с 404, без альтернативного OTP',
+  missingFn.ok === false && /auth-code не найдена/.test(missingFn.message || ''), JSON.stringify(missingFn));
+check('нет Edge Function: /auth/v1/otp не вызывается', dbState.lastOtpBody === null);
 dbState.fnDeployed = true;
 
-// функция не задеплоена, но браузер вместо 404 показывает CORS-ошибку
-// (preflight OPTIONS получает 404 без CORS-заголовков → fetch бросает TypeError
-// без статуса) — запасной канал обязан включаться и в этом случае
+const limited = await loadFreshModules();
+dbState.lastOtpBody = null;
+const limitedRes = await limited.registration.requestVerification('rate-limit@example.by');
+check('auth-code 429: отказ с 30-секундным cooldown',
+  limitedRes.ok === false && limitedRes.retryAfterSeconds === 30, JSON.stringify(limitedRes));
+check('auth-code 429: GoTrue OTP не вызывается', dbState.lastOtpBody === null);
+
+// status=0 маскирует и preflight failure, и потерянный ответ после отправки письма.
+// Нельзя безопасно решить, что Edge Function точно не выдала код: второго кода нет.
 const cors = await loadFreshModules();
 dbState.fnThrows = true;
-const corsRes = await cors.registration.requestVerification('cors@example.by');
-check('CORS вместо 404: включён запасной канал Supabase OTP',
-  corsRes.ok === true && corsRes.channel === 'otp', JSON.stringify(corsRes));
-const corsLogin = await cors.registration.completeVerification('cors@example.by', dbState.issuedCode, PROFILE);
-check('CORS вместо 404: вход через запасной канал выполнен', corsLogin.ok === true, corsLogin.message || '');
-dbState.fnThrows = false;
-
-// issue #23: OTP fallback передаёт emailRedirectTo на реальный APPLICATION_URL (не localhost)
-const otpRedirect = await loadFreshModules();
-dbState.fnDeployed = false;
 dbState.lastOtpBody = null;
-await otpRedirect.registration.requestVerification('redir@example.by');
-const otpBody = dbState.lastOtpBody || {};
-const redirectTarget = String(otpBody.email_redirect_to || otpBody.options?.emailRedirectTo || '');
-check('OTP fallback: email_redirect_to задан', !!redirectTarget, JSON.stringify(otpBody));
-check('OTP fallback: redirect не localhost',
-  redirectTarget && !/localhost|127\.0\.0\.1/i.test(redirectTarget), redirectTarget);
-check('OTP fallback: redirect ведёт на #/auth',
-  /#\/auth/i.test(redirectTarget), redirectTarget);
-dbState.fnDeployed = true;
+const corsRes = await cors.registration.requestVerification('cors@example.by');
+check('сеть/CORS status=0: запрос завершён честной ошибкой',
+  corsRes.ok === false, JSON.stringify(corsRes));
+check('сеть/CORS status=0: Supabase Auth OTP не вызывается',
+  dbState.lastOtpBody === null, JSON.stringify(dbState.lastOtpBody));
+check('сеть/CORS status=0: UI получает 30-секундный retry cooldown',
+  corsRes.retryAfterSeconds === 30, String(corsRes.retryAfterSeconds));
+check('сеть/CORS status=0: сообщение предлагает проверить почту, не дублировать код',
+  /Другой код не отправлялся/.test(corsRes.message || ''), corsRes.message || '');
+dbState.fnThrows = false;
 
 // issue #23: другое устройство — нет pending, код auth-code всё равно принимается
 const deviceA = await loadFreshModules();
@@ -903,11 +919,10 @@ check('два входа: сессия одна и та же по sub (нет в
   dual.userIdFromToken(dual.registration.currentSession()?.access_token) === sameSub);
 
 /* ============================================================================
- * 11. Подсказка канала доставки (находка на живом проде, 2026-09-25)
- *     Владелец получил письмом ССЫЛКУ и вошёл по ней; короткого кода не было:
- *     `auth-code` в проде не задеплоена → клиент переключился на запасной канал
- *     Supabase Auth, чей шаблон Magic Link рендерит {{ .ConfirmationURL }} без
- *     {{ .Token }}. Форма при этом обещала «код 6–8 букв и цифр».
+ * 11. Подсказка канала и fail-closed transport policy
+ *     Историческая ссылка из письма относилась к прежнему Supabase OTP fallback.
+ *     Сейчас новый login-код идёт только через auth-code; при 404/status=0 OTP
+ *     не вызывается. Подсказка OTP нужна только для legacy pending Auth-письма.
  * ========================================================================== */
 check('подсказка канала fn обещает код 6–8 символов',
   /6–8/.test(m.registration.verificationHint('fn', 'a@example.by'))
@@ -915,22 +930,26 @@ check('подсказка канала fn обещает код 6–8 симво
 check('подсказка канала otp говорит про ссылку, а не про код',
   /ссылка/i.test(m.registration.verificationHint('otp', 'a@example.by'))
   && !/^Код отправлен/.test(m.registration.verificationHint('otp', 'a@example.by')));
-check('подсказка канала otp называет причину (auth-code) и временную меру ({{ .Token }})',
-  /auth-code/i.test(m.registration.verificationHint('otp', ''))
-  && /\.Token/.test(m.registration.verificationHint('otp', '')));
+check('подсказка канала otp помечает старое письмо и запрещает новый fallback',
+  /старое письмо/i.test(m.registration.verificationHint('otp', ''))
+  && /auth-code/i.test(m.registration.verificationHint('otp', ''))
+  && /не выполняется/i.test(m.registration.verificationHint('otp', '')));
 check('verificationHint доступна через контракт use case',
   typeof m.registration.verificationHint === 'function');
 
-// сообщение use case в запасном канале не обещает код, которого в письме нет
+// Не обещаем OTP fallback: при 404 запрос закрывается, pending не создаётся.
 const hintMod = await loadFreshModules();
+hintMod.registration.clearPendingVerification();
 dbState.fnDeployed = false;
+dbState.lastOtpBody = null;
+const otpCallCountBefore404 = logCalls.filter(url => url.includes('/auth/v1/otp')).length;
 const hintRes = await hintMod.registration.requestVerification('hint@example.by');
-check('запасной канал: ok=true и channel=otp',
-  hintRes.ok === true && hintRes.channel === 'otp', JSON.stringify(hintRes));
-check('запасной канал: сообщение не обещает «Код отправлен»',
-  !/Код отправлен/.test(hintRes.message || ''), hintRes.message);
-check('запасной канал: сообщение говорит про ссылку',
-  /ссылка/i.test(hintRes.message || ''), hintRes.message);
+check('auth-code 404: fail-closed, channel не переключается на otp',
+  hintRes.ok === false && hintRes.channel === undefined && /auth-code не найдена/.test(hintRes.message || ''), JSON.stringify(hintRes));
+check('auth-code 404: GoTrue OTP не вызывается',
+  dbState.lastOtpBody === null && logCalls.filter(url => url.includes('/auth/v1/otp')).length === otpCallCountBefore404);
+check('auth-code 404: новое pending-состояние не создаётся',
+  hintMod.registration.peekPendingVerification() === null);
 dbState.fnDeployed = true;
 const fnRes = await hintMod.registration.requestVerification('hint2@example.by');
 check('основной канал: сообщение по-прежнему про код и 2 минуты',

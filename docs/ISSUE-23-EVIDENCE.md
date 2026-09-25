@@ -10,6 +10,8 @@
 **Issue:** [#23](https://github.com/A1Dmitry/Psihologist-cabinet/issues/23) (P0 email application URL + session token E2E)  
 **Related:** [#18](https://github.com/A1Dmitry/Psihologist-cabinet/issues/18) (production registration E2E)
 
+> **Historical implementation note (updated 2026-09-24):** the original audit below captured a frontend version that had an Auth OTP fallback. That fallback has since been removed for every `auth-code` error, including 404 and status=0. Current behavior is fail-closed; do not use the historical fallback description as current operational guidance. The user-observed localhost URL remains evidence, but its actual email sender is still unknown without production logs.
+>
 > GitHub integration token cannot comment on Issues (`Resource not accessible by integration`).
 > Paste the block «Ready-to-paste comment» into #23 / #18 after reconnecting GitHub write access.
 
@@ -48,29 +50,25 @@ This is exactly the failure mode #23 describes; it is not a separate defect numb
 
 ---
 
-## 3. Root cause (proven in repo + observed URL)
+## 3. Evidence and historical implementation (not a proven sender for this email)
 
-### 3.1 Two email channels
+### 3.1 Channels present in the repository at the original audit
 
-Canonical design (`js/domain/registration.js` → `requestVerification`):
+At the time the observed URL was audited, `js/domain/registration.js → requestVerification` had this behavior:
 
-1. **Primary FN:** Edge Function `auth-code` + Resend.  
-   Email body is **only a 6–8 character code** (no app hyperlink).  
-   Source: `supabase/functions/auth-code/index.ts` `action === 'request'` HTML.
-2. **Fallback OTP:** if FN returns **404** or **status 0** (network/CORS when function missing), client calls `POST /auth/v1/otp` (`supabaseApi.requestEmailOtp`).  
-   Email content = **Supabase Auth templates** (often magic link → **Site URL**).
+1. **Primary FN:** Edge Function `auth-code` + Resend. Email body is **only a 6–8 character code** (no app hyperlink). Source: `supabase/functions/auth-code/index.ts` `action === 'request'` HTML.
+2. **Historical fallback OTP:** if FN returned **404** or **status 0** (network/CORS), that frontend version called `POST /auth/v1/otp` (`supabaseApi.requestEmailOtp`). Supabase Auth templates could send a magic link to the configured **Site URL**.
 
 ```text
-auth-code missing/unreachable
+Historical frontend only:
+auth-code error (404/status=0)
         ↓
 VerificationChannel.OTP
         ↓
-Supabase email (magic link / OTP link)
-        ↓
-redirect to Site URL + #error=… or #access_token=…
+Supabase email template → Site URL
 ```
 
-INFRA already warns: undeployed `auth-code` surfaces as browser CORS, then silent OTP fallback.
+This fallback has now been removed for **all** errors; the current flow fails closed and never makes a second `/auth/v1/otp` request. The historical code path proves a possible source at that revision, **not** which channel sent the particular user-observed message. Production sender requires Auth/Resend logs.
 
 ### 3.2 Why `localhost:3000`
 
@@ -88,27 +86,23 @@ If Site URL is `http://localhost:3000` (or a leftover local preview), every Auth
 | Claim | Marker |
 |-------|--------|
 | Resend auth-code HTML has no localhost link | **proven** (function source) |
-| OTP fallback on FN 404/0 | **proven** (`registration.js`) |
+| OTP fallback on FN 404/0 | **proven in the historical audit revision; removed in current frontend** |
 | App ignores bare `#error=…` hash | **proven** (`js/app.js` `routeFromUrl`: only `#/…` paths) |
 | Production Site URL actual value | **unknown** (needs Dashboard / #18) |
 | Which channel sent *this* message | **unknown** without Resend/Auth logs |
 
 ### 3.3 Why `otp_expired`
 
-GoTrue rejects the one-time link (TTL, already used, or malformed). Hash carries the error; SPA never exchanges a session.  
-`friendlyAuthError` already maps `otp_expired` → «Код истёк…», but **nothing calls it** for URL hash errors on boot.
+GoTrue rejects the one-time link (TTL, already used, or malformed). In the original observation the hash carried the error and no session token was issued. Production Auth configuration/channel remain unknown.
 
-### 3.4 UX gap (same issue)
+### 3.4 UX gap at observation time (local fix exists; production unverified)
 
 ```text
-User lands on http://localhost:3000/#error=access_denied&error_code=otp_expired&…
-        ↓
-routeFromUrl() → hash does not start with "/" → portal
-        ↓
-No toast / auth screen message
+Original behavior:
+error hash → routeFromUrl() ignores it → no auth error message
 ```
 
-Poka-Yoke for #23: parse Auth error (and success) hashes once at boot.
+The current SPA boot parses Auth error/success redirects, displays a friendly error, strips Auth parameters and routes to auth; local regression tests cover this. Production email → callback/session remains unverified. The custom psychologist login flow now fails closed and does not request Supabase Auth OTP after an `auth-code` error.
 
 ---
 
@@ -116,14 +110,14 @@ Poka-Yoke for #23: parse Auth error (and success) hashes once at boot.
 
 Aligned with issue body; ordered by evidence:
 
-1. **Find link source** — Dashboard Site URL + email templates + whether production hits OTP fallback (`auth-code` deploy). Do not “fix” only client text.
+1. **Find link source** — Dashboard Site URL + email templates + Auth/Resend/function logs. The current frontend has no OTP fallback; determine whether the observed link came from a historical/stale frontend or the separate signup/legacy Auth flow. Do not “fix” only client text.
 2. **Application URL** — single env-specific source (Pages URL / custom domain). Forbid localhost in any user-facing Auth email link. Document in `docs/INFRA.md` (Site URL + Redirect URLs).
-3. **Prefer FN channel in prod** — deploy `auth-code`, `RESEND_API_KEY`, `MAIL_FROM` so users get **code entry in SPA** (`#/auth`), not magic-link to Site URL. OTP remains emergency only; if kept, templates must use real app URL + PKCE/verify path that SPA handles.
-4. **Session token** — existing chain stays canonical:
-   - FN: code → `verify` → `hashed_token` → `POST /auth/v1/verify` → `persistSession`
-   - OTP/link success: parse hash/query → same `persistSession` → `claimOrCreatePsychologist` / `resumeSession`
-   - Do **not** invent parallel auth; do **not** use `key_verifier` as login credential.
-5. **Hash error handler** — on load/hashchange, detect `error` / `error_code` / `error_description`, show `friendlyAuthError`, strip hash, navigate `#/auth`.
+3. **Use the canonical login-code function in prod** — deploy `auth-code`, `RESEND_API_KEY`, `MAIL_FROM` so the existing `auth_login_codes` code is entered in the SPA (`#/auth`). If the function fails, fail closed; do not switch to Supabase Auth OTP. Supabase Auth confirmation for the separate `signUp` flow must use the real app callback and PKCE.
+4. **Session token** — existing manual-login chain stays canonical:
+   - `auth-code`: code → `verify` → `hashed_token` → `POST /auth/v1/verify` → `persistSession`
+   - Signup confirmation: Auth callback/PKCE → verified session → secure invitation bind (not yet complete).
+   - Do **not** invent parallel auth; do **not** use `key_verifier` as login credential or Auth OTP as a login fallback.
+5. **Hash error handler** — locally implemented: detect `error` / `error_code` / `error_description`, show `friendlyAuthError`, strip Auth params, navigate to auth. Keep the production callback/session E2E open until proven.
 6. **E2E** — registration + login + different-device + reload session + anonymous boundary (as in #23 DoD). Overlaps #18 production proof.
 
 **Out of scope (per #23):** vault/`key_verifier`, booking (#21), `client_risks` (#22), docs rewrite (#19) beyond INFRA Site URL note.
@@ -134,7 +128,7 @@ Aligned with issue body; ordered by evidence:
 
 | #18 item | This evidence |
 |----------|----------------|
-| Deploy auth-code | If not deployed → OTP fallback → magic links → localhost risk |
+| Deploy auth-code | If missing/misconfigured → fail-closed login error; current frontend does not send a Supabase Auth OTP fallback |
 | Resend real OTP | FN path avoids Auth magic-link URL entirely |
 | Real E2E to cabinet | Blocked while email links die on localhost / otp_expired |
 | Reload session | Not reachable until token obtained |
@@ -156,12 +150,12 @@ User opened after email:
 - Email used **Auth redirect link** (not only Resend 6–8 char code from `auth-code`).
 - **Site URL / redirect = localhost:3000** → breaks different-device and production.
 - GoTrue: `otp_expired` → **no session token**.
-- SPA **ignores** `#error=…` (`routeFromUrl` only `#/…`) → silent portal.
+- At the time of the observation, SPA **ignored** `#error=…` (`routeFromUrl` only `#/…`); the current local code parses the Auth error and shows a message, but production E2E remains open.
 
-### Root cause (repo)
-- `requestVerification`: FN 404/0 → OTP fallback (`requestEmailOtp`) → Supabase email templates → Site URL.
-- `auth-code` Resend HTML is code-only (no link) — this URL shape ⇒ OTP/dashboard Auth path or expired Auth link.
-- Full write-up: `docs/ISSUE-23-EVIDENCE.md` @ main (after merge of evidence commit).
+### Repository context (historical vs current)
+- The original audit revision had `auth-code` 404/status=0 → Supabase Auth OTP fallback; this code path is now removed for all errors. Current `requestVerification` fails closed and never calls `/auth/v1/otp`.
+- `auth-code` Resend HTML is code-only (no link). The observed localhost URL indicates an Auth-generated link, but the exact email channel and production Site URL need Auth/Resend logs and Dashboard confirmation.
+- Full write-up: `docs/ISSUE-23-EVIDENCE.md` (includes the historical behavior note).
 
 ### DoD unchanged
 Full E2E session + non-localhost application URL + different-device — not only “message says expired”.
