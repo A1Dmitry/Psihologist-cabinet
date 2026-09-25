@@ -21,7 +21,9 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
  * loading js/app.js. Empty by default so the triage-attachment flow stays
  * disabled until the owner configures the Google + Supabase providers.
  */
-export const GOOGLE_CLIENT_ID = String(globalThis.PSY_GOOGLE_CLIENT_ID || '').trim();
+export const GOOGLE_CLIENT_ID = String(
+  globalThis.PSY_GOOGLE_CLIENT_ID || '241294280350-ufj4m4de4jp9rlqbofc0gkorgju5de0m.apps.googleusercontent.com'
+).trim();
 
 /**
  * Канонический URL приложения для писем и Auth redirect (issue #23).
