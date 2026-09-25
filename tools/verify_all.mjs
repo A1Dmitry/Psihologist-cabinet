@@ -63,7 +63,7 @@ const SUITE_TIMEOUT_MS = Number(process.env.VERIFY_SUITE_TIMEOUT_MS || 300000);
 // Тестовый шов (по образцу VERIFY_APP_ENTRY): прогнать только указанные файлы
 // наборов. Нужен tests/harness-guard.mjs, чтобы негативные контроли самого
 // гейта (silent-набор, «FAIL с отступом») выполнялись за миллисекунды, а не
-// прогоняли все 27 наборов с шестью стартами PostgreSQL. Reduced-прогон явно
+// прогоняли весь гейт с шестью стартами PostgreSQL. Reduced-прогон явно
 // помечается в выводе и не является полным гейтом.
 const ONLY = (process.env.VERIFY_ONLY || '').split(',').map(s => s.trim()).filter(Boolean);
 // Дополнительные наборы вне SUITES (абсолютные пути) — тот же шов для guard'а:
