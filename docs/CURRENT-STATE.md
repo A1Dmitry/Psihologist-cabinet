@@ -1,27 +1,21 @@
 # CURRENT-STATE — canonical current-state
 
-> Единственный current-state source of truth по issue #19. Исторические отчёты не переписываются и не заменяются этим документом.
+> Единственный current-state source of truth. Исторические отчёты не переписываются и не заменяются этим документом.
 >
 > **АУДИТОР: САМ** — независимая production-сертификация в этой сессии невозможна: live Supabase не подтверждался. Repo-факты проверены по актуальному `main`, GitHub Issues и каноническим документам.
-
-## Статус цикла #19
-
-```text
-#19 implementation: COMPLETE
-#19 verification gate: OPEN
-#19 independent challenger: OPEN
-#19 main re-audit: OPEN
-#19 terminal state: PARTIALLY_COMPLETED
-```
-
-`implementation COMPLETE` не означает `quality gate passed`.
 
 ## Main SHA
 
 - **Актуальный `main`:** `03c6fa57e1a53f5be9e450eeebf389865f4cc51d`
-- **Merge PR #44:** `5d5636db74ba41fbbb19fb7ad358181f4fcdc327` — исправления Quality Gate #36.
-- **Merge PR #43:** `03c6fa57e1a53f5be9e450eeebf389865f4cc51d` — roadmap Supabase MCP.
-- `87e3951` и более ранние SHA — исторические baseline, не текущий main.
+- **Merge PR #44:** `5d5636db74ba41fbbb19fb7ad358181f4fcdc327` — recovery Quality Gate #36.
+- **Merge PR #43:** `03c6fa57e1a53f5be9e450eeebf389865f4cc51d` — Supabase MCP roadmap.
+- `87e3951`, `4d490d2` и более ранние SHA — исторические baseline.
+
+## Статус документационного цикла #19
+
+`#19 = COMPLETED / DOCUMENTATION SYNCHRONIZED`.
+
+Текущий-state синхронизирован с актуальным main. Production verification и Quality Gate не входят в незавершённый остаток #19; они ведутся отдельными #18/#21/#22/#34/#36.
 
 ## Что изменилось после предыдущего current-state
 
@@ -29,27 +23,27 @@
 
 В `main` вошёл recovery harness:
 
-- `finishSuite` больше не должен затирать `process.exitCode` после async failure;
+- `finishSuite` не должен затирать `process.exitCode` после async failure;
 - `verify_app` имеет красный канал для IMPORT/BOOT/LOAD ошибок;
 - `verify_all` получил дополнительную защиту от false-green;
 - `harness-guard` расширен на наборы из `SUITES`;
 - negative controls и parity/E2E gate сохранены.
 
-**Статус:** implementation merged. Независимый Challenger + Main Re-Audit после merge ещё не закрыли #36.
+**Статус:** implementation merged; независимый Challenger/Main Re-Audit ведутся через #36/#34.
 
 ### PR #43 / Supabase MCP roadmap
 
-Добавлен roadmap подключения read-only Supabase MCP для проверки production schema/RPC/RLS drift.
+Добавлен roadmap read-only Supabase MCP для проверки production schema/RPC/RLS drift.
 
-**Статус:** roadmap есть; это не доказательство фактического подключения к production.
+**Статус:** roadmap есть; это не доказательство фактического production-подключения.
 
 ## Production — честный статус
 
 **Production readiness НЕ подтверждена этим аудитом.**
 
-Не считать доказанными без свежего live evidence:
+Без свежего live evidence не считать доказанными:
 
-- production `supabase/schema.sql` == repository schema;
+- production schema == repository `supabase/schema.sql`;
 - canonical `create_booking` signature и отсутствие overload ambiguity;
 - production RLS/policies/grants;
 - deployment `auth-code` / `telegram-notify`;
@@ -63,7 +57,7 @@ Issue #18 остаётся P0, #35 — P1 deployment blocker.
 
 ## Repo-level состояние
 
-По текущему `main` подтверждено наличие следующих контуров в репозитории:
+По текущему `main` подтверждено наличие:
 
 - registration domain / OTP flow;
 - server-authoritative booking contract;
@@ -75,7 +69,7 @@ Issue #18 остаётся P0, #35 — P1 deployment blocker.
 - security-regression;
 - harness guard;
 - Toyota Quality Gate / Producer + Challenger process;
-- current-state / dependency-driven roadmap;
+- dependency-driven roadmap;
 - Supabase MCP verification roadmap.
 
 Это **repo evidence**, а не production evidence.
@@ -84,29 +78,54 @@ Issue #18 остаётся P0, #35 — P1 deployment blocker.
 
 | Issue | Priority | Current status |
 |---|---:|---|
-| #18 | P0 | Production activation + real registration E2E — OPEN / blocked by owner-side production access and configuration |
+| #18 | P0 | Production activation + real registration E2E — OPEN / blocked or unproven |
 | #35 | P1 | Edge Functions deployment — OPEN; production deployment not independently proven |
-| #34 | P1 | Challenger recovery — repo audit exists; fresh main + production re-audit remains open |
-| #33 | P1 | D1 recovery — implementation merged; production/Main Re-Audit remains open |
-| #21 | P1 | Server-authoritative booking — repo implementation merged; production schema/live gate open |
+| #34 | P1 | Challenger recovery + fresh Main Re-Audit — OPEN |
+| #21 | P1 | Server-authoritative booking — repo implementation merged; production gate open |
 | #22 | P2 | Tenant isolation / anti-spam — repo implementation merged; production verification open |
-| #19 | P1 | Current-state synchronization — this document is the new audited synchronization point; independent gate remains open |
-| #36 | P2 | Harness false-green — implementation merged in PR #44; Challenger/Main Re-Audit open |
-| #40 | P1 | Psychologist manual OTP auth + active-account/session policy — requirements open |
+| #36 | P2 | Harness false-green — implementation merged; Challenger/Main Re-Audit open |
+| #40 | P1 | Psychologist auth: manual OTP + optional email-link entry — requirements open |
 | #41 | P1 | Client Google identity for optional triage attachment — requirements open |
 | #27–#31 | BA | Product backlog; not defects |
 
-## Important contract conflict requiring resolution before implementation
+Issues #19, #30 and #33 are no longer active implementation queues: #19 documentation sync is complete; #30 was decomposed into the non-duplicating delta #31; #33 recovery implementation was superseded by the merged fixes and the independent verification chain #34/#36.
 
-`docs/TASK-P0-SUPABASE-PORTAL.md` describes an email-confirmation/redirect-oriented onboarding contract, while Issue #40 explicitly requires **manual OTP code entry** and says an email link must not replace that step.
+## Canonical authentication contract — corrected
 
-Therefore no agent may silently choose one flow. Before implementing the P0 portal/auth work, the canonical authentication contract must be reconciled and recorded once. This is a specification dependency, not a reason to create a second authentication engine.
+There is **no conflict** between manual OTP and an email link. They are two entry methods into the same canonical authentication/session flow.
+
+```text
+EMAIL / TELEGRAM
+       │
+       ├── manual one-time code ──────┐
+       │                              │
+       └── email confirmation link ───┤
+                                      ▼
+                              canonical Supabase session
+                                      │
+                                      ▼
+                              psychologist account
+                                      │
+                                      ▼
+                                  own cabinet
+```
+
+Rules:
+
+- Manual code entry remains supported.
+- Email link is also supported and must establish the same canonical Supabase session.
+- The link must never point to `localhost`; it must use the production application origin and correct callback/token contract.
+- Both methods resolve the same `auth.uid()` → psychologist ownership path.
+- Do not create a second authentication engine.
+- Issue #40 must be corrected to describe the link as an additional entry method, not as a forbidden alternative.
+
+This is a specification correction, not a reason to duplicate implementation.
 
 ## Schema / SR status
 
-Repository `supabase/schema.sql` contains the merged SR contracts for the existing booking/auth/D1 work. Their presence in the repository does **not** prove production application.
+Repository `supabase/schema.sql` contains merged SR contracts for existing booking/auth/D1 work. Their presence in the repository does **not** prove production application.
 
-Production schema status remains **UNKNOWN** until verified through an authorized production channel (preferably the planned read-only Supabase MCP / SQL verification path).
+Production schema remains **UNKNOWN** until verified through an authorized production channel, preferably the planned read-only Supabase MCP / SQL path.
 
 ## Registration status
 
@@ -115,14 +134,19 @@ Production schema status remains **UNKNOWN** until verified through an authorize
 - Required proof remains:
 
 ```text
-real email → real OTP → Supabase Auth session → claim/owner binding → cabinet → reload → repeat login
+manual code OR email link
+        → canonical Supabase Auth session
+        → claim/owner binding
+        → own cabinet
+        → reload
+        → repeat login
 ```
 
 No production-ready label may be added without this evidence.
 
 ## Quality Gate status
 
-Canonical process remains:
+Canonical process:
 
 ```text
 MAIN → AUDIT → DEFECT/REQUIREMENT → ISSUE → PRODUCER → TESTS → CHALLENGER → MERGE → MAIN RE-AUDIT → STANDARDIZE
@@ -131,19 +155,20 @@ MAIN → AUDIT → DEFECT/REQUIREMENT → ISSUE → PRODUCER → TESTS → CHALL
 Current blockers:
 
 1. production activation / registration (#18/#35);
-2. independent verification of the merged harness recovery (#36);
-3. fresh Main Re-Audit on `03c6fa5`;
+2. independent verification of merged harness recovery (#36);
+3. fresh Main Re-Audit;
 4. production schema/RPC/RLS drift verification;
-5. authentication contract reconciliation (#40 vs P0 portal specification).
+5. corrected auth contract implementation and E2E (#40).
 
 ## Next actions — dependency order, no duplicate implementation
 
-1. **Independent Challenger #36** on the actual merged `main` `03c6fa5`, including negative controls for async/import/bootstrap failures.
+1. **Independent Challenger #36** on the actual merged main, including negative controls for async/import/bootstrap failures.
 2. **Production DB verification** through the planned Supabase MCP/read-only path: `pg_proc`, schema objects, grants, RLS/policies, `create_booking` overloads.
-3. **Resolve auth contract** between P0 portal specification and #40 before implementation.
+3. **Implement the corrected dual-entry auth contract**: manual OTP + email-link, one canonical session/ownership path.
 4. Owner-side production activation for #35/#18; then real registration and booking E2E.
-5. **Main Re-Audit** after the above changes, using the new main SHA and fresh evidence.
-6. After each subsequent merge, repeat the current-state synchronization rather than restoring historical SHA references.
+5. Verify #21/#22 production security/booking behavior.
+6. **Main Re-Audit** on the resulting main SHA with fresh evidence.
+7. After every subsequent merge, synchronize this current-state document again.
 
 ## Historical documents
 
@@ -162,4 +187,4 @@ The current state is this file, not a historical report.
 
 ---
 
-*Синхронизировано: 2026-09-25 UTC; main @ `03c6fa57e1a53f5be9e450eeebf389865f4cc51d`. This synchronization records repo facts and known verification gaps; it does not certify production.*
+*Синхронизировано: 2026-09-25 UTC; current main @ `03c6fa57e1a53f5be9e450eeebf389865f4cc51d`. Эта запись синхронизирует repo-state и известные verification gaps; она не сертифицирует production.*
