@@ -14,6 +14,11 @@ name: Production read-only probe
 # а не гейт, поэтому на push/main он не висит и сборку не красит.
 
 on:
+  # На PR: новый workflow невозможно задиспетчить из ветки (workflow_dispatch
+  # GitHub принимает только для файлов, которые уже есть в default branch),
+  # поэтому evidence для конкретной ветки снимается прогоном на pull_request.
+  pull_request:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
   schedule:
     # раз в сутки, чтобы drift в проде был виден без ручного запуска
