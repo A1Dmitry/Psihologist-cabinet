@@ -37,6 +37,14 @@ create table if not exists auth.users (
   created_at timestamptz not null default now()
 );
 
+-- Поля GoTrue, нужные контуру OAuth/Google (добавлены 2026-09-25):
+--   email_confirmed_at  — отметка подтверждения email (GoTrue ставит её сам
+--                         для OAuth-провайдеров, подтвердивших email);
+--   raw_user_meta_data  — данные провайдера (full_name, name, picture, …).
+-- Аддитивно: существующие наборы создают пользователей как раньше.
+alter table auth.users add column if not exists email_confirmed_at timestamptz;
+alter table auth.users add column if not exists raw_user_meta_data jsonb not null default '{}'::jsonb;
+
 -- auth.uid() в Supabase — это sub из JWT, который PostgREST кладёт в GUC.
 create or replace function auth.uid() returns uuid
 language sql stable
@@ -163,12 +171,34 @@ export class TestDatabase {
    * Выполняется от суперпользователя, без переключения роли: auth.users —
    * служебная таблица GoTrue, PostgREST-роли к ней доступа не имеют.
    */
-  async createAuthUser(email) {
+  /**
+   * Создать пользователя Supabase Auth (в проде это делает GoTrue).
+   * Выполняется от суперпользователя, без переключения роли: auth.users —
+   * служебная таблица GoTrue, PostgREST-роли к ней доступа не имеют.
+   *
+   * @param {string} email
+   * @param {{confirmed?: boolean, meta?: object}} [opts] — email_confirmed_at и
+   *        raw_user_meta_data. По умолчанию confirmed=true (старое поведение);
+   *        контур Google проверяет и неподтверждённый email, и имя провайдера.
+   */
+  async createAuthUser(email, { confirmed = true, meta = {} } = {}) {
     const rows = await this.pool.query(
-      `insert into auth.users (email) values ($1) returning id`,
-      [String(email).toLowerCase().trim()]
+      `insert into auth.users (email, email_confirmed_at, raw_user_meta_data)
+       values ($1, $2, $3::jsonb) returning id`,
+      [
+        String(email).toLowerCase().trim(),
+        confirmed ? new Date().toISOString() : null,
+        JSON.stringify(meta || {})
+      ]
     );
     return rows.rows[0].id;
+  }
+
+  /** Применить дополнительный SQL-файл (например, миграцию из supabase/migrations). */
+  async applySqlFile(relPath) {
+    const sql = await readFile(join(ROOT, relPath), 'utf8');
+    await this.pool.query(sql);
+    return this;
   }
 
   /** RPC от имени пользователя (как PostgREST /rpc/<fn>). */

@@ -74,7 +74,7 @@ jobs:
           cp -r css _site/css
           sed "s|%BASE%|/${GITHUB_REPOSITORY#*/}/|g" index.html > _site/index.html
           cp _site/index.html _site/404.html
-          for r in cabinet auth booking-done reply; do
+          for r in cabinet auth onboarding booking-done reply; do
             mkdir -p "_site/$r"
             cp _site/index.html "_site/$r/index.html"
           done
@@ -108,6 +108,7 @@ jobs:
             echo 'Allow: /'
             echo 'Disallow: /cabinet'
             echo 'Disallow: /auth'
+            echo 'Disallow: /onboarding'
             echo "Sitemap: ${SITE}/sitemap.xml"
           } > _site/robots.txt
 

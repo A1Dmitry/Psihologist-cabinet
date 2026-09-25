@@ -15,10 +15,20 @@ import { isSupabaseConfigured } from './supabaseConfig.js';
 import { mapPsy } from './psyMapper.js';
 import { DEFAULT_DURATION_MIN, resolveDurationMinutes } from '../domain/duration.js';
 
-/** Обратное преобразование: Psychologist → строка таблицы psychologists (без потерь) */
+/**
+ * Обратное преобразование: Psychologist → строка таблицы psychologists.
+ *
+ * `email` и `is_active` СОЗНАТЕЛЬНО не отправляются:
+ *  • email — подтверждённый адрес входа (identity), меняется только вместе с
+ *    учётной записью Supabase Auth, а не правкой профиля;
+ *  • is_active — статус доступа, им управляет администратор портала.
+ *  Миграция Google-регистрации закрепляет это и на сервере: колоночные гранты
+ *  для роли authenticated не включают эти колонки, поэтому PATCH с ними
+ *  завершался бы 42501. Клиент не должен пытаться их писать ни при какой
+ *  конфигурации сервера.
+ */
 function toPsyRow(psy) {
   return {
-    email: psy.email,
     full_name: psy.fullName,
     phone: psy.phone || '',
     specialization: psy.specialization || 'Психолог',
@@ -40,7 +50,6 @@ function toPsyRow(psy) {
     payment_links: psy.paymentLinks || [],
     payment_requisites: psy.paymentRequisites || {},
     profession: psy.profession || 'psychologist',
-    is_active: psy.isActive !== false,
     key_verifier: psy.keyVerifier || null
   };
 }

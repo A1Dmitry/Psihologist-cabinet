@@ -27,6 +27,21 @@ export class AuthViewModel extends BaseViewModel {
     this.resendIn = 0;  // сек до повторной отправки (окно ожидания)
     this._cooldownEmail = '';
     this._cooldownUntil = 0;
+    // Вход через Google (Supabase Auth OAuth): отдельный флаг загрузки —
+    // переход на внешний провайдер занимает время и не должен выглядеть как
+    // «кнопка ничего не делает».
+    this.googleBusy = false;
+    /** Ошибка входа через Google: короткая формулировка + как разрешить. */
+    this.googleError = '';
+    this.googleResolution = '';
+    /** Ошибка формы онбординга (заполнение профиля после первого входа). */
+    this.onboardingError = '';
+  }
+
+  /** Выставить/снять ошибку входа через Google (показывается рядом с кнопкой). */
+  setGoogleError(head = '', resolution = '') {
+    this.googleError = String(head || '');
+    this.googleResolution = String(resolution || '');
   }
 
   get resendLabel() {
