@@ -530,9 +530,9 @@ function renderAuth() {
     err.classList.toggle('hidden', !authVm.error);
   }
   if (hint) {
-    hint.textContent = authVm.step === 'code'
-      ? `Код отправлен на ${authVm.email}: 6–8 букв и цифр, действует 2 минуты. Проверьте письмо (и папку «Спам»).`
-      : '';
+    // Текст — из use case (registration.verificationHint): в запасном канале
+    // Supabase Auth в письме ссылка, а не код, и форма обязана это говорить.
+    hint.textContent = authVm.step === 'code' ? authVm.codeHint : '';
   }
   if (resend) {
     resend.textContent = authVm.resendLabel;
