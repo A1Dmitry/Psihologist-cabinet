@@ -33,7 +33,7 @@ const SUITES = [
   ['D1: перенос на каноническом engine (suggestSlots)', 'node', ['tests/suggest-slots.mjs']],
   ['D1: кабинет политики (overrides, лимиты, доступность услуги)', 'node', ['tests/cabinet-policy.mjs']],
   ['Воронка записи (wizard, слоты, пояса, server-first success)', 'node', ['tests/booking-wizard.mjs']],
-  ['.ics «Добавить в календарь» (VCALENDAR, TZID/VTIMEZONE, полночь, DST) (#65)', 'node', ['tests/calendar-ics.mjs']],
+  ['Issue #74: первый визит /book/{slug} — мастер переживает загрузку каталога', 'node', ['tests/booking-first-visit.mjs']],
   ['Клиентский Google Auth: nonce, GoTrue, session isolation, RPC bearer', 'node', ['tests/google-client-auth.mjs']],
   ['Опрос в записи: маски, приоритет, manual-review для непокрытых векторов', 'node', ['tests/triage-routing.mjs']],
   ['Демо-оплата: нет ложного «оплата прошла» при живом сервере (#21 п.4)', 'node', ['tests/demo-pay-honesty.mjs']],

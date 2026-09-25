@@ -21,7 +21,8 @@ import { sessionSeriesService } from '../services/sessionSeriesService.js';
 import { clientCabinetService, suggestSlots, MATERIAL_KINDS, weekdayOfLabel } from '../services/clientCabinetService.js';
 import { cabinetStatsService, moneyLabel } from '../services/cabinetStatsService.js';
 import { reminderService } from '../services/reminderService.js';
-import { icsEventText, icsEventFileName } from '../services/calendarService.js';
+// Тот же specifier, что в app.js (?v=…): один экземпляр модуля и тот же cache-bust (#73).
+import { icsEventText, icsEventFileName } from '../services/calendarService.js?v=20260925-ics';
 import {
   timezoneService, todayStr, addDaysStr, weekdayOf, weekdayTimeLabel,
   WEEKDAY_NAMES_SHORT, zoneCity, zoneLabel
@@ -630,10 +631,11 @@ function renderClientMessage(root, { title, text, hint = '' }) {
 
 /**
  * «В календарь (.ics)» для встречи в мини-кабинете клиента (#65).
- * Генератор — канонический icsEventText (один источник, RULES §6.14):
- * s.durationMin уже разрешён в clientCabinetService через resolveDurationMinutes.
- * s.date/s.time — настенное время кабинета (пояс специалиста), TZID в файле
- * даёт календарю клиента показать встречу в его собственном поясе.
+ * Генератор — канонический icsEventText (calendarService, #73); здесь только
+ * данные записи. s.date/s.time — настенное время кабинета (пояс специалиста),
+ * TZID в файле даёт календарю клиента показать встречу в его поясе.
+ * s.durationMin уже разрешён resolveDurationMinutes в clientCabinetService.
+ * data:-URI — потому что разметка собирается строкой, без обработчиков.
  */
 function clientIcsLink(s, psy) {
   if (!s?.date || !s?.time) return '';
@@ -644,11 +646,9 @@ function clientIcsLink(s, psy) {
     durationMin: s.durationMin,
     timezone: s.psyZone || psy.timezone,
     location: s.joinUrl || '',
-    url: s.joinUrl || '',
     details: s.joinUrl ? `Ссылка на встречу: ${s.joinUrl}` : '',
     uid: `psyportal-session-${s.id}`
   });
-  if (!ics) return '';
   const href = `data:text/calendar;charset=utf-8,${encodeURIComponent(ics)}`;
   const name = icsEventFileName(psy.fullName, s.date, s.time);
   return `<a href="${esc(href)}" download="${esc(name)}" data-cc-ics="${esc(s.id)}" class="px-4 py-2 rounded-full border text-xs">📅 В календарь</a>`;
