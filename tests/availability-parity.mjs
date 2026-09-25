@@ -281,8 +281,16 @@ try {
     const fx = await makePsy({ slotStart: '00:00', slotEnd: '23:00', policy: { minNoticeMinutes: 10 } });
     const near = plusMinutes(9);
     await expectPair('P3: +9 мин при notice 10 → reject', fx, dstr(near), hhmm(near), false, utcClock(), /минимум за 10 мин/);
-    const okT = plusMinutes(11);
-    await expectPair('P3: +11 мин при notice 10 → ok', fx, dstr(okT), hhmm(okT), true, utcClock());
+    // ok-слот строится ОТ ПОРОГА, а не от now: ближайшая целая минута,
+    // минимум на 61с за порогом (now + notice). Прежнее plusMinutes(11)
+    // после усечения hhmm() теряло до 59.999с (now+11мин → H:(M+11):S:F → H:(M+11):00),
+    // и зазор до порога (now+10мин) был (60 − s − δ) сек: при s→60 и δ —
+    // задержке между client-now и server-now() (RPC) зазор → 0с, сервер
+    // отказывал, client говорил ok (флейк в полном гейте 2026-09-25:
+    // client=ok / server=reject «минимум за 10 мин»). Запас ≥60с от порога
+    // — конструктивно, инвариант сюиты соблюдён.
+    const okT = new Date(Math.ceil((Date.now() + 10 * 60000 + 61000) / 60000) * 60000);
+    await expectPair('P3: целая минута ≥ порога+61с при notice 10 → ok', fx, dstr(okT), hhmm(okT), true, utcClock());
     // Control must isolate notice, not become schedule/too_long dependent on the
     // wall-clock hour when the suite starts (late UTC + 4h could cross slotEnd).
     await expectPair('P3-control: завтра 14:00 → ok', fx, plusDays(1), '14:00', true, utcClock());
