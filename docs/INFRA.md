@@ -12,7 +12,9 @@
   деплой — `.github/workflows/pages.yml`.
 - **Бэкенд:** Supabase (Postgres + RLS + Auth + Edge Functions), проект
   `phiavtroybgwyjdhqqkh` (URL и anon key — в `js/services/supabaseConfig.js`;
-  anon key публичный by design, секретом не является).
+  anon key публичный by design, секретом не является). Роадмап и регламент
+  подключения к БД через официальный Supabase MCP Server см. в
+  `docs/ROADMAP-DATABASE-CONNECTION.md`.
 - **Почта:** Resend через Edge Function `auth-code` (вход по одноразовому коду).
 - **Telegram:** Edge Function `telegram-notify` (токен бота только на сервере).
 
