@@ -362,8 +362,8 @@ try {
     check(`P11: прошлое [client=${c.ok}/${c.code} server=${s?.ok}]`,
       c.ok === false && c.code === 'past' && s?.ok === false && /прошло/i.test(s?.error || ''),
       `client=${c.reason} server=${JSON.stringify(s)}`);
-    const fut = plusMinutes(180);
-    await expectPair('P11-control: будущее → ok', fx, dstr(fut), hhmm(fut), true, utcClock());
+    // plusMinutes(180) после ~21:00 UTC вылезает за slotEnd 23:00 → too_long.
+    await expectPair('P11-control: будущее → ok', fx, plusDays(1), '12:00', true, utcClock());
   }
 
   // ---------- P12: grace band (матрица: duration overflow) — РЕГРЕСС D1-QG-003 ----------
@@ -407,9 +407,11 @@ try {
     const fx = await makePsy({ tz: 'Europe/Minsk' }); // UTC+3, без DST
     const probeDay = plusDays(2);
     await expectPair('P14: Минск, будущее → оба ok', fx, probeDay, '12:00', true, minskClock());
-    // Момент час назад, записанный минской стеной: обе стороны видят прошлое.
-    const pastD = dstr(new Date(Date.now() - 3600000));
-    const pastT = new Date(Date.now() - 3600000 + 3 * 3600000).toISOString().slice(11, 16);
+    // Вчера 12:00 по Минску — всегда прошлое и внутри окна 10:00–18:00.
+    // Прежняя формула «час назад +3ч к UTC-часам» вне 08:00–16:00 UTC давала
+    // стену вне окна → client=too_long при server=past.
+    const pastD = addDays((instantToZoned(new Date(), 'Europe/Minsk') || { date: plusDays(-1) }).date, -1);
+    const pastT = '12:00';
     const c = await clientVerdict(fx, pastD, pastT, minskClock());
     const s = await book(fx, pastD, pastT);
     check(`P14: Минск, прошлое [client=${c.ok}/${c.code} server=${s?.ok}]`,

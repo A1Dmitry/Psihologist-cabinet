@@ -64,12 +64,29 @@ globalThis.FileReader = class {};
 globalThis.fetch = async () => ({ ok: false, status: 0, text: async () => '', json: async () => ({}) });
 
 try {
-  await import(new URL('./js/app.js', import.meta.url));
+  const entry = process.env.VERIFY_APP_ENTRY || new URL('./js/app.js', import.meta.url).href;
+  await import(entry);
   console.log('IMPORT OK');
   // вызвать DOMContentLoaded-обработчики (boot)
-  for (const fn of listeners['DOMContentLoaded'] || []) { try { fn(); } catch (e) { console.log('BOOT ERROR:', e.constructor.name, e.message, e.stack?.split('\n')[1]); } }
-  for (const fn of listeners['w:load'] || []) { try { fn(); } catch (e) { console.log('LOAD ERROR:', e.constructor.name, e.message); } }
+  let bootFailed = 0;
+  for (const fn of listeners['DOMContentLoaded'] || []) {
+    try { fn(); }
+    catch (e) {
+      bootFailed++;
+      console.log('BOOT ERROR:', e.constructor.name, e.message, e.stack?.split('\n')[1]);
+    }
+  }
+  for (const fn of listeners['w:load'] || []) {
+    try { fn(); }
+    catch (e) {
+      bootFailed++;
+      console.log('LOAD ERROR:', e.constructor.name, e.message);
+    }
+  }
+  if (bootFailed) process.exit(1);
   console.log('BOOT RAN');
+  process.exit(0);
 } catch (e) {
   console.log('IMPORT/LINK ERROR:', e.constructor.name + ':', e.message);
+  process.exit(1);
 }

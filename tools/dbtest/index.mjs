@@ -221,11 +221,17 @@ export async function startTestDatabaseOrExit(opts = {}) {
  * сохраняется. Пауза 100 мс — чтобы pipe stdout успел сбросить последние
  * строки (process.exit может обрезать асинхронные записи в pipe).
  *
- * @param {number} failedCount — число проваленных проверок (0 = успех).
+ * @param {number|Array} failedCount — число проваленных проверок (0 = успех)
+ *   либо массив провалов. Код выхода также учитывает `process.exitCode`,
+ *   выставленный обработчиками uncaughtException/unhandledRejection:
+ *   иначе stray async-крах печатается, но `exit(0)` затирает красный код
+ *   (issue #36 / канал A).
  */
 export async function finishSuite(failedCount) {
-  const code = failedCount ? 1 : 0;
-  process.exitCode = code;
+  const n = Array.isArray(failedCount) ? failedCount.length : Number(failedCount);
+  const fromResults = Number.isFinite(n) && n > 0 ? 1 : 0;
+  const codeNow = () => (fromResults || process.exitCode) ? 1 : 0;
+  process.exitCode = codeNow();
   await new Promise(r => setTimeout(r, 100));
-  process.exit(code);
+  process.exit(codeNow());
 }
