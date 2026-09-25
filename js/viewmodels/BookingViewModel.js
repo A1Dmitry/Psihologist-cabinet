@@ -7,6 +7,7 @@ import { reminderService } from '../services/reminderService.js';
 import { nicknameService, normalizeNickname } from '../services/nicknameService.js';
 import { clientVaultService } from '../services/clientVaultService.js';
 import { supabaseApi } from '../services/supabaseApi.js';
+import { googleClientAuthService } from '../services/googleClientAuthService.js';
 import { telegramService } from '../services/telegramService.js';
 import { supabaseSync } from '../services/supabaseSync.js';
 import {
@@ -16,6 +17,7 @@ import {
   todayStr, daysFromToday, weekdayOf, DEFAULT_TIMEZONE
 } from '../services/timezoneService.js';
 import { resolveDurationMinutes, resolveCandidateDurationMinutes, formatDuration as fmtDuration } from '../domain/duration.js';
+import { formatBookingSessionNote } from '../domain/triage.js';
 import {
   computeBookableSlots, isoWeekStartOf, addDaysIso
 } from '../domain/availability.js';
@@ -76,6 +78,11 @@ export class BookingViewModel extends BaseViewModel {
     this.phone = '';
     this.contact = '';
     this.note = '';
+    this.triageAssessment = null;
+    // Client Google session is separate from the psychologist OTP session.
+    // It is used only when an optional triage result is attached.
+    this.clientAuthSession = null;
+    this.clientGoogleUser = null;
     this.consent = true;
     this.honeypot = ''; // bots fill this — must stay empty
     this.done = false;
@@ -194,6 +201,9 @@ export class BookingViewModel extends BaseViewModel {
     this.createdSessionId = null;
     this.paymentInfo = null;
     this.honeypot = '';
+    this.triageAssessment = null;
+    this.clientAuthSession = null;
+    this.clientGoogleUser = null;
     this.time = null;
     this.slotPsychDate = null;
     this.slotPsychTime = null;
@@ -926,6 +936,24 @@ export class BookingViewModel extends BaseViewModel {
       return false;
     }
 
+    // A triage assessment may be submitted only with a live Supabase session
+    // whose Google identity/email was checked by GoTrue. Guest bookings remain
+    // anonymous. The server must also enforce this contract (SR-005 / #41).
+    if (this.triageAssessment && supabaseSync.enabled()) {
+      try {
+        const verified = await googleClientAuthService.getVerifiedSession();
+        if (!verified?.session?.access_token || !verified?.user?.email_verified) {
+          throw new Error('Войдите через Google и подтвердите email.');
+        }
+        this.clientAuthSession = verified.session;
+        this.clientGoogleUser = verified.user;
+      } catch (error) {
+        this.error = `Чтобы прикрепить результат опроса, подтвердите Google email. ${error?.message || ''}`.trim();
+        this.notify();
+        return false;
+      }
+    }
+
     const check = fraudProtectionService.validateBooking({
       psychologistId: this.psychologist.id,
       phone: this.phone,
@@ -957,11 +985,19 @@ export class BookingViewModel extends BaseViewModel {
     // T-25: фиксируем факт согласия на момент отправки (152-ФЗ-подобные требования)
     const consentAt = new Date().toISOString();
     if (!client) {
+      const verifiedGoogleUser = this.triageAssessment ? this.clientGoogleUser : null;
       client = await clientVaultService.saveClientFromPublicBooking(this.psychologist.id, {
-        name: this.nickname,
+        name: verifiedGoogleUser?.name || this.nickname,
         nickname: this.nickname,
         phone,
-        contact: this.contact.trim() || phone,
+        contact: verifiedGoogleUser?.email
+          ? [
+            verifiedGoogleUser.email,
+            this.contact.trim() && this.contact.trim().toLowerCase() !== verifiedGoogleUser.email.toLowerCase()
+              ? `Доп. контакт: ${this.contact.trim()}`
+              : ''
+          ].filter(Boolean).join(' · ')
+          : this.contact.trim() || phone,
         note: this.note.trim(),
         trustLevel: check.riskLevel === 'high' ? 'caution' : 'new',
         consent: true,
@@ -993,7 +1029,9 @@ export class BookingViewModel extends BaseViewModel {
       date: selectedPsychDate,
       time: selectedPsychTime,
       status: payFields.status,
-      note: this.note.trim() ? `Запрос клиента: ${this.note.trim()}` : '',
+      // Результат визарда хранится только в заметке заявки; в клиентскую карточку
+      // и внешнее Telegram-уведомление клиническая подсказка не копируется.
+      note: formatBookingSessionNote(this.note, this.triageAssessment),
       videoPlatform: isOnline ? (this.settings?.defaultVideoPlatform || 'google_meet') : '',
       meetLink: '',
       paymentPolicy: payFields.paymentPolicy,
@@ -1007,6 +1045,7 @@ export class BookingViewModel extends BaseViewModel {
       clientUtcOffsetMin,
       durationMin
     });
+    const hasAdditionalInfo = !!session.note;
 
     // ============================================================
     // Серверная транзакция — ОБЯЗАТЕЛЬНЫЙ шаг до показа успеха.
@@ -1030,6 +1069,12 @@ export class BookingViewModel extends BaseViewModel {
     if (persisted.sessionId) session.id = persisted.sessionId;
     if (persisted.clientId) session.clientId = persisted.clientId;
     if (persisted.durationMin) session.durationMin = persisted.durationMin;
+    // При серверном успехе не оставляем служебную карточку в локальном кеше
+    // публичного браузера: на сервере она уже лежит в sessions.note (RLS — владелец).
+    if (this.triageAssessment && !persisted.localOnly) {
+      session.note = formatBookingSessionNote(this.note, null);
+      db.saveChanges();
+    }
     this.createdSessionId = session.id;
 
     fraudProtectionService.logAttempt({
@@ -1049,7 +1094,7 @@ export class BookingViewModel extends BaseViewModel {
     // Telegram: мгновенно через webhook (если настроен), иначе — outbox при открытии кабинета
     telegramService.notifyViaWebhook(
       this.psychologist.id, 'booking',
-      telegramService.bookingText(session, client, svc),
+      telegramService.bookingText(session, client, svc, { hasAdditionalInfo }),
       session.createdAt
     ).catch(() => {});
 
@@ -1091,7 +1136,12 @@ export class BookingViewModel extends BaseViewModel {
       const res = await supabaseSync.pushBooking({
         psychologistId: session.psychologistId,
         client,
-        session
+        session,
+        clientAuthSession: this.triageAssessment ? this.clientAuthSession : null,
+        clientIdentity: this.triageAssessment && this.clientGoogleUser
+          ? { ...this.clientGoogleUser, additionalContact: this.contact.trim() }
+          : null,
+        triageAttached: !!this.triageAssessment
       });
       if (!res.ok) {
         return { ok: false, message: res.message || 'Сервер не принял запись. Попробуйте другое время.' };

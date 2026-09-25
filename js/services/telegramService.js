@@ -138,13 +138,14 @@ export const telegramService = {
   },
 
   /** Уведомление о новой записи (психологу) */
-  bookingText(s, client, service) {
+  bookingText(s, client, service, { hasAdditionalInfo = !!s.note } = {}) {
     return [
       '🟢 <b>Новая запись</b>',
       `Клиент: ${escHtml(client?.name || client?.nickname || '—')}`,
       `Когда: ${escHtml(s.date)} в ${escHtml(s.time)}`,
       service ? `Услуга: ${escHtml(service.name)} · ${service.priceLabel()}` : '',
-      s.note ? `Комментарий: ${escHtml(s.note)}` : ''
+      // Не отправляем свободный текст и ответы анкеты во внешний мессенджер.
+      hasAdditionalInfo ? 'Дополнительная информация есть в кабинете.' : ''
     ].filter(Boolean).join('\n');
   },
 

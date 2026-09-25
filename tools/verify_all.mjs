@@ -31,6 +31,8 @@ const SUITES = [
   ['D1: перенос на каноническом engine (suggestSlots)', 'node', ['tests/suggest-slots.mjs']],
   ['D1: кабинет политики (overrides, лимиты, доступность услуги)', 'node', ['tests/cabinet-policy.mjs']],
   ['Воронка записи (wizard, слоты, пояса, server-first success)', 'node', ['tests/booking-wizard.mjs']],
+  ['Клиентский Google Auth: nonce, GoTrue, session isolation, RPC bearer', 'node', ['tests/google-client-auth.mjs']],
+  ['Опрос в записи: маски, приоритет, manual-review для непокрытых векторов', 'node', ['tests/triage-routing.mjs']],
   ['Демо-оплата: нет ложного «оплата прошла» при живом сервере (#21 п.4)', 'node', ['tests/demo-pay-honesty.mjs']],
   ['Синхронизация: деградация при частично применённой схеме (#46)', 'node', ['tests/sync-degradation.mjs']],
   ['Read-only probe: «не измерено» честно отличается от «drift 0» (#54)', 'node', ['tests/prod-probe-report.mjs']],

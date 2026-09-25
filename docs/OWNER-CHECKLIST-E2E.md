@@ -284,8 +284,7 @@ curl -s -o /dev/null -w "%{http_code}\n" -X POST \
 
 ### Шаг 2. Секреты функций: `RESEND_API_KEY`, `MAIL_FROM`, `APP_URL` (Блок 3)
 
-`APP_URL` = `https://a1dmitry.github.io/Psihologist-cabinet/` (localhost функция
-отбрасывает сама).
+Задайте `APP_URL` как подтверждённый владельцем production root URL (не localhost; функция localhost отбрасывает). `https://a1dmitry.github.io/Psihologist-cabinet/` встречается в исходниках, но считать его лишь кандидатом и подтвердить перед установкой секрета.
 
 ### Шаг 3. SQL по `create_booking` (Блок 7, запросы 1–2) — снимает 2 из 4 drift-зондов
 
@@ -311,22 +310,26 @@ where n.nspname = 'public' and p.proname = 'create_booking';
 
 ### Шаг 4. Auth → URL Configuration (Блоки 4 и 8)
 
-Site URL и Redirect URLs = `https://a1dmitry.github.io/Psihologist-cabinet/`;
-JWT expiry / session timebox ≤ 30 дней.
+Site URL и Redirect URLs = подтверждённый production origin и точный callback; не копировать URL-кандидат из исходников до подтверждения владельцем. JWT expiry / session timebox ≤ 30 дней.
 
 ### Шаг 5. Доказательства (в этом порядке)
 
 ```bash
 # 5.1 внешний срез прода: ждём «измерено: 26/26» и drift 0
 #     Actions → «Production read-only probe» → Run workflow (или любой PR/расписание в 06:35 UTC)
-# 5.2 реальный E2E на машине владельца (нужен доступ к почтовому ящику)
+# 5.2 текущий production E2E ручного auth-code (нужен доступ к ящику)
 node tools/prod-e2e.mjs --email <тестовый@ящик>
-#    скрипт попросит код из письма; после прохождения — тот же ящик и ссылка из письма:
-node tools/prod-e2e.mjs --email <тестовый@ящик> --link "<ссылка из письма>"
 ```
 
-Ожидание: в обоих прогонах `ИТОГ: N PASS, 0 FAIL`, «тот же psychologist.id» и
-«owner_id совпадает». Токены/коды в issue не вставлять.
+Ожидание ручного сценария: `ИТОГ: N PASS, 0 FAIL`, правильный `psychologist.id` и
+`owner_id` из проверенного Auth token. Токены/коды в issue не вставлять.
+
+**Direct sign-in link — пока BLOCKED:** текущая CTA в `auth-code` письме лишь
+открывает `#/auth?email=…` и не аутентифицирует. Не считать её успешным link E2E и
+не запускать `tools/prod-e2e.mjs --link` на ней. После реализации серверного
+одноразового link-flow выполнить отдельный реальный E2E: code и direct link из
+того же письма должны привести к одной practice identity, а второй способ после
+погашения challenge не должен создать повторную сессию.
 
 ### Шаг 6. Закрытие
 

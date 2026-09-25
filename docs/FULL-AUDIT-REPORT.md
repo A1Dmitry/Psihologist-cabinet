@@ -29,6 +29,8 @@
 >    **`docs/ISSUE-14-REPORT.md`**. Статус того цикла: **ЧАСТИЧНО ЗАВЕРШЕНО**
 >    (production E2E заблокирован окружением, независимого аудитора не было).
 
+> **Актуализация 2026-09-24:** описанный в более ранних разделах fallback Supabase Auth OTP — историческая политика, не текущая. Запрос собственного login-кода из `auth_login_codes` теперь выполняется только через `auth-code`; любое её отклонение fail-closed. Канонический статус и deployment/anti-abuse blockers — `docs/CURRENT-STATE.md` и `docs/SCHEMA-REQUESTS.md`.
+
 ---
 
 ## 1. Сильные стороны

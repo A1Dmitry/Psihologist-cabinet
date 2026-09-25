@@ -25,6 +25,8 @@ export class AuthViewModel extends BaseViewModel {
     this.about = '';
     this.password = ''; // пароль сейфа клиентов (опция, не для входа)
     this.resendIn = 0;  // сек до повторной отправки (окно ожидания)
+    this._cooldownEmail = '';
+    this._cooldownUntil = 0;
   }
 
   get resendLabel() {
@@ -35,9 +37,8 @@ export class AuthViewModel extends BaseViewModel {
   }
 
   /**
-   * Подсказка под полем кода. Текст зависит от канала: запасной канал
-   * Supabase Auth по умолчанию присылает ССЫЛКУ, а не код, и обещать код
-   * в этом случае нельзя (текст — в каноническом use case, не здесь).
+   * Подсказка под полем кода. Текст зависит от сохранённого канала; старый
+   * Auth OTP допускается только для завершения ранее отправленного письма.
    */
   get codeHint() {
     return registration.verificationHint(this.channel, this.email);
@@ -140,14 +141,32 @@ export class AuthViewModel extends BaseViewModel {
   }
 
   async requestCode() {
+    if (this.busy) return false;
+    const requestEmail = String(this.email || '').trim().toLowerCase();
+    const remainingMs = this._cooldownEmail === requestEmail
+      ? this._cooldownUntil - Date.now()
+      : 0;
+    if (remainingMs > 0) {
+      this.error = `Для этого email запрос уже выполнялся. Проверьте почту и подождите ещё ${Math.ceil(remainingMs / 1000)} секунд.`;
+      if (this.resendIn <= 0) this._startWindow(Math.ceil(remainingMs / 1000));
+      return false;
+    }
     this.error = '';
     this.busy = true;
     try {
       const res = await registration.requestVerification(this.email);
       if (!res.ok) {
         this.error = res.message;
+        if (res.retryAfterSeconds > 0) {
+          const seconds = Math.ceil(res.retryAfterSeconds);
+          this._cooldownEmail = requestEmail;
+          this._cooldownUntil = Date.now() + seconds * 1000;
+          this._startWindow(seconds);
+        }
         return false;
       }
+      this._cooldownEmail = requestEmail;
+      this._cooldownUntil = Date.now() + 120000;
       this.step = 'code';
       this.channel = res.channel || null;
       this._startWindow();
@@ -174,6 +193,8 @@ export class AuthViewModel extends BaseViewModel {
       }
       clearInterval(this._win);
       this.resendIn = 0;
+      this._cooldownEmail = '';
+      this._cooldownUntil = 0;
       this.showToast(res.message);
       return res.psychologist;
     } finally {
@@ -188,6 +209,10 @@ export class AuthViewModel extends BaseViewModel {
 
   logout() {
     authService.logout();
+    clearInterval(this._win);
+    this.resendIn = 0;
+    this._cooldownEmail = '';
+    this._cooldownUntil = 0;
     this.step = 'email';
     this.code = '';
     this.notify();

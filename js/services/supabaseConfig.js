@@ -16,6 +16,14 @@ export const SUPABASE_URL = 'https://phiavtroybgwyjdhqqkh.supabase.co';
 export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBoaWF2dHJveWJnd3lqZGhxcWtoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5ODc3NDQsImV4cCI6MjEwNTU2Mzc0NH0.ioK3zmYd_CbhXxsN5PbDlNvYSzppHz77fSbZZir8uJQ';
 
 /**
+ * Google OAuth Web Client ID (public; never put a Client Secret in this file).
+ * Configure either this constant or inject `window.PSY_GOOGLE_CLIENT_ID` before
+ * loading js/app.js. Empty by default so the triage-attachment flow stays
+ * disabled until the owner configures the Google + Supabase providers.
+ */
+export const GOOGLE_CLIENT_ID = String(globalThis.PSY_GOOGLE_CLIENT_ID || '').trim();
+
+/**
  * Канонический URL приложения для писем и Auth redirect (issue #23).
  *
  * Единственный клиентский source of truth для «куда вести пользователя из email».

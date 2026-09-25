@@ -135,6 +135,30 @@ async function request(path, options = {}) {
   return null;
 }
 
+async function authRequest(path, { method = 'GET', body = null, accessToken = null } = {}) {
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase не настроен');
+  }
+  const requestHeaders = {
+    apikey: SUPABASE_ANON_KEY,
+    'Content-Type': 'application/json'
+  };
+  if (accessToken) requestHeaders.Authorization = `Bearer ${accessToken}`;
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/${path}`, {
+    method,
+    headers: requestHeaders,
+    ...(body ? { body: JSON.stringify(body) } : {})
+  });
+  if (res.status === 204) return null;
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.msg || data.message || data.error_description || data.error || `Supabase Auth ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
 export const supabaseApi = {
   configured: isSupabaseConfigured,
   request, // для cabinetApi (RLS-запросы владельца)
@@ -214,15 +238,60 @@ export const supabaseApi = {
     return request(q);
   },
 
-  /** Запись клиента — только через RPC (анти-спам + проверка слота на сервере) */
-  async createBooking(payload) {
-    const rows = await request('rpc/create_booking', { method: 'POST', body: JSON.stringify(payload) });
+  /**
+   * Запись клиента — только через RPC (анти-спам + проверка слота на сервере).
+   * Public booking must never inherit the psychologist cabinet's global token:
+   * guest booking uses the anon key; a triage booking may pass its separate
+   * Supabase client-auth access token explicitly.
+   */
+  async createBooking(payload, { accessToken = null } = {}) {
+    const rows = await request('rpc/create_booking', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      headers: { Authorization: `Bearer ${accessToken || SUPABASE_ANON_KEY}` }
+    });
     return Array.isArray(rows) ? rows[0] : rows;
   },
 
-  // ——— Supabase Auth: вход по коду из письма (OTP) ———
+  /** Exchange a Google GIS ID token for a Supabase Auth client session. */
+  async signInWithGoogleIdToken({ token, nonce } = {}) {
+    if (!token) throw new Error('Google не вернул ID token');
+    return authRequest('token?grant_type=id_token', {
+      method: 'POST',
+      body: {
+        provider: 'google',
+        id_token: token,
+        ...(nonce ? { nonce } : {})
+      }
+    });
+  },
+
+  /** Refresh a client Google session without touching the psychologist session. */
+  async refreshClientAuthSession(refreshToken) {
+    if (!refreshToken) throw new Error('Нет refresh token Google-сессии');
+    return authRequest('token?grant_type=refresh_token', {
+      method: 'POST',
+      body: { refresh_token: refreshToken }
+    });
+  },
+
+  /** Ask GoTrue to validate the access token and return the current Auth user. */
+  async getClientAuthUser(accessToken) {
+    if (!accessToken) throw new Error('Нет access token Google-сессии');
+    return authRequest('user', { accessToken });
+  },
+
+  /** Revoke only the client-auth token; the psychologist OTP session is untouched. */
+  async logoutClientAuth(accessToken) {
+    if (!accessToken) return null;
+    return authRequest('logout?scope=local', { method: 'POST', accessToken });
+  },
+
+  // ——— Legacy Supabase Auth email OTP (не используется в новом psychologist-login request flow) ———
   /**
-   * Отправить OTP/magic-link на email (запасной канал, issue #23).
+   * Legacy API: ни один текущий psychologist-login flow не вызывает её;
+   * `requestVerification` не отправляет Auth OTP после auth-code. Проверка уже
+   * сохранённого legacy pending OTP выполняется отдельно через verifyEmailOtp.
    *
    * `emailRedirectTo` ОБЯЗАН указывать на реальный APPLICATION_URL (не localhost):
    * письмо открывают на любом устройстве. GoTrue всё равно сверяет redirect с
@@ -390,24 +459,24 @@ export const supabaseApi = {
   /** Проверить код из письма → сессия (access_token).
    *  GoTrue шлёт разный type: magiclink (существующий), signup (созданный) —
    *  пробуем по очереди, пока сервер не примет. */
+  /**
+   * Завершить legacy OTP, который уже ожидает пользователя. Для кода из
+   * `/auth/v1/otp` GoTrue требует type=email; не перебираем другие типы.
+   */
   async verifyEmailOtp(email, token) {
     const e = String(email).toLowerCase().trim();
-    const types = ['magiclink', 'signup', 'recovery'];
-    let lastMsg = '';
-    for (const type of types) {
-      const res = await fetch(`${SUPABASE_URL}/auth/v1/verify`, {
-        method: 'POST',
-        headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: e, token: String(token).trim(), type })
-      });
-      if (res.ok) return res.json();
-      const body = await res.text();
-      let msg = body;
-      try { msg = JSON.parse(body).msg || JSON.parse(body).error_description || body; } catch (_) {}
-      lastMsg = msg || `HTTP ${res.status}`;
-      if (/rate|часто/i.test(lastMsg)) break; // при rate-limit перебор бессмыслен
-    }
-    throw new Error(lastMsg);
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/verify`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: e, token: String(token).trim(), type: 'email' })
+    });
+    if (res.ok) return res.json();
+    const body = await res.text();
+    let msg = body;
+    try { msg = JSON.parse(body).msg || JSON.parse(body).error_description || body; } catch (_) {}
+    const err = new Error(msg || `HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
   },
 
   // ——— Собственный код входа (Edge Function auth-code; письмо через Resend,
@@ -422,15 +491,16 @@ export const supabaseApi = {
       });
     } catch (e) {
       // Ответа нет вообще (сеть/CORS). В браузере «функция не задеплоена»
-      // выглядит именно так: preflight OPTIONS получает 404 без CORS-заголовков,
-      // fetch бросает TypeError и статус прочитать нельзя. Помечаем status=0,
-      // чтобы use case мог отличить «канал недоступен» (→ запасной OTP)
-      // от честного HTTP-отказа задеплоенной функции (429/500/502).
+      // может выглядеть так: preflight OPTIONS получает 404 без CORS-заголовков,
+      // fetch бросает TypeError и статус прочитать нельзя. Помечаем status=0;
+      // функция могла обработать POST и отправить письмо, поэтому use case
+      // fail-closed и пользователь не должен повторять запрос немедленно.
       const err = new Error('Функция auth-code недоступна (нет ответа: сеть или CORS)');
       err.status = 0;
       throw err;
     }
     if (res.status === 404) {
+      // 404 — configuration/deployment error, not permission to send a second code.
       const e = new Error('Функция auth-code не задеплоена');
       e.status = 404;
       throw e;

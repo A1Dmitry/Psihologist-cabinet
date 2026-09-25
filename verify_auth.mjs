@@ -2,13 +2,14 @@
 /**
  * Смоук серверной авторизации и серверного кабинета (мок Supabase):
  *   node verify_auth.mjs
- * Проверяет: свой код входа (Edge Function auth-code: 6–8 букв/цифр, uppercase,
- * hashed_token → сессия, честные ошибки без magic-link), запасной OTP-канал
- * (create_user, перебор type при verify), окно 2 минуты, claim → вход,
- * pull кабинета, write-through задач/заметок/блокировок.
+ * Проверяет: собственный auth-code — единственный канал запроса кода
+ * (6–8 букв/цифр, hashed_token → Supabase session), ошибки fail-closed без
+ * параллельного Auth OTP, окно 2 минуты, legacy claim → вход,
+ * pull кабинета, write-through задач/заметок/блокировок. Это не доказывает
+ * invitation-only signUp/RLS/production-сценарий SR-006.
  */
 const calls = [];
-const state = { otpTypes: [], verifyTypes: [], verifyHashes: [], claimCalls: 0, fnMode: 'missing', fnRequests: [], fnVerify: [] };
+const state = { otpTypes: [], verifyTypes: [], verifyHashes: [], claimCalls: 0, fnMode: 'on', fnRequests: [], fnVerify: [] };
 globalThis.fetch = async (url, opts = {}) => {
   const u = String(url);
   const body = opts.body ? JSON.parse(opts.body) : {};
@@ -33,8 +34,13 @@ globalThis.fetch = async (url, opts = {}) => {
       return resp(400, { msg: 'Invalid type' });
     }
     if (body.token === '222222') {
-      // magiclink отклонён, signup — ок (новый пользователь)
+      // magiclink отклонён, signup — ок (legacy fixture)
       if (body.type === 'signup') return resp(200, { access_token: 'jwt-2', refresh_token: 'r2' });
+      return resp(400, { msg: 'Invalid type' });
+    }
+    if (body.token === '333333') {
+      // Supabase email OTP must use type=email.
+      if (body.type === 'email') return resp(200, { access_token: 'jwt-email', refresh_token: 'r-email' });
       return resp(400, { msg: 'Invalid type' });
     }
     return resp(400, { msg: 'Invalid token' });
@@ -47,8 +53,8 @@ globalThis.fetch = async (url, opts = {}) => {
     if (state.fnMode === 'cors') throw new TypeError('Failed to fetch');
     state.fnRequests.push(body);
     if (body.action === 'request') {
+      if (body.email === 'busy@x.by' || body.email === 'ratelimit@x.by') return resp(429, { ok: false, error: 'Слишком часто: подождите около 30 секунд' });
       if (body.email === 'noresend@x.by') return resp(500, { ok: false, error: 'Почта не настроена: задайте секрет RESEND_API_KEY (supabase secrets set RESEND_API_KEY=re_...)' });
-      if (body.email === 'ratelimit@x.by') return resp(429, { ok: false, error: 'Слишком часто: подождите около 30 секунд' });
       return resp(200, { ok: true, ttl_seconds: 120 });
     }
     if (body.action === 'verify') {
@@ -140,30 +146,38 @@ const { authVm, cabinetVm } = await import(new URL('./js/app.js', 'file://' + pr
 const { authService } = await import(new URL('./js/services/authService.js', 'file://' + process.cwd() + '/').href);
 const { db } = await import(new URL('./js/core/dbContext.js', 'file://' + process.cwd() + '/').href);
 const { cabinetApi } = await import(new URL('./js/services/cabinetApi.js', 'file://' + process.cwd() + '/').href);
+const { supabaseApi } = await import(new URL('./js/services/supabaseApi.js', 'file://' + process.cwd() + '/').href);
 
 const checks = [];
 const ok = (n, c) => checks.push([n, !!c]);
 
-// —— OTP протокол ——
+// Legacy pending Auth OTP verification is email/code, not magiclink/signup/recovery.
+state.verifyTypes = [];
+const legacyOtpSession = await supabaseApi.verifyEmailOtp('legacy@x.by', '333333');
+ok('legacy Auth OTP → Supabase verify type=email', legacyOtpSession?.access_token === 'jwt-email');
+ok('legacy Auth OTP → one verification request only', state.verifyTypes.length === 1 && state.verifyTypes[0] === 'email');
+
+// —— Единственный запрос кода входа — Edge Function auth-code ——
 let r = await authVm.requestCode();
 ok('invalid email → error', r === false && /корректн/.test(authVm.error));
 authVm.email = 'busy@x.by';
 await authVm.requestCode();
-ok('rate limit message', /Слишком часто/.test(authVm.error));
+ok('auth-code rate limit message', /Слишком часто/.test(authVm.error));
+ok('auth-code 429 → локальный cooldown 30с', authVm.resendIn === 30);
 authVm.email = 'doc@x.by';
 r = await authVm.requestCode();
-ok('otp sent → step code', r === true && authVm.step === 'code');
-ok('otp create_user:true', state.otpTypes.every(b => b.create_user === true));
+ok('auth-code → step code', r === true && authVm.step === 'code');
+ok('login request не вызывает /auth/v1/otp', state.otpTypes.length === 0);
+ok('pending channel — fn', authService.channel === 'fn');
 ok('resend window 120s', authVm.resendIn === 120);
 
-// —— verify: перебор type ——
 authVm.code = '000000';
 await authVm.confirmCode();
-ok('wrong code → error', /Код неверный|не принял/.test(authVm.error));
-authVm.code = '111111';
-authVm.mode = 'register'; authVm.fullName = 'Док Тестов';
+ok('wrong auth-code → error', /Код неверный|не принял/.test(authVm.error));
+authVm.code = 'ABCD2345';
+authVm.mode = 'login';
 const psy = await authVm.confirmCode();
-ok('verify (magiclink) → psychologist', !!psy && psy.id === 'psy_test_1');
+ok('verify auth-code → psychologist', !!psy && psy.id === 'psy_test_1');
 ok('isAuthenticated', authService.isAuthenticated());
 ok('token установлен (кабинет пишет на сервер)', cabinetApi.enabled());
 
@@ -185,21 +199,19 @@ cabinetVm.addBlock({ dateFrom: '2026-10-01', kind: 'day_off', title: 'Выход
 await new Promise(rs => setTimeout(rs, 10));
 ok('block POST на сервер', calls.some(u => u.includes('/rest/v1/schedule_blocks')));
 
-// —— фолбэк type: magiclink отклонён → signup принят (новый пользователь) ——
+// —— 404 auth-code: fail closed, никакого отдельного GoTrue OTP ——
+state.fnMode = 'missing';
 authService.logout();
 authVm.step = 'email'; authVm.error = ''; authVm.email = 'new@x.by'; authVm.code = '';
-// код обязателен до шага ввода: канал доставки фиксируется в ожидании
-// (safeStorage) и переживает перезагрузку — см. domain/registration
+const otpCountBeforeMissing = state.otpTypes.length;
 r = await authVm.requestCode();
-ok('otp: код запрошен до шага ввода', r === true && authVm.step === 'code');
-authVm.code = '222222';
-state.verifyTypes = [];
-const psy2 = await authVm.confirmCode();
-ok('verify fallback signup → psychologist', !!psy2 && psy2.id === 'psy_test_1');
-ok('type chain magiclink→signup', state.verifyTypes.includes('magiclink') && state.verifyTypes.includes('signup'));
+ok('404 auth-code → честная ошибка', r === false && /auth-code не найдена/.test(authVm.error));
+ok('404 auth-code → /auth/v1/otp не вызывается', state.otpTypes.length === otpCountBeforeMissing);
+state.fnMode = 'on';
 
 // —— собственный код входа: Edge Function auth-code (письмо через Resend) ——
 state.fnMode = 'on';
+state.fnRequests = []; state.fnVerify = []; state.verifyHashes = [];
 authService.logout();
 authVm.step = 'email'; authVm.error = ''; authVm.email = 'doc@x.by'; authVm.code = ''; authVm.mode = 'login';
 r = await authVm.requestCode();
@@ -230,22 +242,25 @@ authVm.code = 'WRONG01';
 await authVm.confirmCode();
 ok('fn: неверный код → понятная ошибка', /Код неверный|Неверный код/.test(authVm.error));
 
-// —— функция не задеплоена: браузер видит CORS-ошибку (TypeError без статуса) ——
+// —— status=0 при CORS/сети неоднозначен: не запрашиваем второй код ——
 state.fnMode = 'cors';
-authService.logout();
+authVm.logout();
 authVm.step = 'email'; authVm.error = ''; authVm.email = 'doc@x.by'; authVm.code = ''; authVm.mode = 'login';
 const { registration } = await import(new URL('./js/domain/registration.js', 'file://' + process.cwd() + '/').href);
 const direct = await registration.requestVerification('doc@x.by');
-ok('cors: TypeError вместо 404 → запасной канал OTP, сообщение называет канал',
-  direct.ok === true && direct.channel === 'otp' && /запасной канал/.test(direct.message));
+ok('cors: status=0 → отказ без второго OTP',
+  direct.ok === false && /Другой код не отправлялся/.test(direct.message));
 const otpCallsBefore = state.otpTypes.length;
 r = await authVm.requestCode();
-ok('cors: «Получить код» работает (не «Failed to fetch»)',
-  r === true && state.otpTypes.length === otpCallsBefore + 1 && authService.channel === 'otp');
-authVm.code = '111111';
-const psyOtp = await authVm.confirmCode();
-ok('cors: вход по OTP-коду после переключения канала', !!psyOtp && psyOtp.id === 'psy_test_1');
+ok('cors: «Получить код» fail-closed',
+  r === false && state.otpTypes.length === otpCallsBefore && /Другой код не отправлялся/.test(authVm.error));
+ok('cors: повторный запрос заблокирован на 30 секунд', authVm.resendIn === 30);
+const callsBeforeBlockedRetry = calls.length;
+r = await authVm.requestCode();
+ok('cors: тот же email не отправляется повторно немедленно',
+  r === false && calls.length === callsBeforeBlockedRetry && /подождите ещё/.test(authVm.error));
 state.fnMode = 'on';
+authVm.logout(); // остановить таймер теста
 
 let failed = 0;
 for (const [n, p] of checks) { console.log((p ? 'PASS' : 'FAIL') + '  ' + n); if (!p) failed++; }

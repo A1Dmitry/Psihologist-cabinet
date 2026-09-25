@@ -138,6 +138,8 @@ const { bookingVm } = app;
 const { fraudProtectionService } = await import('../js/services/fraudProtectionService.js');
 const { timezoneService } = await import('../js/services/timezoneService.js');
 const { supabaseApi } = await import('../js/services/supabaseApi.js');
+const { googleClientAuthService } = await import('../js/services/googleClientAuthService.js');
+const { TRIAGE_QUESTIONS, buildTriageAssessment } = await import('../js/domain/triage.js');
 
 const render = () => window.navigate('booking', { slug: SLUG });
 const el = sel => getEl(sel);
@@ -269,15 +271,42 @@ bookingVm.phone = '+375 29 111-22-33';
 bookingVm.contact = '@anna_test';
 bookingVm.consent = true;
 bookingVm.honeypot = '';
+bookingVm.note = 'Текст клиента остаётся редактируемым';
+const testAnswers = Object.fromEntries(TRIAGE_QUESTIONS.map((q, i) => [q.id, '00110010'[i]]));
+bookingVm.triageAssessment = buildTriageAssessment(testAnswers, 'not_reported');
+const verifiedClientSession = {
+  access_token: 'supabase-client-google-token',
+  refresh_token: 'client-refresh-token',
+  expires_at: Math.floor(Date.now() / 1000) + 3600
+};
+const verifiedClientUser = {
+  google_id: 'google-sub-client-1',
+  auth_user_id: 'auth-client-1',
+  name: 'Anna Google',
+  email: 'anna.google@example.com',
+  email_verified: true,
+  provider: 'google'
+};
+const realGetVerifiedSession = googleClientAuthService.getVerifiedSession;
+googleClientAuthService.getVerifiedSession = async () => ({ session: verifiedClientSession, user: verifiedClientUser });
 fraudProtectionService.formOpenedAt = Date.now() - 30000; // антиспам: форма «открыта» давно
 
 // 1) сервер ОТКАЗАЛ — успех показывать нельзя, локальной записи остаться не должно
 const realCreateBooking = supabaseApi.createBooking;
 let lastBookingPayload = null;
-supabaseApi.createBooking = async (payload) => {
+let lastBookingOptions = null;
+let rpcCalled = false;
+supabaseApi.createBooking = async (payload, options) => {
+  rpcCalled = true;
   lastBookingPayload = payload;
+  lastBookingOptions = options;
   return { ok: false, error: 'Это время только что заняли — выберите другое' };
 };
+googleClientAuthService.getVerifiedSession = async () => null;
+const missingGoogle = await bookingVm.submit();
+check('triage без проверенной Google-сессии отклоняется до RPC',
+  missingGoogle === false && rpcCalled === false && /подтвердите Google email/i.test(bookingVm.error), bookingVm.error);
+googleClientAuthService.getVerifiedSession = async () => ({ session: verifiedClientSession, user: verifiedClientUser });
 const rejected = await bookingVm.submit();
 check('отказ сервера → заявка не создана', rejected === false, String(rejected));
 check('отказ сервера → ошибка показана пользователю',
@@ -285,12 +314,31 @@ check('отказ сервера → ошибка показана пользо�
 check('отказ сервера → успех не показан', bookingVm.done !== true && !bookingVm.successText);
 
 // 2) сервер принял — проверяем фактический контракт RPC create_booking
-supabaseApi.createBooking = async (payload) => {
+supabaseApi.createBooking = async (payload, options) => {
   lastBookingPayload = payload;
+  lastBookingOptions = options;
   return { ok: true, client_id: 'cli_srv_1', session_id: 'ses_srv_1', duration_min: 90 };
 };
 const session = await bookingVm.submit();
 check('заявка создана', !!session && !!session.id, session?.id || bookingVm.error);
+check('результат опроса записан в серверную заметку заявки',
+  lastBookingPayload?.p_session_note.includes('RULE_5 (0 0 1 1 - 0 1 -)') && lastBookingPayload?.p_session_note.includes('raw_vector'),
+  lastBookingPayload?.p_session_note);
+check('служебная карточка очищена из локального кеша после серверного успеха',
+  !session?.note.includes('RULE_5') && !session?.note.includes('clinical_summary'), session?.note);
+check('свободный текст сохранён, служебная карточка не дублируется в заметке клиента',
+  lastBookingPayload?.p_client_note === 'Текст клиента остаётся редактируемым' && !lastBookingPayload?.p_client_note.includes('RULE_5'),
+  lastBookingPayload?.p_client_note);
+check('служебная карточка помечена как не диагноз', /не диагноз/.test(lastBookingPayload?.p_session_note || ''));
+check('Google-подтверждённое имя/email идут как контакт записи',
+  lastBookingPayload?.p_client_name === 'Anna Google' &&
+  lastBookingPayload?.p_client_contact === 'anna.google@example.com · Доп. контакт: @anna_test',
+  `${lastBookingPayload?.p_client_name}/${lastBookingPayload?.p_client_contact}`);
+check('Google-сессия передана отдельным Authorization token, не в RPC body',
+  lastBookingOptions?.accessToken === 'supabase-client-google-token' && !('p_google_id' in (lastBookingPayload || {})),
+  JSON.stringify(lastBookingOptions));
+check('Google-подтверждение не склеено со свободным текстом клиента',
+  lastBookingPayload?.p_client_note === 'Текст клиента остаётся редактируемым', lastBookingPayload?.p_client_note);
 check('время записано в поясе специалиста', session?.time === '17:00' && session?.date === DATE, `${session?.date} ${session?.time}`);
 check('id заменён на серверный (запись подтверждена транзакцией)',
   session?.id === 'ses_srv_1' && session?.clientId === 'cli_srv_1', `${session?.id}/${session?.clientId}`);
@@ -304,6 +352,7 @@ check('SR-001: снимок длительности услуги передан
 check('пояс клиента больше НЕ дублируется текстом в заметке',
   !/Часовой пояс клиента:/.test(session?.note || ''), session?.note);
 supabaseApi.createBooking = realCreateBooking;
+googleClientAuthService.getVerifiedSession = realGetVerifiedSession;
 
 // ——— T-04: ссылка с профиля «услуга → окна» ———
 loc.pathname = `/psy/${SLUG}`;

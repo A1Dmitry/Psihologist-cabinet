@@ -26,13 +26,13 @@
 | # | Элемент | Статус | Комментарий |
 |---|---------|--------|-------------|
 | 1 | Проект Supabase | ✅ подтверждён декларативно | ref `phiavtroybgwyjdhqqkh`; anon key выпущен 2026-09-21 (см. `iat` в JWT) — проект свежесозданный. Дашборд-проверку выполняет владелец (у агента песочницы нет сети до supabase.co и access-токена) |
-| 2 | `supabase/schema.sql` в проде | ✅ **применена владельцем 2026-09-25** (LIVE, внешний канал: между 04:55Z и 05:14Z появились SR-004 `auth_login_codes.issued_token_hash/issues/consumed_at` и SR-D1 — `schedule_overrides`, `public_schedule_overrides`, `session_settings.min_notice_minutes`, `services.availability`; SR-001/SR-003 были применены и раньше). Остаток: `create_booking` для anon всё ещё `PGRST202` → публичная запись не работает; причина различима только SQL-каналом владельца (Блок 7). См. `docs/ISSUE-46-EVIDENCE.md` §2bis) | идемпотентен, применять целиком в SQL Editor. До 2026-09-23 файл **не применялся целиком**: `revoke`/`grant execute` для `create_booking` описывали старую арность → PostgreSQL обрывал выполнение на 42883, поэтому `claim_psychologist_profile` и `client_error_logs` в проде не существовали (это и есть причина неработающей регистрации). 2026-09-23 исправлено + добавлены `sessions.client_timezone` / `client_utc_offset_min` / `duration_min` (SR-001/108), интервальная занятость + advisory lock в `create_booking` (SR-002), `public_booked_slots.duration_min` (SR-003), `auth_login_codes.issued_token_hash` / `issues` / `consumed_at` (SR-004 — атомарное погашение кода входа, нужно Edge Function `auth-code`). **2026-09-24 (issue #19, main @ `87e3951`): в файл дополнительно вошли SR-D1 (D1: политика/`schedule_overrides`/`public_schedule_overrides`) и фиксы #21/#22 (серверная деривация оплаты/hold в `create_booking`, RLS `client_risks` без политик для `anon`/`authenticated`, `booking_attempts`)** — re-apply по-прежнему обязателен целиком. Проверено на PostgreSQL 18.4: `node tests/db-contract.mjs` (в составе `npm run verify` 22/22, 2026-09-24). **Внимание: миграция удаляет колонку `sessions.timezone_offset` и меняет арность RPC** — подробности в `docs/FULL-AUDIT-REPORT.md` |
+| 2 | `supabase/schema.sql` в проде | ⛔ **критично: переприменить** (drift подтверждён LIVE 2026-09-25: в проде НЕТ SR-004 `auth_login_codes.issued_token_hash/issues/consumed_at`, НЕТ SR-D1 — `schedule_overrides`, `public_schedule_overrides`, `session_settings.min_notice_minutes`, `services.availability`; `create_booking` для anon недоступен → публичная запись не работает. SR-001/SR-003 при этом применены. См. `docs/ISSUE-46-EVIDENCE.md` §2) | идемпотентен, применять целиком в SQL Editor. До 2026-09-23 файл **не применялся целиком**: `revoke`/`grant execute` для `create_booking` описывали старую арность → PostgreSQL обрывал выполнение на 42883, поэтому `claim_psychologist_profile` и `client_error_logs` в проде не существовали (это и есть причина неработающей регистрации). 2026-09-23 исправлено + добавлены `sessions.client_timezone` / `client_utc_offset_min` / `duration_min` (SR-001/108), интервальная занятость + advisory lock в `create_booking` (SR-002), `public_booked_slots.duration_min` (SR-003), `auth_login_codes.issued_token_hash` / `issues` / `consumed_at` (SR-004 — атомарное погашение кода входа, нужно Edge Function `auth-code`). **2026-09-24 (issue #19, main @ `87e3951`): в файл дополнительно вошли SR-D1 (D1: политика/`schedule_overrides`/`public_schedule_overrides`) и фиксы #21/#22 (серверная деривация оплаты/hold в `create_booking`, RLS `client_risks` без политик для `anon`/`authenticated`, `booking_attempts`)** — re-apply по-прежнему обязателен целиком. Проверено на PostgreSQL 18.4: `node tests/db-contract.mjs` (в составе `npm run verify` 22/22, 2026-09-24). **Внимание: миграция удаляет колонку `sessions.timezone_offset` и меняет арность RPC** — подробности в `docs/FULL-AUDIT-REPORT.md` |
 | 3 | `supabase/seed.sql` в проде | ✅ решение: накатывать | это реальный референс-профиль Наталии Михайловской, не фиктивное демо. См. «Ловушка первого входа» ниже |
-| 4 | Edge Function `auth-code` | ⛔ **не задеплоена** (LIVE-срезы 2026-09-25 05:14Z/05:42Z/05:53Z: `GET /functions/v1/auth-code` → `404 NOT_FOUND` gateway) | см. «Деплой функций». **verify_jwt=false обязателен** (config.toml уже в репо). 2026-09-23 (issue #14): функция переработана — код гасится **после** создания сессии, появились actions `recover` и `redeem`; для атомарного погашения нужны колонки SR-004 (п.2). Без них функция работает в legacy-режиме (ответ `legacy_schema: true`, восстановление сессии недоступно) |
-| 5 | Edge Function `telegram-notify` | ⛔ **не задеплоена** (LIVE 2026-09-25, те же срезы: `404 NOT_FOUND`); workflow деплоя теперь краснеет по факту доступности, а не «зелёный без деплоя» (F4) | то же |
+| 4 | Edge Function `auth-code` | ⛔ **не задеплоена** (LIVE 2026-09-25: `GET /functions/v1/auth-code` → `404 NOT_FOUND` gateway) | см. «Деплой функций». **verify_jwt=false обязателен** (config.toml уже в репо). 2026-09-23 (issue #14): функция переработана — код гасится **после** создания сессии, появились actions `recover` и `redeem`; для атомарного погашения нужны колонки SR-004 (п.2). Без них функция работает в legacy-режиме (ответ `legacy_schema: true`, восстановление сессии недоступно) |
+| 5 | Edge Function `telegram-notify` | ⛔ **не задеплоена** (LIVE 2026-09-25: `404 NOT_FOUND`) | то же |
 | 6 | Секрет `RESEND_API_KEY` | ⛔ блокер на владельце | нужен аккаунт Resend + **верифицированный домен** (иначе письма уходят только владельцу аккаунта Resend — блокирует T-15) |
 | 7 | Секрет `MAIL_FROM` | ⏳ после домена | напр. `PsyПортал <login@ваш-домен>`; без домена — `onboarding@resend.dev` (только на email владельца Resend) |
-| 7b | Секрет `APP_URL` + Auth Site URL | ⏳ **обязательно для #23** | `APP_URL=https://a1dmitry.github.io/Psihologist-cabinet/` (без localhost). Dashboard → Authentication → URL Configuration: **Site URL** и **Redirect URLs** = тот же origin. Клиентский канон: `APPLICATION_URL` в `js/services/supabaseConfig.js` |
+| 7b | Секрет `APP_URL` + Auth Site URL | ⏳ **обязательно для email links** | Кандидат из исходников `APP_URL=https://a1dmitry.github.io/Psihologist-cabinet/` (не localhost), но production-домен нужно подтвердить у владельца до установки. Dashboard → Authentication → URL Configuration: **Site URL** и **Redirect URLs** = подтверждённый origin. Клиентский канон: `APPLICATION_URL` в `js/services/supabaseConfig.js` |
 | 8 | GitHub Pages CI | ✅ готов (исправлено 2026-09-23) | сборка `_site`, `%BASE%`, статические маршруты (200 для deep-links), `404.html`-fallback, post-deploy смоук. ⚠️ 2026-09-23: PR #9 случайно склеил строки в YAML (`- name: … run: |` в одну строку) — деплой молча падал (0s, workflow file issue), сайт показывал устаревшую сборку PR #6. Проверка YAML теперь часть смоука: `npx js-yaml .github/workflows/*.yml` |
 | 9 | Логирование ошибок фронтенда | ✅ код готов | `js/services/errorLogService.js` → `client_error_logs` (после применения п.2) |
 | 10 | Кастомный домен | ⚪ опционально | инструкция ниже |
@@ -60,11 +60,12 @@
    домена Resend доставляет письма ТОЛЬКО на адрес владельца аккаунта — коды
    входа до специалистов не дойдут (прямой блокер T-15 уведомлений).
 4. **Секреты Supabase** (Dashboard → Project Settings → Edge Functions → Secrets,
-   или CLI):
+   или CLI). Важно: URL из исходников ниже — только кандидат `https://a1dmitry.github.io/Psihologist-cabinet/`; подтвердить production-домен у владельца **до** установки секрета или Dashboard URL (не применять placeholder/старый домен вслепую):
    ```bash
    supabase secrets set RESEND_API_KEY=re_...
    supabase secrets set MAIL_FROM="PsyПортал <login@ваш-домен>"
-   supabase secrets set APP_URL="https://a1dmitry.github.io/Psihologist-cabinet/"
+   # Только после подтверждения домена владельцем; значение ниже — не шаблон для копирования:
+   supabase secrets set APP_URL="<подтверждённый-владельцем-production-root-url>"
    ```
    `APP_URL` — куда ведёт кнопка «Открыть страницу входа» в письме `auth-code`
    (issue #23). **Не** `http://localhost:…`: письмо открывают на телефоне/другом
@@ -72,10 +73,9 @@
    `localhost` в секрете отбрасывается (poka-yoke).
    Значения — только здесь. В коде/репозитории секретов Resend не храним.
 
-   **Supabase Auth → URL Configuration** (тот же шаг, иначе OTP-fallback снова
-   даст `localhost/#error=otp_expired`):
-   - Site URL = `https://a1dmitry.github.io/Psihologist-cabinet/`
-   - Redirect URLs allowlist: тот же origin + `/**`
+   **Supabase Auth → URL Configuration** (важно для отдельного `signUp` confirmation-link и legacy Auth links; это не fallback для текущего login-code):
+   - Site URL = подтверждённый владельцем production root URL.
+   - Redirect URLs allowlist = только точные подтверждённые callback/route URL, которые реально использует приложение; не включать широкий wildcard до отдельного обоснования.
 5. **Деплой функций** (один из двух путей):
    - **Из CI (рекомендуется):** в репозитории задать Secret `SUPABASE_ACCESS_TOKEN`
      (supabase.com/dashboard/account/tokens) и Variable `SUPABASE_PROJECT_ID=phiavtroybgwyjdhqqkh`.
@@ -88,6 +88,10 @@
      supabase functions deploy telegram-notify --project-ref phiavtroybgwyjdhqqkh --no-verify-jwt
      ```
      (`verify_jwt=false` зашит и в `supabase/config.toml` — флаг дублирует его на случай старого CLI.)
+     Функция доступна без пользовательского JWT по назначению; до публичного
+     использования нужны server-side IP rate limit и CAPTCHA/эквивалент поверх
+     существующих email cooldown/лимита попыток. Не помещать service-role key
+     во frontend или в этот request.
 
    > **Симптом «функция не задеплоена» в браузере — CORS-ошибка, а не 404.**
    > Preflight-запрос OPTIONS к несуществующей функции получает 404 БЕЗ
@@ -95,10 +99,12 @@
    > `blocked by CORS policy: Response to preflight request doesn't pass access
    > control check: It does not have HTTP ok status`, а `fetch` бросает
    > `TypeError: Failed to fetch`. Проверить напрямую:
-   > `curl -i https://phiavtroybgwyjdhqqkh.supabase.co/functions/v1/auth-code`
-   > → `{"code":"NOT_FOUND","message":"Requested function was not found"}`.
-   > Фронтенд в этом случае автоматически переключается на запасной канал
-   > (встроенная почта Supabase OTP), пункт «Диагностика сервера» → «Edge
+   > Если функция не найдена, проверить фактический JSON/HTTP response, production
+   > version и function logs; preflight 404 без CORS тоже может отобразиться как
+   > browser `TypeError`/status=0. Текущий frontend **fail-closed**: он не вызывает
+   > Supabase Auth `/auth/v1/otp` ни при 404, ни при status=0, ни при другой ошибке.
+   > Status=0 неоднозначен: POST мог отправить письмо, поэтому сначала проверить
+   > почту и не повторять запрос немедленно. Пункт «Диагностика сервера» → «Edge
    > Function auth-code» подсвечивает проблему красным.
 
    > **Симптом после клика по ссылке из письма (issue #23):**
@@ -108,37 +114,42 @@
    > ```
    > Это **не** письмо Resend `auth-code` (там только код 6–8 символов, без
    > hyperlink). Так выглядит **magic-link / OTP-redirect Supabase Auth**:
-   > Site URL в Auth → URL Configuration указывает на localhost, ссылка истекла
-   > или уже использована, SPA пока **не** разбирает `#error=…` (см.
-   > `docs/ISSUE-23-EVIDENCE.md`).
+   > Такой адрес означает Auth-generated link (первичный `signUp`/legacy Auth email),
+   > а не Resend-код входа; фактический источник и Site URL требуют production logs/
+   > Dashboard-проверки. Текущий локальный SPA уже разбирает `#error=…`, но production
+   > сборка и signup callback/PKCE остаются непроверенными (см. `docs/ISSUE-23-EVIDENCE.md`).
    >
    > **Обязательная настройка Auth (один раз на проект):**
    > 1. Dashboard → Authentication → URL Configuration:
-   >    - **Site URL** = реальный URL приложения (GitHub Pages / кастомный домен),
-   >      **не** `http://localhost:…`.
-   >    - **Redirect URLs** — allowlist того же origin (`https://…/`, `https://…/**`).
-   > 2. Убедиться, что в проде отвечает `auth-code` (п.5), чтобы пользователи
-   >    получали **код в письме** и вводили его на `#/auth`, а не кликали
-   >    magic-link на localhost.
-   > 3. Если запасной OTP всё же нужен — шаблон письма Auth тоже должен вести
-   >    на Site URL из п.1; SPA должна принять session hash / показать
-   >    `otp_expired` через `friendlyAuthError` (DoD #23).
+   >    - **Site URL** = production root URL, подтверждённый владельцем; не `http://localhost:…`.
+   >    - **Redirect URLs** — только точные подтверждённые callback/route URL приложения; не добавлять широкий wildcard без отдельного обоснования.
+   > 2. Убедиться, что в проде отвечает `auth-code` (п.5), чтобы login-код из
+   >    `auth_login_codes` пользователь получил и ввёл на `#/auth`. Если функция
+   >    ошибается, приложение показывает ошибку; Supabase Auth OTP не вызывается.
+   > 3. Первичная регистрация `signUp` — отдельный поток. Письмо подтверждения
+   >    должно поддерживать и ручной signup-код (`type=signup`), и confirmation
+   >    link на опубликованный PKCE callback; оба пути продолжают одну регистрацию
+   >    и один invitation bind. Production callback/PKCE E2E пока не подтверждены
+   >    (см. SR-006); это не fallback для последующего login-code.
 
-6. **Production E2E-проверка регистрации (issue #14, п.1–2)** — с машины владельца
+6. **Production E2E-проверка legacy auth-code login (issue #14, п.1–2)** — с машины владельца
    (у песочницы агента нет сети до supabase.co):
    ```bash
    node tools/prod-e2e.mjs                         # шаг 1: только диагностика (письма не шлёт)
    node tools/prod-e2e.mjs --email <тестовый@email> # шаг 2: полный E2E, код вводится из письма
    ```
-   Скрипт исполняет НАСТОЯЩИЙ use case приложения (`js/domain/registration.js →
-   supabaseApi`): новый email → письмо → код → Auth-сессия → claim → поля профиля →
-   reload → повторный вход → ошибки (неверный/повторный код). Вывод (20 проверок,
-   PASS/FAIL) можно целиком приложить к issue #14 — код и токены не печатаются.
+   Скрипт исполняет настоящий текущий `auth-code` login-code path (`js/domain/registration.js →
+   supabaseApi`): письмо → собственный код → Auth-сессия → legacy claim/session checks →
+   reload и ошибки. Он **не** является доказательством invitation-only `signUp`, PKCE callback,
+   безопасного bind или RLS DoD SR-006. Вывод (20 проверок, PASS/FAIL) можно приложить к #14;
+   код и токены не печатаются.
    Очистка тестового профиля печатается в конце. Неинтерактивно: `E2E_CODES="код1,код2"`.
    Подробный evidence по localhost/`otp_expired`: `docs/ISSUE-23-EVIDENCE.md`.
 7. **Открыть сайт** → нажать «Диагностика сервера» на странице входа — все пункты
-   должны быть зелёными; бейдж «Данные: сервер». Проверить «Получить код» —
-   письмо приходит на подставленный email, вход открывает кабинет.
+   должны быть зелёными; бейдж «Данные: сервер». Для #40 проверить оба варианта из
+   email-письма: ручной код и direct одноразовая ссылка должны открыть одну и ту же
+   практику; после успеха второй вариант не должен повторно аутентифицировать. До
+   реализации server-side link flow текущая кнопка письма лишь открывает `#/auth?email=…`.
    Пункты диагностики, относящиеся к входу:
    - «Edge Function auth-code» — функция задеплоена и отвечает (не 404);
    - «Схема auth_login_codes (SR-004: атомарность кода входа)» — в БД есть
@@ -147,9 +158,9 @@
      legacy-режиме (код гасится до создания сессии, восстановление сессии
      после обрыва сети недоступно). Проверка «холостая»: письмо не отправляется,
      данные не меняются.
-   - Auth **Site URL** (Dashboard) — реальный origin приложения, не localhost
-     (иначе клик по magic-link из OTP-fallback даёт `#error=…otp_expired` на
-     localhost; issue #23).
+   - Auth **Site URL** (Dashboard) — реальный production origin, не localhost;
+     он нужен confirmation-link отдельного `signUp`/legacy Auth email, но не
+     является резервным каналом текущего ручного входа через `auth-code`.
 8. **(Опционально) мгновенные Telegram-уведомления:** в `js/services/supabaseConfig.js`
    заполнить `NOTIFY_WEBHOOK_URL = 'https://phiavtroybgwyjdhqqkh.supabase.co/functions/v1/telegram-notify'`.
    Без него уведомления уходят из открытого кабинета (outbox-режим) — не блокер.
@@ -193,5 +204,4 @@
 - `telegram-notify` принимает произвольный `text` от любого анонима (спам в чат
   психолога теоретически возможен; токен не раскрывается). Смягчение —
   rate-limit/валидация события — предложено агенту уведомлений в его задачах.
-- Резервный OTP-канал Supabase Auth (на время отсутствия `auth-code`) требует
-  шаблона письма с `{{ .Token }}` (Auth → Emails в дашборде), иначе придёт magic-link.
+- Supabase Auth email template (`{{ .Token }}` и confirmation URL) относится к отдельному signup-подтверждению и legacy Auth-письмам. Для последующего login это **не** резервный транспорт: новый код запрашивается только через `auth-code`, GoTrue `/auth/v1/otp` fallback запрещён при любой ошибке функции.

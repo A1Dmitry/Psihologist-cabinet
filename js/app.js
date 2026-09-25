@@ -24,6 +24,7 @@ import { resolveDurationMinutes, DEFAULT_DURATION_MIN } from './domain/duration.
 import { registration } from './domain/registration.js';
 // [Агент 3 · кабинет и клиенты] новые блоки кабинета и страница клиента по ссылке
 import { cabinetUi } from './views/cabinetUi.js';
+import { bookingTriageWizard } from './views/bookingTriageWizard.js';
 
 const portalVm = new PortalViewModel();
 const authVm = new AuthViewModel();
@@ -296,12 +297,18 @@ function render() {
   if (route.name === 'success') renderSuccess();
   if (route.name === 'clientReply') renderClientReply();
 
-  // [Агент 3 · кабинет и клиенты] дорисовать блоки кабинета и страницу клиента.
-  // Всё остальное живёт в js/views/cabinetUi.js — этот вызов единственная точка связи.
+  // Feature-owned views attach their DOM through small afterRender hooks.
   try {
     cabinetUi.afterRender({ route, vm: cabinetVm });
   } catch (e) {
     console.warn('[cabinetUi]', e);
+  }
+
+  // Необязательный визард самоописания добавляет результат в заметку заявки.
+  try {
+    bookingTriageWizard.afterRender({ route, vm: bookingVm });
+  } catch (e) {
+    console.warn('[bookingTriageWizard]', e);
   }
 
   // global toast from VMs
@@ -758,7 +765,7 @@ function renderCabJournal() {
         </div>
         <span class="text-xs px-2 py-1 rounded-full ${statusClass(s.status)}">${statusLabel(s.status)}</span>
       </div>
-      ${s.note ? `<div class="text-xs text-slate-400 mt-1">Заметка клиента: ${esc(s.note)}</div>` : ''}
+      ${s.note ? `<div class="text-xs text-slate-400 mt-1 whitespace-pre-line">Комментарий к записи: ${esc(s.note)}</div>` : ''}
       <div class="flex flex-wrap gap-3 mt-2 text-sm">
         ${canConfirm ? `<button data-j-confirm="${s.id}" class="text-emerald-600">Подтвердить</button>` : ''}
         <button data-edit-session="${s.id}" class="text-indigo-600">Перенести/изменить</button>

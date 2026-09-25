@@ -17,11 +17,10 @@
  *   • владение кабинетом определяется ТОЛЬКО auth.uid(), никогда не email;
  *   • профиль не создаётся до подтверждения личности через Supabase Auth;
  *   • повторный вход тем же email возвращает тот же профиль (без дубля);
- *   • основной канал (Edge Function auth-code) и запасной (Supabase OTP) идут
- *     через один и тот же контракт: решение о канале принимается один раз и
- *     СОХРАНЯЕТСЯ (issue #14, п.3): после перезагрузки страницы код проверяется
- *     только тем транспортом, которым он был выслан. Перебор каналов удалён —
- *     он жёг код на «чужом» сервере и мог выдать сессию не тем транспортом.
+ *   • новый login-код запрашивается только через Edge Function auth-code;
+ *     при любой ошибке нет переключения на Supabase Auth OTP. Сохранённый
+ *     legacy pending OTP (если он уже был отправлен до этого изменения) можно
+ *     проверить только по исходному каналу, без перебора транспортов.
  *
  * Безопасность: коды, access_token и пароль сейфа не логируются.
  */
@@ -37,7 +36,7 @@ import {
 import { mapPsy } from '../services/psyMapper.js';
 import { safeStorage } from '../core/safeStorage.js';
 
-/** Канал доставки кода: 'fn' — Edge Function auth-code, 'otp' — почта Supabase Auth. */
+/** Канал сохранённого кода: 'fn' — auth-code; 'otp' — legacy pending Auth OTP only. */
 export const VerificationChannel = { FN: 'fn', OTP: 'otp' };
 
 /**
@@ -81,7 +80,7 @@ const CODE_PATTERN = /^[A-Z0-9]{6,8}$/;
  */
 const PENDING_KEY = 'psy_pending_verification_v1';
 
-/** Окно ввода кода — то же, что на сервере (TTL кода в auth-code / Supabase OTP). */
+/** Окно ввода кода — TTL auth-code; применяется и к legacy pending Auth OTP. */
 const VERIFICATION_WINDOW_MS = 2 * 60e3;
 
 const state = {
@@ -215,25 +214,15 @@ export function pendingVerification() {
  * ========================================================================== */
 
 /**
- * Подсказка шага ввода кода — зависит от КАНАЛА доставки, а не от формы.
- *
- * Основной канал (Edge Function `auth-code`) шлёт письмо Resend, в котором
- * только код 6–8 символов. Запасной канал — встроенная почта Supabase Auth:
- * её шаблон Magic Link по умолчанию рендерит `{{ .ConfirmationURL }}` и НЕ
- * рендерит `{{ .Token }}`, то есть в письме ССЫЛКА, а не код.
- *
- * Это не теория: 2026-09-25 владелец получил именно ссылку и вошёл по ней,
- * короткого кода в письме не было (`auth-code` в проде не задеплоена →
- * клиент переключился на запасной канал). Обещать «код в письме» в этом
- * канале — значит оставить человека ждать письмо, которого не существует.
+ * Подсказка зависит от сохранённого канала. `otp` поддержан только для
+ * завершения legacy-письма, запрошенного старой версией; новые входы не
+ * переключаются на GoTrue/Auth OTP ни при какой ошибке `auth-code`.
  */
 export function verificationHint(channel, email) {
   if (channel === VerificationChannel.OTP) {
-    return 'Запасной канал (почта Supabase Auth): в письме ССЫЛКА, а не код. '
-      + 'Откройте её — вход на этом устройстве откроется. '
-      + 'Код 6–8 символов приходит основным каналом, когда задеплоена Edge Function auth-code '
-      + '(docs/INFRA.md, п.5); временная мера — добавить {{ .Token }} в шаблон письма '
-      + 'Auth → Emails, тогда код придёт вместе со ссылкой.';
+    return 'Это старое письмо Supabase Auth, отправленное до изменения входа: в нём ссылка, а не код. '
+      + 'Откройте её, чтобы завершить уже начатый вход. Новые коды отправляются только через auth-code; '
+      + 'автоматический запрос Supabase Auth OTP при ошибке не выполняется.';
   }
   return `Код отправлен${email ? ` на ${email}` : ''}: 6–8 букв и цифр, действует 2 минуты. `
     + 'Проверьте письмо (и папку «Спам»).';
@@ -241,50 +230,57 @@ export function verificationHint(channel, email) {
 
 /**
  * Шаг 1. Запросить одноразовый код.
- * Решение о канале принимается ЗДЕСЬ и один раз: основной канал — Edge Function
- * auth-code (код живёт в БД, письмо через Resend); если функция не задеплоена
- * (404) или недоступна на уровне сети (status=0: браузер маскирует отсутствие
- * функции под CORS-ошибку preflight) — запасной канал встроенной почты
- * Supabase Auth. Любой другой отказ основного канала (задеплоена, но ответила
- * ошибкой: 429/500/502…) — честная ошибка, без тихого переключения.
+ * Единственный канал входа — Edge Function auth-code, которая проверяет код из
+ * auth_login_codes и выдаёт обычную Supabase Auth session. Встроенный GoTrue
+ * email OTP не вызывается: это отдельный код, не связанный с собственным кодом
+ * входа. При любой ошибке, включая 404 и status=0 (сеть/CORS), fail closed.
+ * Для status=0 нельзя узнать, дошёл ли POST и отправилось ли письмо; повторный
+ * код мог бы дублировать письмо или вызвать Auth rate-limit.
  *
- * Выбранный канал сохраняется (storePendingVerification) — это единственный
- * источник правды для шага 2, в том числе после перезагрузки страницы.
+ * Канал FN сохраняется (storePendingVerification) — это единственный источник
+ * правды для шага 2, в том числе после перезагрузки страницы.
  */
 export async function requestVerification(email) {
   const e = normalizeEmail(email);
   const err = validateEmail(e);
   if (err) return { ok: false, message: err };
 
-  let channel = VerificationChannel.FN;
   try {
     await supabaseApi.requestLoginCode(e);
   } catch (ex) {
-    if (ex?.status !== 404 && ex?.status !== 0) {
+    if (ex?.status === 0) {
       return {
         ok: false,
-        message: ex?.message ? `Не удалось отправить код: ${ex.message}` : friendlyAuthError(ex)
+        retryAfterSeconds: 30,
+        message: 'Нет ответа от auth-code (сеть/CORS). Другой код не отправлялся. Проверьте почту; если письма нет, повторите запрос не раньше чем через 30 секунд.'
       };
     }
-    channel = VerificationChannel.OTP;
-    try {
-      await supabaseApi.requestEmailOtp(e);
-    } catch (ex2) {
-      return { ok: false, message: friendlyAuthError(ex2) };
+    if (ex?.status === 404) {
+      return {
+        ok: false,
+        message: 'Edge Function auth-code не найдена. Supabase Auth OTP не запрашивался; проверьте deployment функции и verify_jwt=false.'
+      };
     }
+    if (ex?.status === 429) {
+      return {
+        ok: false,
+        retryAfterSeconds: 30,
+        message: ex?.message ? `Не удалось отправить код: ${ex.message}` : 'Запросы временно ограничены. Подождите 30 секунд.'
+      };
+    }
+    return {
+      ok: false,
+      message: ex?.message ? `Не удалось отправить код: ${ex.message}` : friendlyAuthError(ex)
+    };
   }
 
-  const pending = storePendingVerification(e, channel);
+  const pending = storePendingVerification(e, VerificationChannel.FN);
   return {
     ok: true,
-    channel,
+    channel: VerificationChannel.FN,
     requestedAt: pending.requestedAt,
     expiresAt: pending.expiresAt,
-    message: channel === VerificationChannel.FN
-      ? `Код отправлен на ${e}. Он действует 2 минуты.`
-      // Запасной канал по умолчанию шлёт ССЫЛКУ (шаблон Magic Link рендерит
-      // {{ .ConfirmationURL }} без {{ .Token }}) — не обещаем код, которого нет.
-      : `Письмо отправлено на ${e} (запасной канал Supabase Auth): в нём ссылка, а не код. Откройте её — вход откроется.`
+    message: verificationHint(VerificationChannel.FN, e)
   };
 }
 
