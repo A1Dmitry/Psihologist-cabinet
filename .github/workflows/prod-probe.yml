@@ -64,6 +64,22 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+      # #54: «нет ответа» — это отсутствие evidence, а не благополучный прод.
+      # Без этого шага отчёт с `drift 0` при мёртвой сети читался как «чисто».
+      - name: Verify the probe actually measured production
+        run: |
+          node -e "
+            const fs = require('fs');
+            const r = JSON.parse(fs.readFileSync('/tmp/prod-probe-report.json', 'utf8'));
+            const s = r.summary;
+            console.log('измерено: ' + s.measured + '/' + s.probes + ' · недоступно: ' + s.unreachable);
+            if (s.unreachable > 0) {
+              console.error('::error::probe не измерил прод сполна (недоступно зондов: ' + s.unreachable +
+                '): ' + (s.unreachable_items || []).slice(0, 5).join(', '));
+              process.exit(1);
+            }
+          "
+
       # Evidence — комментарием к PR (см. блок permissions).
       - name: Publish evidence to pull request
         if: github.event_name == 'pull_request'

@@ -252,3 +252,95 @@ select * from auth.config;
 2. Проверка — запросом 8 в Блоке 7.
 3. Если настройка недоступна в вашем тарифе/версии — зафиксируйте это в issue #46:
    клиентская граница остаётся единственной, и это нужно отметить как остаточный риск.
+
+---
+
+## Блок 9 — Что осталось, чтобы закрыть #46 (пошагово, ~15 минут)
+
+Срез прода 2026-09-25 05:53Z (`Production read-only probe`): **схема применена**
+(SR-004 и SR-D1 появились в 05:14Z), блокеров осталось два — Edge Functions и
+`create_booking` для anon. Порядок строгий.
+
+### Шаг 1. Деплой функций (Блок 1) — снимает 2 из 4 drift-зондов
+
+```bash
+# secrets/variables: Settings → Secrets and variables → Actions
+#   Secret   SUPABASE_ACCESS_TOKEN   (supabase.com/dashboard/account/tokens)
+#   Variable SUPABASE_PROJECT_ID     = phiavtroybgwyjdhqqkh
+# затем: Actions → «Deploy Supabase Edge Functions» → Run workflow
+# Вручную то же самое:
+supabase functions deploy auth-code      --project-ref phiavtroybgwyjdhqqkh --no-verify-jwt
+supabase functions deploy telegram-notify --project-ref phiavtroybgwyjdhqqkh --no-verify-jwt
+```
+
+Проверка (без секретов, можно из браузера):
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" -X POST \
+  https://phiavtroybgwyjdhqqkh.supabase.co/functions/v1/auth-code \
+  -H "Content-Type: application/json" -d '{}'
+# ожидание: 400 (валидация функции). 404 = всё ещё не задеплоена.
+```
+
+### Шаг 2. Секреты функций: `RESEND_API_KEY`, `MAIL_FROM`, `APP_URL` (Блок 3)
+
+`APP_URL` = `https://a1dmitry.github.io/Psihologist-cabinet/` (localhost функция
+отбрасывает сама).
+
+### Шаг 3. SQL по `create_booking` (Блок 7, запросы 1–2) — снимает 2 из 4 drift-зондов
+
+```sql
+select p.proname, pg_get_function_identity_arguments(p.oid) as args,
+       has_function_privilege('anon', p.oid, 'EXECUTE') as anon_exec
+from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.proname = 'create_booking';
+```
+
+- **Ровно одна строка, 22 аргумента, `anon_exec = true`** → сигнатура и грант в
+  порядке, а PostgREST просто помнит старый кэш. Выполните:
+
+  ```sql
+  notify pgrst, 'reload schema';
+  ```
+
+  затем повторите probe (Шаг 5). Если `PGRST202` остался — приложите вывод
+  запроса к issue #46: значит арность/дефолты расходятся с репозиторием.
+- **Строк больше одной или арность ≠ 22** → схема применена не целиком: снова
+  примените `supabase/schema.sql` целиком (он снимает перегрузки динамически).
+- **`anon_exec = false`** → грант не доехал: примените схему целиком.
+
+### Шаг 4. Auth → URL Configuration (Блоки 4 и 8)
+
+Site URL и Redirect URLs = `https://a1dmitry.github.io/Psihologist-cabinet/`;
+JWT expiry / session timebox ≤ 30 дней.
+
+### Шаг 5. Доказательства (в этом порядке)
+
+```bash
+# 5.1 внешний срез прода: ждём «измерено: 26/26» и drift 0
+#     Actions → «Production read-only probe» → Run workflow (или любой PR/расписание в 06:35 UTC)
+# 5.2 реальный E2E на машине владельца (нужен доступ к почтовому ящику)
+node tools/prod-e2e.mjs --email <тестовый@ящик>
+#    скрипт попросит код из письма; после прохождения — тот же ящик и ссылка из письма:
+node tools/prod-e2e.mjs --email <тестовый@ящик> --link "<ссылка из письма>"
+```
+
+Ожидание: в обоих прогонах `ИТОГ: N PASS, 0 FAIL`, «тот же psychologist.id» и
+«owner_id совпадает». Токены/коды в issue не вставлять.
+
+### Шаг 6. Закрытие
+
+- приложить к #46 вывод Шагов 1, 3, 5 (класс `LIVE EVIDENCE`);
+- закрыть #46, #36 и #51 по готовому evidence (`docs/ISSUE-46-EVIDENCE.md` §6.1,
+  `docs/ISSUE-46-CHALLENGER.md`, PR #53);
+- если Шаг 3 показал расхождение арности/гранта — `create_booking` остаётся
+  P1-дефектом: открыть отдельный issue с выводом SQL, #46 не закрывать.
+
+### Что изменилось в репозитории (облегчает закрытие)
+
+- `supabase-deploy.yml` теперь **краснеет**, если функции не отвечают в проде
+  (раньше был зелёным без деплоя), и запускается после проектного гейта;
+- `Production read-only probe` **краснеет**, если измерений не было
+  (`unreachable > 0`), и печатает покрытие «измерено: N/26»;
+- гейт краснеет на набор без проверок (silent) и на `FAIL` в любом отступе —
+  «зелёный CI» больше не может маскировать провал.

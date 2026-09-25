@@ -12,9 +12,10 @@
 
 ## Main SHA и активная ветка
 
-- **Актуальный `main`:** `dcb4093606c0c3993c6632adabb8e2685077fc04`
-- **Активная исполнительская ветка #46:** `arena/01a0d6b5-psihologist-cabinet` → **PR #47**
-- Исторические baseline: `0320c40`, `5d5636d` (PR #44), `03c6fa5` (PR #43), `87e3951`, `4d490d2`.
+- **Актуальный `main`:** `d28ae942d60cf3eecf2626aea84e30cd791abbff` (merge PR #52; Challenger-аудит — `docs/ISSUE-46-CHALLENGER.md`)
+- **Активная исполнительская ветка:** `arena/01a0d702-psihologist-cabinet` → **PR #53**
+- Влито в main 2026-09-25: #47 (`b1dbf1a`), #48 (`ca3b23b`), #52 (`d28ae94`)
+- Исторические baseline: `dcb4093`, `0320c40`, `5d5636d` (PR #44), `03c6fa5` (PR #43), `87e3951`, `4d490d2`.
 
 ## Исполнение issue #46 (P0 EXECUTOR) — что сделано
 
@@ -49,17 +50,18 @@
 **Production readiness НЕ подтверждена. Приложение в production НЕ работает**
 по основному пути (регистрация и публичная запись).
 
-LIVE-факты (2026-09-25, `phiavtroybgwyjdhqqkh`):
+LIVE-факты (срез 2026-09-25, `phiavtroybgwyjdhqqkh`; дрейф схемы закрыт
+владельцем между 04:55Z и 05:14Z — подробности `docs/ISSUE-46-EVIDENCE.md` §2bis):
 
 | Элемент | Статус | Класс |
 |---|---|---|
 | REST/PostgREST отвечает, каталог жив (2 активные анкеты) | работает | LIVE |
-| `auth-code` / `telegram-notify` | **не задеплоены** (404 NOT_FOUND) | LIVE |
+| `auth-code` / `telegram-notify` | **не задеплоены** (404 NOT_FOUND; 05:14Z, 05:42Z, 05:53Z) | LIVE, блокер |
 | SR-001/SR-003 (`sessions.*`, `public_booked_slots.duration_min`) | применены | LIVE |
-| SR-004 (`auth_login_codes.*`) | **отсутствует** | LIVE |
-| SR-D1 (`schedule_overrides`, `public_schedule_overrides`, колонки политик, `services.availability`) | **отсутствует** | LIVE |
-| `create_booking` для anon | **недоступен** (PGRST202) → публичная запись не работает | LIVE |
-| `client_risks` для anon/authenticated | закрыт (42501) — #22 в части грантов подтверждён | LIVE |
+| SR-004 (`auth_login_codes.issued_token_hash/issues/consumed_at`) | **применены** (было «отсутствует» до 05:14Z) | LIVE |
+| SR-D1 (`schedule_overrides`, `public_schedule_overrides`, колонки политик, `services.availability`) | **применены** | LIVE |
+| `create_booking` для anon | **недоступен** (PGRST202) → публичная запись не работает | LIVE, блокер |
+| `client_risks` / `clients` / `payments` / `booking_attempts` для anon | закрыты (42501) — #22 в части грантов подтверждён | LIVE |
 | `auth_login_codes` строки для anon | `[]` (RLS без политик = deny) | LIVE |
 | Application origin | `https://a1dmitry.github.io/Psihologist-cabinet/` (не localhost) | LIVE |
 | Supabase Auth: `external.email=true`, `disable_signup=false`, `mailer_autoconfirm=false` | факт | LIVE |
@@ -67,9 +69,9 @@ LIVE-факты (2026-09-25, `phiavtroybgwyjdhqqkh`):
 | Серверный срок сессии (≤ месяца) | не подтверждено | UNKNOWN |
 | Реальный registration E2E (код и ссылка) | не проведён | BLOCKED |
 
-Root cause (INFERENCE, высокая уверенность): `supabase/schema.sql` не
-переприменялся в проде целиком — задокументировано в `docs/INFRA.md` п.2, теперь
-подтверждено живыми ответами.
+Root cause (FACT по внешнему каналу): `supabase/schema.sql` был применён не
+целиком — это устранено владельцем 2026-09-25; остаток — деплой Edge Functions
+и доступность `create_booking` для anon (причина различима только SQL-каналом).
 
 ## Repo-level состояние
 
@@ -81,7 +83,11 @@ Root cause (INFERENCE, высокая уверенность): `supabase/schema.
 - server-authoritative booking contract (`create_booking`) и D1 policy engine;
 - tenant isolation / anti-spam (по `created_at`), security-regression;
 - parity-матрица client↔server, booking E2E, harness guard;
-- read-only production probe (новый инструмент #46);
+- read-only production probe (новый инструмент #46) + честная сводка измерения
+  (`measured`/`unreachable`, #54) и гейт workflow на «не измерено»;
+- честность самого гейта: silent-набор (0 проверок) и `FAIL` с любым отступом
+  краснеют (#51 и F2 из Challenger-аудита), деплой функций не бывает зелёным
+  без фактической доступности endpoint'ов;
 - Toyota Quality Gate / Producer + Challenger process.
 
 Это **repo + live-probe evidence**, а не production E2E.
@@ -90,15 +96,15 @@ Root cause (INFERENCE, высокая уверенность): `supabase/schema.
 
 | Issue | Priority | Current status |
 |---|---:|---|
-| #46 | P0 | EXECUTOR-контур исполнен, PR #47 + PR #48 merged; production-разблокировка — за владельцем (Блоки 1–8); Challenger (TASK 7) и Main Re-Audit НЕ выполнены |
-| #35 | P1 | Edge Functions deployment — **LIVE-подтверждено: не задеплоены** (срез 2026-09-25, свежее нет — dispatch probe 403); блокер на владельце |
+| #46 | P0 | EXECUTOR + Challenger (TASK 7) выполнены (PR #53, `docs/ISSUE-46-CHALLENGER.md`); production-разблокировка — за владельцем (деплой функций, SQL по `create_booking`); Main Re-Audit — после merge |
+| #35 | P1 | Edge Functions deployment — **LIVE-подтверждено: не задеплоены** (срез 05:53Z 2026-09-25); блокер на владельце; `supabase-deploy.yml` теперь краснеет без деплоя (F4) |
 | #40 | P1 | Требования закрыты в repo (входы, inactive-гейт, срок сессии) с тестами; production E2E — BLOCKED |
 | #21 | P1 | Server-authoritative booking — repo merged; completePayment local-only жив (п.4); production-гейт: `create_booking` для anon недоступен (LIVE) |
 | #22 | P2 | Tenant isolation / anti-spam — repo merged + тесты; `client_risks` закрыт в проде (LIVE) |
 | #34 | P1 | Challenger recovery + свежий Main Re-Audit — OPEN (проверялся 4d490d2, main ушёл на ca3b23b) |
 | #36 | P2 | Harness false-green — implementation merged + независимый Challenger PASS на ca3b23b; к закрытию владельцем; follow-up — #51 |
-| #51 | P2 | Silent suite (0 проверок, exit 0) проходит гейт зелёным — найден Challenger'ом #36, воспроизведён |
-| #50 | P2 | Docs resync + verification gate #19 — OPEN; этот файл ресинкнут (producer), RECOVERY/ROADMAP + Challenger + Main Re-Audit pending |
+| #51 | P2 | Silent suite (0 проверок, exit 0) — **исправлено и закрыто по факту**: гейт краснеет (negative C в `harness-guard`); там же закрыт `FAIL` с отступом (F2) |
+| #50 | P2 | Docs resync — этот файл, `INFRA.md` и `ISSUE-46-EVIDENCE.md` синхронизированы с продом (05:53Z); остаток #50 — RECOVERY-ORCHESTRATION/ROADMAP, Challenger + Main Re-Audit |
 | #41 | P1 | Client Google identity — requirements open (LIVE: external.google=false) |
 | #27–#31 | BA | Продуктовый backlog; не дефекты |
 
@@ -134,21 +140,20 @@ MAIN → AUDIT → DEFECT/REQUIREMENT → ISSUE → PRODUCER → TESTS → CHALL
 
 Текущие блокеры:
 
-1. production-активация владельцем (Блоки 1–8 `docs/OWNER-CHECKLIST-E2E.md`);
-2. закрытие #36 владельцем (Challenger PASS готов) + фикс #51;
-3. независимый Challenger по #46 (TASK 7) и #34 (свежий, на `ca3b23b`);
-4. Main Re-Audit на новом SHA `main` + завершение #50 (RECOVERY/ROADMAP);
-5. реальный registration E2E после деплоя `auth-code` и применения схемы.
+1. production-активация владельцем: деплой `auth-code` / `telegram-notify` + SQL по
+   `create_booking` (схема SR-004/SR-D1 уже применена 2026-09-25) — `docs/OWNER-CHECKLIST-E2E.md`;
+2. реальный registration E2E после деплоя (код и ссылка) — `tools/prod-e2e.mjs`;
+3. закрытие #36 и #46 владельцем по готовым evidence (Challenger PASS) + Main Re-Audit;
+4. свежий Challenger по #34 на актуальном SHA и завершение #50 (RECOVERY/ROADMAP).
 
 ## Next actions — dependency order
 
-1. Владелец: закрыть #36 (evidence — `docs/ISSUE-TRIAGE-2026-09-25.md`, §10).
-2. Producer: фикс #51 (silent suite) → Challenger → merge → Main Re-Audit.
-3. Владелец: Блок 2 (схема целиком) → Блок 1 (деплой функций) → Блоки 3–4 (Resend/секреты) → Блок 8 (срок сессии).
-4. Повторный прогон `Production read-only probe` — drift должен исчезнуть (отчёт в PR/issue).
-5. Владелец: Блок 5 (`tools/prod-e2e.mjs --email …`) → реальный E2E: код, ссылка, reload, повторный вход.
-6. Независимый Challenger (TASK 7 #46) → Main Re-Audit → merge → повторная синхронизация этого файла.
-7. Только после этого — BA-фичи #27–#31.
+1. Merge PR #53 (Challenger #46 + честность гейта/деплоя/probe) → Main Re-Audit нового `main`.
+2. Владелец: Блок 1 (деплой функций: `SUPABASE_ACCESS_TOKEN` + `SUPABASE_PROJECT_ID`) → Блоки 3–4 (Resend/секреты/URL).
+3. Владелец: Блок 7 (SQL: `pg_proc` + гранты `create_booking`; при корректной сигнатуре — reload кэша PostgREST).
+4. Повторный прогон `Production read-only probe`: ждём `измерено: 26/26` и `drift 0` по Edge Functions.
+5. Владелец: Блок 5 (`tools/prod-e2e.mjs --email … --link …`) → реальный E2E: код, ссылка, reload, повторный вход.
+6. Закрытие #36/#46/#51 по готовому evidence, затем фичи BA-очереди (#27–#31).
 
 ## Historical documents
 
@@ -159,6 +164,7 @@ MAIN → AUDIT → DEFECT/REQUIREMENT → ISSUE → PRODUCER → TESTS → CHALL
 
 ---
 
-*Синхронизировано: 2026-09-25 UTC; baseline `main` @ `dcb4093`, исполнительская
-ветка #46 → PR #47. Документ фиксирует repo-state и LIVE-факты прода; он НЕ
-сертифицирует production-готовность.*
+*Синхронизировано: 2026-09-25 UTC; `main` @ `d28ae94`, ветка `arena/01a0d702` →
+PR #53. Документ фиксирует repo-state и LIVE-факты прода (срез 05:53Z): схема
+применена владельцем, блокеры — Edge Functions и `create_booking` для anon.
+Документ НЕ сертифицирует production-готовность: реальный E2E не проведён.*

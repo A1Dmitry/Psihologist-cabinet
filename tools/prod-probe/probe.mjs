@@ -25,10 +25,17 @@
  *
  * НЕ ПЫТАТЬСЯ «починить» прод этим инструментом: он только фиксирует факт.
  * Применение схемы — действие владельца (docs/OWNER-CHECKLIST-E2E.md).
+ *
+ * Честность сводки (issue #54): «drift 0» без единого ответа прода — это не
+ * результат. Поэтому summary содержит `measured`/`unreachable`, и workflow
+ * `.github/workflows/prod-probe.yml` краснеет, если измерений не было.
+ * `PROD_PROBE_URL` — тестовый шов для негативного контроля
+ * (`tests/prod-probe-report.mjs`): подменяет базу прода, в CI/песочнице не задаётся.
  */
 import { SUPABASE_URL, SUPABASE_ANON_KEY, APPLICATION_URL } from '../../js/services/supabaseConfig.js';
 
 const JSON_ONLY = process.argv.includes('--json');
+const TARGET_URL = process.env.PROD_PROBE_URL || SUPABASE_URL;
 const results = [];
 const startedAt = new Date().toISOString();
 
@@ -51,7 +58,7 @@ async function call(method, path, { body, auth = true } = {}) {
   }
   if (body) headers['Content-Type'] = 'application/json';
   try {
-    const res = await fetch(SUPABASE_URL + path, {
+    const res = await fetch(TARGET_URL + path, {
       method, headers, body: body ? JSON.stringify(body) : undefined
     });
     const text = await res.text();
@@ -124,8 +131,11 @@ try {
   // SQL-каналом владельца (docs/OWNER-CHECKLIST-E2E.md, Блок 7).
   const ownerOnly = /service_role/i.test(r.json?.hint || r.json?.message || '');
   rec('B inventory', 'GET /rest/v1/ (OpenAPI root)', {
-    verdict: r.status === 200 ? `OK(tables/views=${defs.length}, rpc=${rpcs.length})`
-      : (ownerOnly ? 'OWNER_ONLY(service_role)' : `HTTP_${r.status}`),
+    // status === 0 = ответа не было: это NETWORK_ERROR, а не «HTTP_0» —
+    // иначе сводка «не измерено» неотличима от «измерено» (#54).
+    verdict: r.status === 0 ? 'NETWORK_ERROR'
+      : r.status === 200 ? `OK(tables/views=${defs.length}, rpc=${rpcs.length})`
+        : (ownerOnly ? 'OWNER_ONLY(service_role)' : `HTTP_${r.status}`),
     status: r.status,
     detail: r.status === 200
       ? `objects: ${defs.join(', ')}\n${' '.repeat(26)}rpc: ${rpcs.join(', ')}`
@@ -139,7 +149,8 @@ try {
   const r = await call('GET', '/auth/v1/settings');
   const j = r.json || {};
   rec('B inventory', 'GET /auth/v1/settings', {
-    verdict: r.status === 200 ? 'OK' : `HTTP_${r.status}`,
+    // см. пояснение у OpenAPI root: без ответа — NETWORK_ERROR, не HTTP_0
+    verdict: r.status === 0 ? 'NETWORK_ERROR' : r.status === 200 ? 'OK' : `HTTP_${r.status}`,
     status: r.status,
     detail: brief(JSON.stringify({
       external_email: j.external?.email, external_google: j.external?.google,
@@ -285,15 +296,21 @@ try {
  * Итог
  * ══════════════════════════════════════════════════════════════════════════ */
 const drift = results.filter(r => String(r.verdict).startsWith('DRIFT') || r.verdict === 'NOT_DEPLOYED' || String(r.verdict).startsWith('LEAK'));
+// Сетевой отказ (status 0) — это НЕ вердикт прода, а отсутствие измерения:
+// считаем отдельно, иначе «drift 0» при мёртвой сети читается как «чисто» (#54).
+const unreachable = results.filter(r => Number(r.status) === 0);
 const report = {
   tool: 'tools/prod-probe/probe.mjs (read-only, anon key only)',
   started_at: startedAt,
   finished_at: new Date().toISOString(),
-  project_url: SUPABASE_URL,
+  project_url: TARGET_URL,
   application_url: APPLICATION_URL,
   anon_key_fingerprint: `${SUPABASE_ANON_KEY.slice(0, 10)}…len=${SUPABASE_ANON_KEY.length}`,
   summary: {
     probes: results.length,
+    measured: results.length - unreachable.length,
+    unreachable: unreachable.length,
+    unreachable_items: unreachable.map(r => `${r.group} :: ${r.name}`),
     drift_or_missing: drift.length,
     drift_items: drift.map(r => `${r.group} :: ${r.name} → ${r.verdict}`)
   },
@@ -304,6 +321,12 @@ if (JSON_ONLY) {
   console.log(JSON.stringify(report, null, 2));
 } else {
   console.log('\n──── SUMMARY ────');
+  console.log(`измерено: ${report.summary.measured}/${report.summary.probes} · недоступно: ${report.summary.unreachable}`);
+  if (report.summary.unreachable === report.summary.probes) {
+    console.log('⚠️  прода НЕ измеряли: ни один зонд не получил ответа (сеть/адрес). Это не «drift 0».');
+  } else if (report.summary.unreachable > 0) {
+    console.log(`⚠️  часть зондов без ответа — вердикт по ним неизвестен: ${report.summary.unreachable_items.join(', ')}`);
+  }
   console.log(`probes: ${report.summary.probes}, drift/missing: ${report.summary.drift_or_missing}`);
   for (const d of report.summary.drift_items) console.log(`  ${d}`);
 }
