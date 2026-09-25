@@ -8,9 +8,11 @@
  *    Импорт идёт браузером психолога (адрес — секретный, публично не отдаётся);
  *    публично видны только итоговые free/busy блоки.
  * 3) «Добавить в календарь (.ics)» (#65) — файл iCalendar (RFC 5545) для Apple
- *    Calendar / Outlook / любого клиента: buildIcsEvent + icsFileName + icsHref.
+ *    Calendar / Outlook / любого клиента: icsEventText + icsEventBlob +
+ *    icsEventFileName (раздел «Добавить в календарь — универсальный .ics» ниже).
  *    Артефакт существующей записи, как и googleAddLink; длительность — только
- *    через канонический resolveDurationMinutes (RULES §6.14).
+ *    через канонический resolveDurationMinutes (RULES §6.14): вызывающий
+ *    передаёт УЖЕ разрешённую длительность.
  * Для двусторонней синхронизации в проде — Google Calendar API (OAuth), см. docs.
  *
  * ВАЖНО (аудит AUDIT-REG-DRY-001): этот модуль — СЕРВИС интеграции, а не домен
@@ -60,166 +62,6 @@ export function endOfSlot(date, time, minutes) {
     date: addDaysStr(String(date).slice(0, 10), Math.floor(total / 1440)),
     time: addMinutesToTime(time, minutes)
   };
-}
-
-/* ============================================================================
- * .ics «Добавить в календарь» (#65, BL-08)
- * ========================================================================== */
-
-const ICS_PRODID = '-//Psihologist-cabinet//Booking//RU';
-
-/** Экранирование TEXT по RFC 5545 §3.3.11: \ ; , и перевод строки */
-function icsText(value) {
-  return String(value ?? '')
-    .replace(/\\/g, '\\\\')
-    .replace(/;/g, '\\;')
-    .replace(/,/g, '\\,')
-    .replace(/\r\n|\r|\n/g, '\\n');
-}
-
-/**
- * Фолдинг строки по RFC 5545 §3.1: не длиннее 75 октетов UTF-8, продолжение —
- * CRLF + пробел. Режем по символам (code points), чтобы не разорвать
- * многобайтовую кириллицу/эмодзи посередине.
- */
-function icsFold(line) {
-  const enc = new TextEncoder();
-  const out = [];
-  let cur = '';
-  let curBytes = 0;
-  let limit = 75;
-  for (const ch of line) {
-    const b = enc.encode(ch).length;
-    if (curBytes + b > limit) {
-      out.push(cur);
-      cur = '';
-      curBytes = 0;
-      limit = 74; // у строк-продолжений первый октет — пробел
-    }
-    cur += ch;
-    curBytes += b;
-  }
-  out.push(cur);
-  return out.join('\r\n ');
-}
-
-/** 'YYYY-MM-DD' + 'HH:MM' → 'YYYYMMDDTHHMM00' (локальное время с TZID) */
-function icsLocal(date, time) {
-  return `${String(date).replaceAll('-', '')}T${String(time || '00:00').slice(0, 5).replace(':', '')}00`;
-}
-
-/** Date → 'YYYYMMDDTHHMMSSZ' (UTC) */
-function icsUtc(instant) {
-  return instant.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
-}
-
-/** Смещение в минутах → '+0300' / '-0530' (UTC-OFFSET, RFC 5545 §3.3.14) */
-function icsOffset(minutes) {
-  const sign = minutes < 0 ? '-' : '+';
-  const abs = Math.abs(Math.round(minutes));
-  return `${sign}${String(Math.floor(abs / 60)).padStart(2, '0')}${String(abs % 60).padStart(2, '0')}`;
-}
-
-/**
- * VTIMEZONE для события: смещение пояса, действующее в момент встречи.
- * Правила DST на все годы не нужны — в файле одно событие. Если внутри
- * встречи случается переход (ночь смены летнего времени), добавляется второй
- * компонент с точным моментом перехода (поиск до минуты).
- */
-function icsVtimezone(tz, startInstant, endInstant) {
-  const offStart = offsetMinutes(startInstant, tz);
-  const offEnd = offsetMinutes(endInstant, tz);
-  const lines = [
-    'BEGIN:VTIMEZONE', `TZID:${tz}`,
-    'BEGIN:STANDARD', 'DTSTART:19700101T000000',
-    `TZOFFSETFROM:${icsOffset(offStart)}`, `TZOFFSETTO:${icsOffset(offStart)}`,
-    'END:STANDARD'
-  ];
-  if (offEnd !== offStart) {
-    let lo = startInstant.getTime();
-    let hi = endInstant.getTime();
-    while (hi - lo > 60000) {
-      const mid = lo + Math.floor((hi - lo) / 120000) * 60000;
-      if (offsetMinutes(new Date(mid), tz) === offStart) lo = mid; else hi = mid;
-    }
-    // DTSTART компонента — местное время по «старому» смещению (RFC 5545 §3.6.5)
-    const localAtChange = new Date(hi + offStart * 60000).toISOString();
-    const kind = offEnd > offStart ? 'DAYLIGHT' : 'STANDARD';
-    lines.push(
-      `BEGIN:${kind}`,
-      `DTSTART:${icsLocal(localAtChange.slice(0, 10), localAtChange.slice(11, 16))}`,
-      `TZOFFSETFROM:${icsOffset(offStart)}`, `TZOFFSETTO:${icsOffset(offEnd)}`,
-      `END:${kind}`
-    );
-  }
-  lines.push('END:VTIMEZONE');
-  return lines;
-}
-
-/**
- * Файл iCalendar для одной встречи (VCALENDAR + VTIMEZONE + VEVENT).
- *
- * Время — «настенное» в поясе специалиста (как хранится запись); TZID/VTIMEZONE
- * позволяют календарю клиента самому показать встречу в его поясе.
- * Длительность — только канонический resolveDurationMinutes (снимок записи →
- * услуга → дефолт). Конец считается от момента начала + длительность, поэтому
- * верен и через полночь, и через переход на летнее время.
- *
- * @returns {string} текст .ics (CRLF), или '' если дата/время некорректны
- */
-export function buildIcsEvent({
-  title, date, time, durationMin = null, service = null, timezone = DEFAULT_TIMEZONE,
-  location = '', url = '', description = '', uid = '', now = new Date()
-} = {}) {
-  const tz = isValidZone(timezone) ? timezone : DEFAULT_TIMEZONE;
-  const day = String(date || '').slice(0, 10);
-  const hhmm = String(time || '').slice(0, 5);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || timeToMinutes(hhmm) == null) return '';
-  const start = zonedToInstant(day, hhmm, tz);
-  if (!start) return '';
-  const minutes = resolveDurationMinutes({ durationMin, service });
-  const end = new Date(start.getTime() + minutes * 60000);
-  const endLocal = instantToZoned(end, tz);
-  const stamp = now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date();
-  const lines = [
-    'BEGIN:VCALENDAR',
-    'VERSION:2.0',
-    `PRODID:${ICS_PRODID}`,
-    'CALSCALE:GREGORIAN',
-    'METHOD:PUBLISH',
-    ...icsVtimezone(tz, start, end),
-    'BEGIN:VEVENT',
-    `UID:${icsText(uid || `${icsUtc(start)}-${Math.random().toString(36).slice(2, 10)}`)}@psihologist-cabinet`,
-    `DTSTAMP:${icsUtc(stamp)}`,
-    `DTSTART;TZID=${tz}:${icsLocal(day, hhmm)}`,
-    `DTEND;TZID=${tz}:${icsLocal(endLocal.date, endLocal.time)}`,
-    `SUMMARY:${icsText(title || 'Консультация')}`
-  ];
-  if (location) lines.push(`LOCATION:${icsText(location)}`);
-  if (url) lines.push(`URL:${String(url).replace(/[\r\n]/g, '')}`);
-  if (description) lines.push(`DESCRIPTION:${icsText(description)}`);
-  lines.push('END:VEVENT', 'END:VCALENDAR');
-  return lines.map(icsFold).join('\r\n') + '\r\n';
-}
-
-/**
- * Человекочитаемое имя файла: «Консультация — Анна Иванова — 2026-10-05 10-00.ics».
- * Символы, запрещённые в именах файлов (Windows/macOS/iOS), вырезаются.
- */
-export function icsFileName({ specialist = '', date = '', time = '' } = {}) {
-  const clean = v => String(v || '').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim();
-  const parts = ['Консультация', clean(specialist), [clean(date), clean(String(time).replace(':', '-'))].filter(Boolean).join(' ')]
-    .filter(Boolean);
-  return `${parts.join(' — ').slice(0, 120)}.ics`;
-}
-
-/**
- * href для <a download> — data:-URI с UTF-8. Работает в HTML-строках без
- * обработчиков и отзыва blob-URL; на iPhone Safari открывает системное
- * «Добавить в Календарь», на десктопе скачивает файл.
- */
-export function icsHref(icsText) {
-  return `data:text/calendar;charset=utf-8,${encodeURIComponent(icsText || '')}`;
 }
 
 /**
