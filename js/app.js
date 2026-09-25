@@ -18,7 +18,7 @@ import { supabaseApi } from './services/supabaseApi.js';
 import { reportClientError } from './services/errorLogService.js';
 import { isSupabaseConfigured } from './services/supabaseConfig.js';
 import { applyProfileSeo, applyPortalSeo, applyBookingSeo, applyNoIndex } from './services/seoService.js';
-import { googleAddLink } from './services/calendarService.js';
+import { googleAddLink, buildIcsEvent, icsFileName, icsHref } from './services/calendarService.js';
 import { todayStr, zoneCity } from './services/timezoneService.js';
 import { resolveDurationMinutes, DEFAULT_DURATION_MIN } from './domain/duration.js';
 import { registration } from './domain/registration.js';
@@ -1917,26 +1917,52 @@ function renderClientReply() {
 
 function renderSuccess() {
   $('#success-text') && ($('#success-text').textContent = bookingVm.successText || 'Заявка принята');
-  // «Добавить в Google Calendar» (аналог Calendly/Booksy) — для созданной записи
-  const box = $('#success-gcal');
-  if (!box) return;
+  // «Добавить в календарь»: .ics (Apple/Outlook/любой клиент, #65) + Google-шаблон
+  // (аналог Calendly/Booksy) — оба для созданной записи, одна длительность.
+  const wrap = $('#success-calendar');
+  const gcalA = $('#success-gcal');
+  const icsA = $('#success-ics');
   const s = bookingVm.createdSessionId ? db.sessions.find(x => x.id === bookingVm.createdSessionId) : null;
   const p = bookingVm.psychologist;
   const sv = bookingVm.selectedService;
-  if (s && p) {
-    box.href = googleAddLink({
-      title: `${sv?.name || 'Консультация'} · ${p.fullName}`,
+  if (!(s && p)) {
+    [wrap, gcalA, icsA].forEach(el => el?.classList.add('hidden'));
+    return;
+  }
+  const title = `${sv?.name || 'Консультация'} · ${p.fullName}`;
+  const timezone = bookingVm.settings?.timezone || 'Europe/Minsk';
+  if (gcalA) {
+    gcalA.href = googleAddLink({
+      title,
       date: s.date,
       time: s.time,
       durationMin: resolveDurationMinutes({ durationMin: s.durationMin, service: sv }),
       location: s.meetLink || '',
       details: p.greeting || '',
-      timezone: bookingVm.settings?.timezone || 'Europe/Minsk'
+      timezone
     });
-    box.classList.remove('hidden');
-  } else {
-    box.classList.add('hidden');
+    gcalA.classList.remove('hidden');
   }
+  const ics = buildIcsEvent({
+    title,
+    date: s.date,
+    time: s.time,
+    durationMin: s.durationMin,
+    service: sv,
+    timezone,
+    location: s.meetLink || (sv?.format === 'online' ? '' : (p.address || '')),
+    url: s.meetLink || '',
+    description: [p.greeting, s.meetLink ? `Ссылка на встречу: ${s.meetLink}` : ''].filter(Boolean).join('\n\n'),
+    uid: s.id
+  });
+  if (icsA && ics) {
+    icsA.href = icsHref(ics);
+    icsA.setAttribute('download', icsFileName({ specialist: p.fullName, date: s.date, time: s.time }));
+    icsA.classList.remove('hidden');
+  } else {
+    icsA?.classList.add('hidden');
+  }
+  wrap?.classList.remove('hidden');
 }
 
 // ——— Event bindings ———
