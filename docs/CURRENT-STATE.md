@@ -102,7 +102,7 @@ Root cause (FACT по внешнему каналу): `supabase/schema.sql` бы
 | #46 | P0 | EXECUTOR + Challenger (TASK 7) выполнены (PR #53, `docs/ISSUE-46-CHALLENGER.md`); production-разблокировка — за владельцем (деплой функций, SQL по `create_booking`); Main Re-Audit — после merge |
 | #35 | P1 | Edge Functions deployment — **LIVE-подтверждено: не задеплоены** (срез 05:53Z 2026-09-25); блокер на владельце; `supabase-deploy.yml` теперь краснеет без деплоя (F4) |
 | #40 | P1 | Требования закрыты в repo (входы, inactive-гейт, срок сессии) с тестами; production E2E — BLOCKED |
-| #21 | P1 | Server-authoritative booking — repo merged; completePayment local-only жив (п.4); production-гейт: `create_booking` для anon недоступен (LIVE) |
+| #21 | P1 | Server-authoritative booking — repo merged, включая п.4: демо-оплата при живом Supabase больше не пишет «оплата прошла» (local-only UX + negative `tests/demo-pay-honesty.mjs`); production-гейт: `create_booking` для anon недоступен (LIVE); Challenger + Main Re-Audit OPEN |
 | #22 | P2 | Tenant isolation / anti-spam — repo merged + тесты; `client_risks` закрыт в проде (LIVE) |
 | #34 | P1 | Challenger recovery + свежий Main Re-Audit — OPEN (проверялся 4d490d2, main ушёл на ca3b23b) |
 | #36 | P2 | Harness false-green — implementation merged + независимый Challenger PASS на ca3b23b; к закрытию владельцем; follow-up — #51 |

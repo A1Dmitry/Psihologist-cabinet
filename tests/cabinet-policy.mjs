@@ -83,6 +83,41 @@ check('cabpol: окно сохранено', created?.availability?.start === '1
 check('cabpol: услуга без доступности → null', vm.addService({ name: 'Обычная', price: 10 }) === true
   && vm.services.find(s => s.name === 'Обычная')?.availability === null);
 
+// --- личное время / период без клиента ---
+const sessBefore = db.sessions.filter(s => s.psychologistId === PSY).length;
+const blkBefore = db.scheduleBlocks.filter(b => b.psychologistId === PSY).length;
+check('личное время: без даты нельзя',
+  vm.saveSession({ purpose: 'personal', blockTitle: 'x' }) === false);
+check('личное время: период без клиента сохраняется',
+  vm.saveSession({
+    purpose: 'personal', date: '2026-12-01', dateTo: '2026-12-03',
+    blockTitle: 'Бухгалтерия', note: 'отчёты'
+  }) === true);
+check('личное время не создаёт сессию',
+  db.sessions.filter(s => s.psychologistId === PSY).length === sessBefore);
+check('личное время создаёт блокировку',
+  db.scheduleBlocks.filter(b => b.psychologistId === PSY).length === blkBefore + 1);
+const period = db.scheduleBlocks.find(b => b.psychologistId === PSY && b.title === 'Бухгалтерия');
+check('период 1–3 дек включительно',
+  period?.dateFrom === '2026-12-01' && period?.dateTo === '2026-12-03',
+  `${period?.dateFrom}…${period?.dateTo}`);
+check('весь день внутри периода закрыт', period?.covers('2026-12-02', '15:40') === true);
+check('день после периода свободен', period?.covers('2026-12-04', '10:00') === false);
+check('дата окончания раньше начала — отказ',
+  vm.saveSession({ purpose: 'personal', date: '2026-12-10', dateTo: '2026-12-01' }) === false);
+
+check('слот без клиента (пустой clientId) → блокировка часа',
+  vm.saveSession({ date: '2026-12-10', time: '14:00', blockTitle: 'Врач' }) === true);
+const hour = db.scheduleBlocks.find(b => b.psychologistId === PSY && b.title === 'Врач');
+check('слот 14:00–15:00', hour?.timeFrom === '14:00' && hour?.timeTo === '15:00',
+  `${hour?.timeFrom}–${hour?.timeTo}`);
+check('14:00 покрыт, 15:00 нет',
+  hour?.covers('2026-12-10', '14:00') === true && hour?.covers('2026-12-10', '15:00') === false);
+
+vm.selectedDate = '2026-12-02';
+check('blocksOnSelectedDate видит период на выбранный день',
+  vm.blocksOnSelectedDate.some(b => b.title === 'Бухгалтерия'));
+
 // --- cleanup ---
 for (const coll of ['psychologists', 'services', 'settings', 'sessions', 'scheduleBlocks', 'scheduleOverrides']) {
   db[coll] = (db[coll] || []).filter(x => (x.psychologistId || x.id) !== PSY);
