@@ -38,6 +38,7 @@ const SUITES = [
   ['Опрос в записи: маски, приоритет, manual-review для непокрытых векторов', 'node', ['tests/triage-routing.mjs']],
   ['Демо-оплата: нет ложного «оплата прошла» при живом сервере (#21 п.4)', 'node', ['tests/demo-pay-honesty.mjs']],
   ['Синхронизация: деградация при частично применённой схеме (#46)', 'node', ['tests/sync-degradation.mjs']],
+  ['Reload-паритет снапшота кабинета: tasks/notes/clientEntries (#67)', 'node', ['tests/db-snapshot-parity.mjs']],
   ['Read-only probe: «не измерено» честно отличается от «drift 0» (#54)', 'node', ['tests/prod-probe-report.mjs']],
   ['Регистрация и вход специалиста (E2E-контракт)', 'node', ['tests/registration-flow.mjs']],
   ['OTP: одноразовость, TTL, лимит попыток (настоящий auth-code)', 'node', ['--no-warnings', 'tests/auth-code-edge.mjs']],

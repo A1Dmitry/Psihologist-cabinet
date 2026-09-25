@@ -18,53 +18,61 @@ function uid(prefix = 'id') {
 /** Безопасное хранилище (sandbox-safe) — единственная реализация в js/core/safeStorage.js */
 const storageProvider = safeStorage;
 
+/**
+ * Единое декларативное описание жизненного цикла снапшота (issue #67, W5 / Poka-Yoke).
+ *
+ * Каждая коллекция локального зеркала объявлена здесь ровно один раз: имя →
+ * конструктор сущности. Конструктор, `_load()`, `_snapshot()`, `_seed()`-сброс
+ * и `resetToSeed()` берут списки из этого манифеста — вместо трёх мест,
+ * синхронизируемых вручную (именно так в #67 `_load()` отстал от `_snapshot()`,
+ * и после reload `tasks/notes/clientEntries` становились `undefined`).
+ * Новая коллекция = одна строка здесь; паритет reload проверяет
+ * tests/db-snapshot-parity.mjs (включает статическую проверку single-source).
+ */
+const SNAPSHOT_COLLECTIONS = [
+  ['psychologists', Psychologist],
+  ['emailCodes', EmailCode],
+  ['services', Service],
+  ['clients', Client],
+  ['sessions', Session],
+  ['payments', Payment],
+  ['waitingItems', WaitingItem],
+  ['settings', SessionSettings],
+  ['bookingAttempts', BookingAttempt],
+  ['clientRisks', ClientRisk],
+  ['reminders', SessionReminder],
+  ['scheduleBlocks', ScheduleBlock],
+  ['scheduleOverrides', ScheduleOverride],
+  ['tasks', Task],
+  ['notes', PsyNote],
+  ['clientEntries', ClientEntry]
+];
+const SEEDED_BY_CATALOG = new Set(['psychologists', 'services', 'settings']);
+
 export class DbContext {
   constructor() {
     this.storage = storageProvider;
-    this.psychologists = [];
-    this.emailCodes = [];
-    this.services = [];
-    this.clients = [];
-    this.sessions = [];
-    this.payments = [];
-    this.waitingItems = [];
-    this.settings = [];
-    this.bookingAttempts = [];
-    this.clientRisks = [];
-    this.reminders = [];
-    this.scheduleBlocks = [];
-    this.scheduleOverrides = [];
-    this.tasks = [];
-    this.notes = [];
-    this.clientEntries = [];
+    for (const [name] of SNAPSHOT_COLLECTIONS) this[name] = [];
     this.currentPsychologistId = null;
     this._load();
   }
 
   // ——— Persistence ———
   _snapshot() {
-    return {
-      psychologists: this.psychologists,
-      emailCodes: this.emailCodes,
-      services: this.services,
-      clients: this.clients,
-      sessions: this.sessions,
-      payments: this.payments,
-      waitingItems: this.waitingItems,
-      settings: this.settings,
-      bookingAttempts: this.bookingAttempts,
-      clientRisks: this.clientRisks,
-      reminders: this.reminders,
-      scheduleBlocks: this.scheduleBlocks,
-      scheduleOverrides: this.scheduleOverrides,
-      tasks: this.tasks,
-      notes: this.notes,
-      clientEntries: this.clientEntries,
-      currentPsychologistId: this.currentPsychologistId
-    };
+    const snap = {};
+    for (const [name] of SNAPSHOT_COLLECTIONS) snap[name] = this[name];
+    snap.currentPsychologistId = this.currentPsychologistId;
+    return snap;
   }
 
   saveChanges() {
+    // Инвариант границы персистентности (Poka-Yoke, #67): ни одна коллекция не
+    // может «исчезнуть» из снапшота из-за undefined/null в памяти — именно так
+    // JSON.stringify терял tasks/notes/clientEntries после reload. Повреждённое
+    // значение нормализуется пустым массивом (та же семантика, что в _load()).
+    for (const [name] of SNAPSHOT_COLLECTIONS) {
+      if (!Array.isArray(this[name])) this[name] = [];
+    }
     this.storage.set(STORAGE_KEY, JSON.stringify(this._snapshot()));
   }
 
@@ -76,22 +84,9 @@ export class DbContext {
         return;
       }
       const data = JSON.parse(raw);
-      this.psychologists = (data.psychologists || []).map(x => new Psychologist(x));
-      this.emailCodes = (data.emailCodes || []).map(x => new EmailCode(x));
-      this.services = (data.services || []).map(x => new Service(x));
-      this.clients = (data.clients || []).map(x => new Client(x));
-      this.sessions = (data.sessions || []).map(x => new Session(x));
-      this.payments = (data.payments || []).map(x => new Payment(x));
-      this.waitingItems = (data.waitingItems || []).map(x => new WaitingItem(x));
-      this.settings = (data.settings || []).map(x => new SessionSettings(x));
-      this.bookingAttempts = (data.bookingAttempts || []).map(x => new BookingAttempt(x));
-      this.clientRisks = (data.clientRisks || []).map(x => new ClientRisk(x));
-      this.reminders = (data.reminders || []).map(x => new SessionReminder(x));
-      this.scheduleBlocks = (data.scheduleBlocks || []).map(x => new ScheduleBlock(x));
-      this.scheduleOverrides = (data.scheduleOverrides || []).map(x => new ScheduleOverride(x));
-      this.tasks = (data.tasks || []).map(x => new Task(x));
-      this.notes = (data.notes || []).map(x => new PsyNote(x));
-      this.clientEntries = (data.clientEntries || []).map(x => new ClientEntry(x));
+      for (const [name, Ctor] of SNAPSHOT_COLLECTIONS) {
+        this[name] = (data[name] || []).map(x => new Ctor(x));
+      }
       this.currentPsychologistId = data.currentPsychologistId || null;
       if (!this.psychologists.length) this._seed();
     } catch {
@@ -208,41 +203,18 @@ export class DbContext {
       slotEnd: '19:00',
       slotStepMin: 60
     }));
-    this.clients = [];
-    this.sessions = [];
-    this.payments = [];
-    this.waitingItems = [];
-    this.bookingAttempts = [];
-    this.clientRisks = [];
-    this.reminders = [];
-    this.scheduleBlocks = [];
-    this.scheduleOverrides = [];
-    this.tasks = [];
-    this.notes = [];
-    this.clientEntries = [];
-    this.emailCodes = [];
+    // Всё, что не наполнено каталогом, — пустой массив через единый манифест
+    // (никаких ручных списков «как в _load()», иначе повторится #67).
+    for (const [name] of SNAPSHOT_COLLECTIONS) {
+      if (!SEEDED_BY_CATALOG.has(name)) this[name] = [];
+    }
     this.currentPsychologistId = null;
     this.saveChanges();
   }
 
   resetToSeed() {
     this.storage.remove(STORAGE_KEY);
-    this.psychologists = [];
-    this.emailCodes = [];
-    this.services = [];
-    this.clients = [];
-    this.sessions = [];
-    this.payments = [];
-    this.waitingItems = [];
-    this.settings = [];
-    this.bookingAttempts = [];
-    this.clientRisks = [];
-    this.reminders = [];
-    this.scheduleBlocks = [];
-    this.scheduleOverrides = [];
-    this.tasks = [];
-    this.notes = [];
-    this.clientEntries = [];
+    for (const [name] of SNAPSHOT_COLLECTIONS) this[name] = [];
     this.currentPsychologistId = null;
     this._seed();
   }
