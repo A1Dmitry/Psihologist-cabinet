@@ -18,6 +18,12 @@
  *   PGRST205             — объекта НЕТ в production schema → DRIFT;
  *   PGRST202/PGRST203    — RPC нет / несколько overload-сигнатур → DRIFT.
  *
+ * Edge Functions: помимо GET (задеплоена ли) снимается НАСТОЯЩИЙ браузерный
+ * preflight `auth-code` (OPTIONS + Origin приложения + Access-Control-Request-*)
+ * со статусом и CORS-заголовками ответа — ровно тот запрос, который браузер
+ * делает перед POST и о котором в консоли остаётся только
+ * «blocked by CORS policy … It does not have HTTP ok status» без статуса.
+ *
  * Границы безопасности (Poka-Yoke):
  *   • только GET, кроме трёх вызовов RPC, которые НЕ ПИШУТ (обоснование ниже);
  *   • секретов не требует, не читает и не печатает (anon key — публичный);
@@ -117,6 +123,61 @@ for (const fn of ['auth-code', 'telegram-notify']) {
     rec('A edge-functions', `GET /functions/v1/${fn}`, { verdict: 'NETWORK_ERROR', detail: brief(e) });
   }
 }
+
+/**
+ * Настоящий браузерный preflight для `auth-code` — то самое, что падает
+ * в консоли владельца:
+ *   «Response to preflight request doesn't pass access control check:
+ *     It does not have HTTP ok status.»
+ *
+ * Браузер НЕ показывает статус и заголовки ответа на OPTIONS, поэтому без
+ * этого зонда «CORS-ошибка» неотличима от «функция не задеплоена» (404 без
+ * CORS) и от «verify_jwt=true» (401 без CORS). Здесь воспроизводится точный
+ * запрос браузера: OPTIONS + Origin приложения + Access-Control-Request-*.
+ *
+ * Ожидание для задеплоенной функции (supabase/functions/auth-code/index.ts,
+ * `supabase/config.toml` verify_jwt=false):
+ *   HTTP 200 + Access-Control-Allow-Origin + Allow-Methods: POST, OPTIONS.
+ */
+async function probePreflight(fn) {
+  // Origin реального приложения: именно он в консоли владельца.
+  const origin = String(APPLICATION_URL || '').replace(/\/+$/, '');
+  try {
+    const res = await fetch(`${TARGET_URL}/functions/v1/${fn}`, {
+      method: 'OPTIONS',
+      headers: {
+        'Origin': origin,
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'authorization, x-client-info, apikey, content-type'
+      }
+    });
+    const body = await res.text();
+    const allowOrigin = res.headers.get('access-control-allow-origin') || '';
+    const allowMethods = res.headers.get('access-control-allow-methods') || '';
+    const allowHeaders = res.headers.get('access-control-allow-headers') || '';
+    const okStatus = res.status >= 200 && res.status < 300;
+    const okCors = !!allowOrigin && /post/i.test(allowMethods);
+    const gateway404 = res.status === 404 && /NOT_FOUND/i.test(body);
+    let verdict;
+    if (okStatus && okCors) verdict = 'PREFLIGHT_OK';
+    else if (gateway404) verdict = 'NOT_DEPLOYED';            // тот же дефект, что у GET
+    else if (res.status === 401 || res.status === 403) verdict = `PREFLIGHT_BLOCKED(HTTP ${res.status} — verify_jwt?)`;
+    else if (!okStatus) verdict = `PREFLIGHT_BLOCKED(HTTP ${res.status})`;
+    else verdict = 'PREFLIGHT_BAD_CORS';                       // 2xx без нужных заголовков
+    rec('A edge-functions', `OPTIONS preflight /functions/v1/${fn} (Origin ${origin})`, {
+      verdict,
+      status: res.status,
+      detail: `allow-origin=${allowOrigin || '—'} · allow-methods=${allowMethods || '—'} `
+        + `· allow-headers=${allowHeaders || '—'} · body=${brief(body, 160)}`
+    });
+  } catch (e) {
+    // status 0 = измерения не было: это отсутствие evidence, а не вердикт (#54).
+    rec('A edge-functions', `OPTIONS preflight /functions/v1/${fn}`, {
+      verdict: 'NETWORK_ERROR', status: 0, detail: brief(e)
+    });
+  }
+}
+await probePreflight('auth-code');
 
 /* ════════════════════════════════════════════════════════════════════════════
  * B. Инвентаризация production (TASK 1)
@@ -295,7 +356,11 @@ try {
 /* ════════════════════════════════════════════════════════════════════════════
  * Итог
  * ══════════════════════════════════════════════════════════════════════════ */
-const drift = results.filter(r => String(r.verdict).startsWith('DRIFT') || r.verdict === 'NOT_DEPLOYED' || String(r.verdict).startsWith('LEAK'));
+const drift = results.filter(r => String(r.verdict).startsWith('DRIFT') || r.verdict === 'NOT_DEPLOYED'
+  || String(r.verdict).startsWith('LEAK')
+  // preflight — это и есть браузерный симптом issue: без 2xx + CORS-заголовков
+  // SPA не может вызвать функцию, даже когда она «задеплоена».
+  || String(r.verdict).startsWith('PREFLIGHT_BLOCKED') || r.verdict === 'PREFLIGHT_BAD_CORS');
 // Сетевой отказ (status 0) — это НЕ вердикт прода, а отсутствие измерения:
 // считаем отдельно, иначе «drift 0» при мёртвой сети читается как «чисто» (#54).
 const unreachable = results.filter(r => Number(r.status) === 0);
