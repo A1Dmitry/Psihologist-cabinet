@@ -335,6 +335,20 @@ ok(html('cc-root').includes('Подключиться'), 'страница кл�
 ok(html('cc-root').includes('Предложить другое время'), 'страница клиента: предложение другого времени');
 ok(html('cc-root').includes('Дыхательная практика'), 'страница клиента: материалы видны');
 ok(html('cc-root').includes('Хочу постоянное время'), 'страница клиента: запрос постоянного времени');
+{
+  // #65: «📅 В календарь» (.ics) у предстоящей встречи — файл описывает именно эту запись
+  const cc = html('cc-root');
+  const a = /<a href="(data:text\/calendar;charset=utf-8,[^"]+)" download="([^"]+\.ics)" data-cc-ics="([^"]+)"/.exec(cc);
+  ok(!!a, 'страница клиента: кнопка «В календарь» (.ics, download)');
+  if (a) {
+    const unesc = v => v.replaceAll('&amp;', '&').replaceAll('&quot;', '"').replaceAll('&#39;', "'").replaceAll('&lt;', '<').replaceAll('&gt;', '>');
+    const ics = decodeURIComponent(unesc(a[1]).split(',').slice(1).join(','));
+    const ses = db.sessions.find(x => x.id === unesc(a[3]));
+    const want = ses ? `DTSTART;TZID=${db.getSettings?.(psyId)?.timezone || 'Europe/Minsk'}:${ses.date.replaceAll('-', '')}T${ses.time.replace(':', '')}00` : '?';
+    ok(!!ses && ics.includes('BEGIN:VCALENDAR') && ics.replace(/\r\n /g, '').includes(want),
+      'страница клиента: .ics описывает эту встречу (дата/время/пояс кабинета)', want);
+  }
+}
 
 console.log('\n9b. Страница /reply: напоминание + мини-кабинет (T-12 и старый механизм ответа)');
 {

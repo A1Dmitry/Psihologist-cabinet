@@ -21,6 +21,8 @@ import { sessionSeriesService } from '../services/sessionSeriesService.js';
 import { clientCabinetService, suggestSlots, MATERIAL_KINDS, weekdayOfLabel } from '../services/clientCabinetService.js';
 import { cabinetStatsService, moneyLabel } from '../services/cabinetStatsService.js';
 import { reminderService } from '../services/reminderService.js';
+// Тот же specifier, что в app.js (?v=…): один экземпляр модуля и тот же cache-bust (#73).
+import { icsEventText, icsEventFileName } from '../services/calendarService.js?v=20260925-ics';
 import {
   timezoneService, todayStr, addDaysStr, weekdayOf, weekdayTimeLabel,
   WEEKDAY_NAMES_SHORT, zoneCity, zoneLabel
@@ -627,6 +629,31 @@ function renderClientMessage(root, { title, text, hint = '' }) {
   return root;
 }
 
+/**
+ * «В календарь (.ics)» для встречи в мини-кабинете клиента (#65).
+ * Генератор — канонический icsEventText (calendarService, #73); здесь только
+ * данные записи. s.date/s.time — настенное время кабинета (пояс специалиста),
+ * TZID в файле даёт календарю клиента показать встречу в его поясе.
+ * s.durationMin уже разрешён resolveDurationMinutes в clientCabinetService.
+ * data:-URI — потому что разметка собирается строкой, без обработчиков.
+ */
+function clientIcsLink(s, psy) {
+  if (!s?.date || !s?.time) return '';
+  const ics = icsEventText({
+    title: `${s.serviceName || 'Консультация'} · ${psy.fullName}`,
+    date: s.date,
+    time: s.time,
+    durationMin: s.durationMin,
+    timezone: s.psyZone || psy.timezone,
+    location: s.joinUrl || '',
+    details: s.joinUrl ? `Ссылка на встречу: ${s.joinUrl}` : '',
+    uid: `psyportal-session-${s.id}`
+  });
+  const href = `data:text/calendar;charset=utf-8,${encodeURIComponent(ics)}`;
+  const name = icsEventFileName(psy.fullName, s.date, s.time);
+  return `<a href="${esc(href)}" download="${esc(name)}" data-cc-ics="${esc(s.id)}" class="px-4 py-2 rounded-full border text-xs">📅 В календарь</a>`;
+}
+
 function clientCabinetHtml(view, { localOnly } = {}) {
   const psy = view.psychologist;
   const client = view.client;
@@ -668,6 +695,7 @@ function clientCabinetHtml(view, { localOnly } = {}) {
               ? `<a href="${esc(s.joinUrl)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full bg-indigo-600 text-white text-xs font-medium">Подключиться</a>`
               : (s.isOnline ? '<span class="text-xs text-slate-400 self-center">ссылка на встречу появится здесь</span>' : '<span class="text-xs text-slate-400 self-center">очная встреча</span>')}
             ${s.paymentUrl ? `<a href="${esc(s.paymentUrl)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full border text-xs">Оплатить</a>` : ''}
+            ${clientIcsLink(s, psy)}
             ${s.canPropose ? `<button type="button" data-c3="cc-propose" data-session="${esc(s.id)}" data-date="${esc(s.localDate)}" data-time="${esc(s.localTime)}" class="px-4 py-2 rounded-full border text-xs">Предложить другое время</button>` : ''}
           </div>
           ${s.pendingChange ? `<div class="text-xs text-amber-700 mt-2">специалист предложил: ${esc(s.pendingChange.date)} ${esc(s.pendingChange.time)}</div>` : ''}

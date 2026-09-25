@@ -34,6 +34,9 @@ export class DbContext {
     this.reminders = [];
     this.scheduleBlocks = [];
     this.scheduleOverrides = [];
+    this.tasks = [];
+    this.notes = [];
+    this.clientEntries = [];
     this.currentPsychologistId = null;
     this._load();
   }
@@ -86,6 +89,9 @@ export class DbContext {
       this.reminders = (data.reminders || []).map(x => new SessionReminder(x));
       this.scheduleBlocks = (data.scheduleBlocks || []).map(x => new ScheduleBlock(x));
       this.scheduleOverrides = (data.scheduleOverrides || []).map(x => new ScheduleOverride(x));
+      this.tasks = (data.tasks || []).map(x => new Task(x));
+      this.notes = (data.notes || []).map(x => new PsyNote(x));
+      this.clientEntries = (data.clientEntries || []).map(x => new ClientEntry(x));
       this.currentPsychologistId = data.currentPsychologistId || null;
       if (!this.psychologists.length) this._seed();
     } catch {
@@ -427,12 +433,13 @@ export class DbContext {
 
   // ——— Задачи (кабинет) ———
   tasksOf(psychologistId) {
-    return this.tasks
+    return (this.tasks || [])
       .filter(t => t.psychologistId === psychologistId)
       .sort((a, b) => (a.done - b.done) || (a.dueDate || '9999').localeCompare(b.dueDate || '9999'));
   }
 
   addTask(data) {
+    this.tasks = this.tasks || [];
     const t = new Task({ ...data, id: data.id || uid('task') });
     this.tasks.push(t);
     this.saveChanges();
@@ -440,25 +447,27 @@ export class DbContext {
   }
 
   toggleTask(id) {
+    this.tasks = this.tasks || [];
     const t = this.tasks.find(x => x.id === id);
     if (t) { t.done = !t.done; this.saveChanges(); }
     return t;
   }
 
   removeTask(id) {
-    this.tasks = this.tasks.filter(t => t.id !== id);
+    this.tasks = (this.tasks || []).filter(t => t.id !== id);
     this.saveChanges();
   }
 
   // ——— Блокнот (планировщик) ———
   notesOf(psychologistId) {
-    return this.notes
+    return (this.notes || [])
       .filter(n => n.psychologistId === psychologistId)
       .sort((a, b) => (b.pinned - a.pinned) || (b.date || '0').localeCompare(a.date || '0')
         || (b.createdAt || '').localeCompare(a.createdAt || ''));
   }
 
   addNote(data) {
+    this.notes = this.notes || [];
     const n = new PsyNote({ ...data, id: data.id || uid('note') });
     this.notes.push(n);
     this.saveChanges();
@@ -466,24 +475,26 @@ export class DbContext {
   }
 
   toggleNotePin(id) {
+    this.notes = this.notes || [];
     const n = this.notes.find(x => x.id === id);
     if (n) { n.pinned = !n.pinned; this.saveChanges(); }
     return n;
   }
 
   removeNote(id) {
-    this.notes = this.notes.filter(n => n.id !== id);
+    this.notes = (this.notes || []).filter(n => n.id !== id);
     this.saveChanges();
   }
 
   // ——— Записи о клиентах (журнал работы) ———
   entriesOf(clientId) {
-    return this.clientEntries
+    return (this.clientEntries || [])
       .filter(e => e.clientId === clientId)
       .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
   }
 
   addClientEntry(data) {
+    this.clientEntries = this.clientEntries || [];
     const e = new ClientEntry({ ...data, id: data.id || uid('entry') });
     this.clientEntries.push(e);
     this.saveChanges();
@@ -491,7 +502,7 @@ export class DbContext {
   }
 
   removeClientEntry(id) {
-    this.clientEntries = this.clientEntries.filter(e => e.id !== id);
+    this.clientEntries = (this.clientEntries || []).filter(e => e.id !== id);
     this.saveChanges();
   }
 }
