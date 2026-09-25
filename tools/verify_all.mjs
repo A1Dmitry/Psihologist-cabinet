@@ -10,10 +10,17 @@
  *
  * verify_pages.py (смоук маршрутов против живого devserver) сюда не входит —
  * ему нужен запущенный HTTP-сервер: python3 devserver.py 8765 &
+ *
+ * Правила честности самого гейта (#36 — ложный зелёный, #51 — silent-набор):
+ *  1. набор с exit 0 обязан предъявить ≥1 маркер проверки (`PASS`/`✅`) либо
+ *     собственный маркер успеха из ALT_SUCCESS_MARKER — иначе красный;
+ *  2. красные строки распознаются с ЛЮБЫМ отступом (`FAIL`, `  FAIL`, `   FAIL`);
+ *  3. VERIFY_ONLY — только тестовый шов для негативных контролей guard'а;
+ *     такой прогон помечается в выводе как REDUCED и не является полным гейтом.
  */
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -25,6 +32,7 @@ const SUITES = [
   ['D1: кабинет политики (overrides, лимиты, доступность услуги)', 'node', ['tests/cabinet-policy.mjs']],
   ['Воронка записи (wizard, слоты, пояса, server-first success)', 'node', ['tests/booking-wizard.mjs']],
   ['Синхронизация: деградация при частично применённой схеме (#46)', 'node', ['tests/sync-degradation.mjs']],
+  ['Read-only probe: «не измерено» честно отличается от «drift 0» (#54)', 'node', ['tests/prod-probe-report.mjs']],
   ['Регистрация и вход специалиста (E2E-контракт)', 'node', ['tests/registration-flow.mjs']],
   ['OTP: одноразовость, TTL, лимит попыток (настоящий auth-code)', 'node', ['--no-warnings', 'tests/auth-code-edge.mjs']],
   ['SQL-контракт schema.sql на настоящем PostgreSQL', 'node', ['tests/db-contract.mjs']],
@@ -48,6 +56,28 @@ const SUITES = [
 // Лимит щедрый (обычные наборы — секунды); превышение = красный набор.
 const SUITE_TIMEOUT_MS = Number(process.env.VERIFY_SUITE_TIMEOUT_MS || 300000);
 
+// Тестовый шов (по образцу VERIFY_APP_ENTRY): прогнать только указанные файлы
+// наборов. Нужен tests/harness-guard.mjs, чтобы негативные контроли самого
+// гейта (silent-набор, «FAIL с отступом») выполнялись за миллисекунды, а не
+// прогоняли все 24 набора с шестью стартами PostgreSQL. Reduced-прогон явно
+// помечается в выводе и не является полным гейтом.
+const ONLY = (process.env.VERIFY_ONLY || '').split(',').map(s => s.trim()).filter(Boolean);
+// Дополнительные наборы вне SUITES (абсолютные пути) — тот же шов для guard'а:
+// позволяет прогнать через логику гейта временный набор из /tmp.
+const EXTRA = (process.env.VERIFY_EXTRA_SUITE || '').split(',').map(s => s.trim()).filter(Boolean);
+const SELECTED = ONLY.length
+  ? SUITES.filter(([, , args]) => ONLY.includes(args[args.length - 1]))
+  : (EXTRA.length ? [] : SUITES);
+const TO_RUN = [
+  ...SELECTED,
+  ...EXTRA.map(p => [`VERIFY_EXTRA (${basename(p)})`, 'node', [p]])
+];
+
+// Наборы без PASS-маркеров обязаны предъявить собственный маркер успеха:
+// verify_app печатает IMPORT OK / BOOT RAN. Без этой карты правило «≥1 проверка»
+// (issue #51) дало бы ложную красноту на честном наборе.
+const ALT_SUCCESS_MARKER = new Map([['verify_app.mjs', /(IMPORT OK|BOOT RAN)/]]);
+
 function run(cmd, args) {
   return new Promise(resolve => {
     const child = spawn(cmd, args, { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -66,30 +96,64 @@ function run(cmd, args) {
   });
 }
 
+if (ONLY.length || EXTRA.length) {
+  const missing = ONLY.filter(o => !SELECTED.some(([, , a]) => a[a.length - 1] === o));
+  if (missing.length) process.stdout.write(`\n⚠️  VERIFY_ONLY: не найдены наборы: ${missing.join(', ')}\n`);
+  process.stdout.write('\n⚠️  REDUCED RUN (VERIFY_ONLY / VERIFY_EXTRA_SUITE) — это НЕ полный гейт и он непригоден для CI/деплоя.\n');
+}
+
 const report = [];
-for (const [title, cmd, args] of SUITES) {
+for (const [title, cmd, args] of TO_RUN) {
   process.stdout.write(`\n── ${title} (${args[0]})\n`);
   const { code, out } = await run(cmd, args);
   const lines = out.split('\n').filter(Boolean);
-  const passed = lines.filter(l => /^(PASS|  ✅)/.test(l)).length;
+  // Маркеры проверок считаем с ЛЮБЫМ отступом: наборы печатают и `PASS` в
+  // колонке 0, и `   PASS …` внутри своих секций.
+  const checks = lines.filter(l => /^\s*(PASS\b|✅)/.test(l)).length;
   // Defence-in-depth (#36): exit 0 не должен зеленеть набор, который сам
   // напечатал FAIL / ❌ / BOOT|LOAD|IMPORT ERROR. Нельзя матчить голое
   // `ERROR:` — Postgres пишет `ERROR: permission denied` в ожидаемых RLS-пробах,
   // а PASS-строки guard содержат слово ERROR в названии проверки.
+  //
+  // Отступ — тоже любой: матчер по фиксированным двум пробелам пропускал
+  // `FAIL` с отступом ≥3 при exit 0 (найдено Challenger'ом #46 на d28ae94).
   const failedLines = lines.filter(l =>
-    /^(FAIL\b|  ❌)/.test(l) ||
+    /^\s*(FAIL\b|❌)/.test(l) ||
     /(^|\s)(BOOT ERROR|LOAD ERROR|IMPORT\/LINK ERROR):/.test(l)
   );
-  process.stdout.write(lines.map(l => '   ' + l).join('\n') + '\n');
   const file = args[args.length - 1];
-  report.push({ title, file, ok: code === 0 && failedLines.length === 0, passed, failedLines });
+  const alt = ALT_SUCCESS_MARKER.get(basename(file));
+  const proof = alt ? lines.some(l => alt.test(l)) : checks > 0;
+  // «Ноль проверок при exit 0» — канал ложного зелёного (issue #51): набор,
+  // который ничего не проверял, не должен засчитываться пройденным.
+  const silent = code === 0 && failedLines.length === 0 && !proof;
+  process.stdout.write(lines.map(l => '   ' + l).join('\n') + '\n');
+  if (silent) {
+    process.stdout.write('   ❌ набор не предъявил ни одной проверки (exit 0, 0 маркеров PASS/✅)\n');
+  }
+  report.push({
+    title, file, checks, silent, altProof: !!alt,
+    ok: code === 0 && failedLines.length === 0 && !silent,
+    failedLines
+  });
 }
 
 process.stdout.write('\n════════ ИТОГ ════════\n');
 let bad = 0;
 for (const r of report) {
   if (!r.ok) bad++;
-  process.stdout.write(`${r.ok ? '✅' : '❌'} ${r.title} — ${r.file}${r.failedLines.length ? ` (${r.failedLines.length} провалов)` : ''}\n`);
+  const why = [
+    r.failedLines.length ? `${r.failedLines.length} провалов` : '',
+    r.silent ? 'нет ни одной проверки (silent)' : ''
+  ].filter(Boolean).join(', ');
+  // У наборов без PASS-маркеров честно пишем, ЧЕМ подтверждён успех, а не «0 проверок».
+  const count = r.checks === 0 && r.altProof
+    ? 'подтверждён маркером IMPORT OK/BOOT RAN'
+    : `проверок: ${r.checks}`;
+  process.stdout.write(`${r.ok ? '✅' : '❌'} ${r.title} — ${r.file} (${count})${why ? ` (${why})` : ''}\n`);
 }
-process.stdout.write(bad ? `\n${bad} набор(ов) упало\n` : `\nВсе наборы зелёные (${report.length})\n`);
+const totalChecks = report.reduce((n, r) => n + r.checks, 0);
+process.stdout.write(bad
+  ? `\n${bad} набор(ов) упало; проверок предъявлено: ${totalChecks}\n`
+  : `\nВсе наборы зелёные (${report.length}); проверок предъявлено: ${totalChecks}\n`);
 process.exit(bad ? 1 : 0);

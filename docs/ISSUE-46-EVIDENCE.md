@@ -47,6 +47,10 @@ GET https://phiavtroybgwyjdhqqkh.supabase.co/functions/v1/telegram-notify
 
 ## 2. Production schema (TASK 1) — LIVE EVIDENCE: найден drift
 
+> **Обновление 2026-09-25 (см. §2bis):** таблица ниже — срез ~04:5xZ. Владелец
+> применил схему между 04:55Z и 05:14Z, поэтому строки со статусом «отсутствует»
+> закрыты. Актуальный список блокеров — в §2bis и §6.
+
 Канал: PostgREST с anon key. Коды ошибок различают «объекта нет» (`PGRST205`,
 `42703`) и «объект есть, но anon не имеет доступа» (`42501`).
 
@@ -78,6 +82,50 @@ OpenAPI-спец) Supabase закрывает для anon —
 применены**. Root cause: `supabase/schema.sql` не переприменялся целиком
 (задокументировано в `docs/INFRA.md`, п.2 как «критично: переприменить») — теперь
 подтверждено живыми ответами прода, а не только отсутствием доказательства.
+
+### 2bis. Обновление LIVE-состояния прода (2026-09-25, внешний канал) — дрейф схемы закрыт владельцем
+
+Прогоны `Production read-only probe` в GitHub Actions (runner вне песочницы
+исполнителя; отчёты — комментарии к PR #47/#48/#52/#53):
+
+| Время (UTC) | SHA прогона | drift/missing | Что изменилось |
+|---|---|---:|---|
+| 04:55:28 | `0f4ffc1f` | 10 | SR-004 и SR-D1 отсутствуют (срез §2) |
+| **05:14:23** | `dfdc4334` | **4** | владелец применил схему: SR-004 и SR-D1 **появились** |
+| 05:42:19 | `1902f8b8` | 4 | состояние стабильно |
+| 05:53:11 | `047e64d9` | 4 | состояние стабильно |
+
+**FACT (LIVE, канал anon):** `auth_login_codes.issued_token_hash/issues/consumed_at`
+резолвятся; `session_settings.min_notice_minutes` и остальные D1-колонки резолвятся;
+`services.availability` существует (`null`); `public_settings.min_notice_minutes`
+читается (`Europe/Minsk`, `0`); `schedule_overrides` и `public_schedule_overrides`
+существуют (`public_schedule_overrides` отдаёт 0 строк, а не 404).
+
+**Что осталось в drift (4 зонда, стабильно с 05:14Z):**
+
+1. `GET /functions/v1/auth-code` → `404 NOT_FOUND` (**не задеплоена**);
+2. `GET /functions/v1/telegram-notify` → `404 NOT_FOUND` (**не задеплоена**);
+3. `POST /rest/v1/rpc/create_booking` (anon, дата в прошлом) → `PGRST202`;
+4. `create_booking` overload-инвентаризация → `PGRST202`.
+
+Пункты 3–4 — **LIVE-дефект приложения**: публичная запись клиентов в проде не
+работает. Причина по-прежнему `UNKNOWN` без SQL-канала (нет функции / нет EXECUTE
+у `anon` / не та сигнатура). Если владелец применил схему целиком, то по
+`schema.sql` грант `anon` на каноническую сигнатуру есть — значит первым делом
+проверяются `pg_proc` + `apy_key`-кэш PostgREST (Блок 7, запросы 1–2; при
+необходимости — `notify pgrst, 'reload schema'`).
+
+**Прочие LIVE-факты того же среза:** `client_risks`/`clients`/`payments`/
+`booking_attempts` для anon — `42501`; `auth_login_codes` для anon — 0 строк
+(RLS без политик = deny); `public_profiles` — 2 активные анкеты; GoTrue:
+`external.email=true`, `external.google=false`, `disable_signup=false`,
+`mailer_autoconfirm=false`.
+
+**Честность самого отчёта (issue #54, исправлено в этой ветке):** сводка probe
+раньше не считала зонды без ответа, поэтому «drift 0» при мёртвой сети читался
+как «чисто». Теперь `summary` содержит `measured`/`unreachable`, печатная сводка
+начинается с покрытия измерения, а workflow краснеет при `unreachable > 0`
+(контроль — `tests/prod-probe-report.mjs`).
 
 ### RPC (TASK 1 / TASK 5) — LIVE EVIDENCE
 
@@ -234,42 +282,69 @@ devserver` — `success`. Проверено через API jobs, а не по �
 
 | Пункт DoD | Статус | Основание |
 |---|---|---|
-| production DB inspected | **ЧАСТИЧНО** (LIVE, anon-канал): drift найден и задокументирован; `pg_proc`/гранты/RLS — только SQL-каналом владельца | §2 |
-| auth-code deployment proven | **FAIL / BLOCKED — OWNER ACTION REQUIRED** | §1 |
+| production DB inspected | **ЧАСТИЧНО** (LIVE, anon-канал): дрейф схемы закрыт владельцем (§2bis), блокеры сузились до Edge Functions и `create_booking`; `pg_proc`/гранты/RLS — только SQL-каналом владельца | §2, §2bis |
+| auth-code deployment proven | **FAIL / BLOCKED — OWNER ACTION REQUIRED** (LIVE 05:53Z: `404 NOT_FOUND`) | §1, §2bis |
 | real application origin configured | **PART**: клиентский канон — реальный origin (LIVE); Site URL/Redirect в Auth — UNKNOWN (владелец) | §3 |
-| manual OTP production E2E PASS | **BLOCKED** (нет `auth-code`, нет SR-004 в проде, нет почтового ящика у исполнителя) | §1, §2 |
+| manual OTP production E2E PASS | **BLOCKED** (нет `auth-code` в проде, нет почтового ящика у исполнителя) | §1 |
 | email-link production E2E PASS | **BLOCKED** (тот же блокер + Site URL не подтверждён) | §1, §3 |
-| both paths converge to one canonical session | **FACT** (repo): один `finishAuthenticatedLogin`/`claim` на оба входа | §4 |
+| both paths converge to one canonical session | **FACT** (repo): один `finishAuthenticatedLogin`/`claim` на оба входа; Challenger-атака B на `d28ae94` — PASS | §4, `ISSUE-46-CHALLENGER.md` |
 | same psychologist ownership proven | **FACT** (repo, тесты); production — BLOCKED | §4 |
 | reload + repeat login proven | **FACT** (repo, тесты на отдельном процессе); production — BLOCKED | §4 |
 | duplicate profile prevented | **FACT** (repo + PostgreSQL) | §4 |
-| inactive account cannot be reactivated by login | **FACT** (PostgreSQL + клиентские тесты) — исправлено в этой ветке | §4 |
-| #21/#22 production gates checked | **ЧАСТИЧНО**: `client_risks` закрыт для anon (LIVE); `create_booking` для anon **недоступен** → публичная запись в проде не работает (LIVE) | §2 |
-| independent Challenger PASS | **НЕ ВЫПОЛНЕНО** — требуется независимый Challenger (TASK 7) | — |
-| Main Re-Audit PASS | **НЕ ВЫПОЛНЕНО** — после merge в main | — |
-| CURRENT-STATE synchronized | **ВЫПОЛНЕНО** в этой ветке | `docs/CURRENT-STATE.md` |
+| inactive account cannot be reactivated by login | **FACT** (PostgreSQL + клиентские тесты); мутация «гейт снят + `is_active = true`» → 5 FAIL | §4, Challenger §2.1 |
+| #21/#22 production gates checked | **ЧАСТИЧНО**: `client_risks`/`clients`/`payments` закрыты для anon (LIVE); `create_booking` для anon **недоступен** → публичная запись в проде не работает (LIVE) | §2bis |
+| independent Challenger PASS | **ВЫПОЛНЕНО** в ветке `arena/01a0d702` (атаки A–I, 8 мутационных контролей); отчёт — `docs/ISSUE-46-CHALLENGER.md`, PR #53. Формально закрывается после merge и Main Re-Audit | `ISSUE-46-CHALLENGER.md` |
+| Main Re-Audit PASS | **ОЖИДАЕТ MERGE**: проверка выполнена на `main @ d28ae94` (гейт 24/24, pages ALL PASS); после merge нужен Re-Audit нового SHA владельцем/следующим проверяющим | Challenger §1 |
+| CURRENT-STATE synchronized | **ВЫПОЛНЕНО** (main SHA, прод-таблица, контуры); остаток #50 — RECOVERY-ORCHESTRATION/ROADMAP | `docs/CURRENT-STATE.md` |
+| «green CI masks failure» (TASK 7) | **ИСПРАВЛЕНО в этой ветке**: silent-набор и `FAIL` с отступом красят гейт (issue #51, F2); `supabase-deploy.yml` больше не бывает зелёным без деплоя (F4); probe не отчитывается «drift 0» без измерений (#54) | `tools/verify_all.mjs`, `tests/harness-guard.mjs`, `tests/prod-probe-report.mjs` |
 
 ## 6. Остаточные блокеры (единственный ответ, который требует #46)
 
-**Приложение НЕ работает в production.** Конкретные внешние действия владельца,
-которые остаются блокирующими (порядок строгий, детали и команды —
-`docs/OWNER-CHECKLIST-E2E.md`):
+**Приложение НЕ работает в production.** После среза §2bis схема применена,
+поэтому список блокеров сократился до четырёх внешних действий владельца
+(детали и команды — `docs/OWNER-CHECKLIST-E2E.md`):
 
-1. **Применить `supabase/schema.sql` целиком** в SQL Editor (устраняет drift:
-   SR-004 `auth_login_codes.*`, D1 `schedule_overrides` / колонки политик /
-   `services.availability`, `create_booking` + гранты anon, `claim_psychologist_profile`).
-2. **Задать секреты CI** `SUPABASE_ACCESS_TOKEN` + `SUPABASE_PROJECT_ID`
-   → задеплоить `auth-code` и `telegram-notify` (`--no-verify-jwt`).
-3. **Секреты Edge Functions**: `RESEND_API_KEY`, `MAIL_FROM`, `APP_URL`
+1. **Задать секреты CI** `SUPABASE_ACCESS_TOKEN` + `SUPABASE_PROJECT_ID` →
+   задеплоить `auth-code` и `telegram-notify` (`--no-verify-jwt`). Проверка:
+   `Production read-only probe` больше не показывает `NOT_DEPLOYED`, а
+   `supabase-deploy.yml` даёт зелёный **по факту доступности** функций
+   (а не по факту отсутствия секретов, как раньше).
+2. **Секреты Edge Functions**: `RESEND_API_KEY`, `MAIL_FROM`, `APP_URL`
    (= `https://a1dmitry.github.io/Psihologist-cabinet/`, не localhost).
+3. **SQL-подтверждение `create_booking` и грантов** (Блок 7, запросы 1–2):
+   публичная запись в проде не работает (`PGRST202` для anon). Если сигнатура и
+   грант в порядке — перезагрузить кэш схемы PostgREST, затем повторить probe.
 4. **Supabase Auth → URL Configuration**: Site URL и Redirect URLs = тот же
    origin; там же — срок сессии не больше месяца (серверная граница, #40 п.7).
-5. После 1–4: `node tools/prod-e2e.mjs --email <тестовый ящик>` → реальный E2E,
-   затем повторный прогон `Production read-only probe` (drift должен исчезнуть)
-   и независимый Challenger (TASK 7).
+5. После 1–4: `node tools/prod-e2e.mjs --email <тестовый ящик>` → реальный E2E
+   (код и ссылка), затем повторный прогон `Production read-only probe`
+   (должно остаться `drift 0` при `измерено: 26/26`).
+
+### 6.1. Чек-лист закрытия #46
+
+- [x] production DB inspected (LIVE, anon-канал; §2bis) — SQL-инвентарь остаётся за владельцем;
+- [ ] auth-code deployment proven (LIVE: `NOT_DEPLOYED` → ожидает Блок 1);
+- [x] real application origin configured на клиенте — [ ] Site URL/Redirect в Auth — UNKNOWN;
+- [ ] manual OTP production E2E — BLOCKED (нет `auth-code`);
+- [ ] email-link production E2E — BLOCKED (то же + Site URL);
+- [x] both paths converge to one canonical session (FACT + Challenger);
+- [x] same psychologist ownership proven (repo + PostgreSQL);
+- [x] reload + repeat login proven (repo, отдельный процесс);
+- [x] duplicate profile prevented;
+- [x] inactive account cannot be reactivated by login (+ мутационный контроль);
+- [x] #21/#22 production gates checked (LIVE: `client_risks` закрыт; `create_booking` — дефект зафиксирован);
+- [x] independent Challenger PASS (TASK 7) — отчёт `ISSUE-46-CHALLENGER.md`, PR #53;
+- [ ] Main Re-Audit PASS — после merge проверок этой ветки;
+- [x] CURRENT-STATE synchronized (main SHA и прод-таблица);
+- [x] «green CI masks failure» закрыто по факту: silent-набор, `FAIL` с отступом,
+      зелёный «Deploy …» без деплоя и «drift 0» без измерений — исправлены с контролями.
+
+**Вывод по закрытию:** issue закрывается после шага 5 (§6) — то есть после
+внешних действий владельца и Main Re-Audit нового `main`. До этого «зелёной»
+формулировки быть не может: production E2E не проведён.
 
 ---
 
-*Сформировано 2026-09-25 в ветке `arena/01a0d6b5-psihologist-cabinet` (PR #47).
-Issue #46 исполнителем НЕ закрывается: по TASK 7 требуется независимый
-Challenger и Main Re-Audit на новом SHA `main`.*
+*Сформировано 2026-09-25; обновлено в ветке `arena/01a0d702-psihologist-cabinet`
+(PR #53) после Challenger-аудита `main @ d28ae94`. Issue #46 не закрывается до
+production E2E (§6.1): это не отчёт исполнителя, а чек-лист владельца.*

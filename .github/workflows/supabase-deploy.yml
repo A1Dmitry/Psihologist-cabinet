@@ -4,7 +4,13 @@ name: Deploy Supabase Edge Functions
 # Требует (одноразовая настройка владельцем, см. docs/INFRA.md):
 #   Secret   SUPABASE_ACCESS_TOKEN — личный токен из supabase.com/dashboard/account/tokens
 #   Variable SUPABASE_PROJECT_ID   — ref проекта (напр. phiavtroybgwyjdhqqkh)
-# Без них job завершается успешно с пояснением (деплой руками через CLI).
+#
+# Честность статуса (#46 TASK 2 / #54-класс): раньше без секретов job печатал
+# notice и оставался ЗЕЛЁНЫМ, хотя деплоя не было (3 таких прогона в истории при
+# NOT_DEPLOYED в проде). Теперь финальный шаг «Production reachability» всегда
+# проверяет, отвечают ли функции в проде (публичная проверка, секретов не
+# требует): зелёный статус означает «endpoint поднят», красный — «не задеплоено,
+# требуется действие владельца» (#35).
 
 on:
   push:
@@ -23,7 +29,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Деплой функций — тоже изменение production-контура: сначала проектный гейт.
+  quality-gate:
+    uses: ./.github/workflows/verify.yml
+
   deploy-functions:
+    needs: quality-gate
     runs-on: ubuntu-latest
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -65,3 +76,28 @@ jobs:
               echo "::error::$fn недоступна после деплоя (HTTP $code) — проверьте verify_jwt."; exit 1
             fi
           done
+
+      # Публичная проверка фактического состояния прода — БЕЗ секретов, поэтому
+      # выполняется всегда, включая путь «секреты не настроены». Именно она
+      # превращает зелёный статус workflow в проверяемое утверждение
+      # «Edge Functions отвечают в проде», а не в «файл workflow существует».
+      - name: Production reachability (gateway 404 = NOT deployed, #35)
+        env:
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_ID || 'phiavtroybgwyjdhqqkh' }}
+        run: |
+          missing=0
+          for fn in auth-code telegram-notify; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+              "https://${PROJECT_REF}.supabase.co/functions/v1/${fn}" \
+              -H "Content-Type: application/json" -d '{}' || echo 000)
+            echo "$fn -> HTTP $code"
+            case "$code" in
+              404|000) missing=1 ;;
+            esac
+          done
+          if [ "$missing" = "1" ]; then
+            echo "::error::Edge Functions не отвечают в проде (404/нет сети): деплой не выполнен или откатился. Блокер #35/#46."
+            echo "::error::Действие владельца: docs/OWNER-CHECKLIST-E2E.md, Блок 1 (SUPABASE_ACCESS_TOKEN + SUPABASE_PROJECT_ID → supabase functions deploy ... --no-verify-jwt)."
+            exit 1
+          fi
+          echo "Edge Functions отвечают в проде — статус зелёный обоснован."

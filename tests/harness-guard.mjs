@@ -12,12 +12,16 @@
  *  3. Запрещён хвост `process.exitCode = failed ? …` (массив всегда truthy).
  *  4. Каждый набор из SUITES (любой каталог) имеет детерминированный выход
  *     (`process.exit(` или `process.exitCode`).
- *  5. Каждый tests/*.mjs зарегистрирован в tools/verify_all.mjs —
- *     иначе тест существует, но гейт его не гоняет.
+ *  5. Каждый набор (tests/*.mjs, verify_*.mjs, test_*.mjs и tools/verify_*.mjs)
+ *     зарегистрирован в tools/verify_all.mjs — иначе файл существует, но гейт
+ *     его не гоняет (root/tools-наборы раньше не покрывались, см. #46 F2).
  *  6. Негативный контроль канала A: скелет finishSuite + stray async-крах
  *     обязан выйти ≠0 (пин против возврата «ALL PASS, exit 0»).
  *  7. Негативный контроль канала B: verify_app против битого модуля и
  *     против модуля, бросающего в boot, обязан выйти ≠0.
+ *  8. Негативные контроли честности гейта (#51, #46 F2): silent-набор
+ *     (0 проверок, exit 0) и набор с `FAIL` в отступе ≥3 обязаны красить
+ *     REDUCED-прогон verify_all; честный мини-набор — обязан зеленеть.
  *
  * Сам guard — обычный скрипт без БД: естественный выход + exitCode.
  */
@@ -46,6 +50,23 @@ const suitesBlock = suitesStart >= 0 && suitesEnd > suitesStart
 const suiteFiles = [...suitesBlock.matchAll(/'((?:tests|tools)\/[^']+\.mjs|verify_[^']+\.mjs|test_[^']+\.mjs)'/g)]
   .map(m => m[1]);
 check('guard: SUITES разобраны', suiteFiles.length >= testFiles.length, String(suiteFiles.length));
+
+// Наборы живут не только в tests/: root `verify_*.mjs` / `test_*.mjs` и
+// tools/verify_*.mjs тоже запускаются гейтом. Раньше проверка регистрации
+// смотрела только в tests/, и новый root-набор мог остаться незапущенным (#46 F2).
+const rootSuites = readdirSync(ROOT)
+  .filter(f => /^(verify_|test_)[^/]*\.mjs$/.test(f))
+  .sort();
+const toolSuites = readdirSync(join(ROOT, 'tools'))
+  .filter(f => /^verify_.*\.mjs$/.test(f))
+  // сам гейт не является набором: он их запускает
+  .filter(f => f !== 'verify_all.mjs')
+  .sort()
+  .map(f => `tools/${f}`);
+for (const f of [...rootSuites, ...toolSuites]) {
+  check(`${f}: зарегистрирован в verify_all`,
+    verifyAll.includes(`'${f}'`), 'нет в SUITES');
+}
 
 const SELF = 'harness-guard.mjs';
 for (const f of testFiles) {
@@ -144,6 +165,36 @@ await finishSuite(0);
   check('negative B: verify_app BOOT ERROR → exit ≠ 0',
     boot.code !== 0 && /BOOT ERROR/.test(boot.out),
     `exit=${boot.code} out=${boot.out.slice(0, 240).replace(/\s+/g, ' ')}`);
+
+  /* ── Честность самого гейта: silent-набор и FAIL с отступом (#51, #46 F2) ──
+   * Прогоняем временные наборы через РЕАЛЬНУЮ логику tools/verify_all.mjs
+   * (шов VERIFY_EXTRA_SUITE): судит тот же код, что судит CI. */
+  const runGateWith = (file) => runNode(join(ROOT, 'tools/verify_all.mjs'),
+    { VERIFY_EXTRA_SUITE: file }, 60000);
+
+  const silentSuite = join(tmp, 'guard-silent.mjs');
+  writeFileSync(silentSuite, 'console.log("nothing to see here");\nprocess.exit(0);\n');
+  const silentRun = runGateWith(silentSuite);
+  check('negative C: silent-набор (0 проверок, exit 0) красит гейт (#51)',
+    silentRun.code !== 0 && /не предъявил ни одной проверки/.test(silentRun.out),
+    `exit=${silentRun.code} out=${silentRun.out.slice(-260).replace(/\s+/g, ' ')}`);
+  check('negative C: REDUCED-прогон помечен — его нельзя выдать за полный гейт',
+    /REDUCED RUN/.test(silentRun.out), silentRun.out.slice(0, 160).replace(/\s+/g, ' '));
+
+  const indentedFail = join(tmp, 'guard-indented-fail.mjs');
+  writeFileSync(indentedFail,
+    'console.log("   FAIL  поддельный провал с отступом");\nconsole.log("PASS  честная проверка рядом");\nprocess.exit(0);\n');
+  const indentedRun = runGateWith(indentedFail);
+  check('negative D: FAIL с отступом ≥3 при exit 0 красит гейт (#46 F2)',
+    indentedRun.code !== 0 && /1 провалов/.test(indentedRun.out),
+    `exit=${indentedRun.code} out=${indentedRun.out.slice(-260).replace(/\s+/g, ' ')}`);
+
+  const honestSuite = join(tmp, 'guard-honest.mjs');
+  writeFileSync(honestSuite, 'console.log("PASS  единственная честная проверка");\nprocess.exit(0);\n');
+  const honestRun = runGateWith(honestSuite);
+  check('positive C: честный мини-набор (1 проверка) гейт считает зелёным',
+    honestRun.code === 0 && /проверок предъявлено: 1/.test(honestRun.out),
+    `exit=${honestRun.code} out=${honestRun.out.slice(-220).replace(/\s+/g, ' ')}`);
 } finally {
   rmSync(tmp, { recursive: true, force: true });
 }
