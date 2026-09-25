@@ -217,11 +217,19 @@ try {
  * кандидатов — это фактический список overload-сигнатур в проде
  * (замена `select * from pg_proc`, которой у агента без секретов нет).
  */
+// Overload-инвентаризация имеет смысл только для функций, которые роль вообще
+// видит. create_booking по schema.sql выдаётся anon → PGRST202 здесь drift.
+// claim_psychologist_profile у anon отозван → для anon он невидим всегда,
+// поэтому зонд INCONCLUSIVE: наличие/сигнатуру покажет только SQL владельца.
 for (const fn of ['create_booking', 'claim_psychologist_profile']) {
+  const visibleToAnon = fn === 'create_booking';
   try {
     const r = await call('POST', `/rest/v1/rpc/${fn}`, { body: { zz_probe_unknown_arg: 1 } });
+    const cls = classify(r);
+    const inconclusive = !visibleToAnon && cls.code === 'PGRST202';
     rec('D rpc', `${fn} — overload inventory (unknown arg)`, {
-      ...classify(r),
+      ...cls,
+      verdict: inconclusive ? 'INCONCLUSIVE_FOR_ANON' : cls.verdict,
       detail: brief(`${r.json?.message || ''} ${r.json?.hint || ''}`, 700)
     });
   } catch (e) {
