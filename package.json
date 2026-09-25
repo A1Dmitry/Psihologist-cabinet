@@ -5,6 +5,7 @@
   "description": "Портал кабинетов психологов (статический SPA + Supabase). devDependencies нужны только для локальных проверок — сам сайт собирается без npm.",
   "scripts": {
     "verify": "node tools/verify_all.mjs",
+    "claim": "node tools/claim.mjs",
     "verify:db": "node tests/db-contract.mjs",
     "verify:registration": "node tests/registration-flow.mjs",
     "verify:authui": "node tests/auth-ui-pending.mjs",
