@@ -646,12 +646,27 @@ grant select on services               to anon, authenticated;
 -- проверяет активность специалиста, свободный слот и анти-спам по телефону.
 -- ============================================================
 -- SR-001/SR-002/SR-108: каноническая сигнатура (пояс клиента — IANA + снимок
--- смещения; снимок длительности). Все предыдущие перегрузки убираем явно —
--- иначе create or replace создал бы вторую функцию с тем же именем.
-drop function if exists public.create_booking(text, text, text, text, text, text, text, text, text, text, text, text, text, text, numeric, numeric, text);
-drop function if exists public.create_booking(text, text, text, text, text, text, text, text, text, text, text, text, text, text, numeric, numeric, text, text);
-drop function if exists public.create_booking(text, text, text, text, text, text, text, text, text, text, text, text, text, text, text, numeric, numeric, text, boolean, timestamptz);
-drop function if exists public.create_booking(text, text, text, text, text, text, text, text, text, text, text, text, text, text, numeric, numeric, text, text, integer, integer, boolean, timestamptz);
+-- смещения; снимок длительности).
+--
+-- Перегрузки убираем НЕ списком известных из истории, а все подряд (issue #46,
+-- TASK 5: «canonical create_booking имеет единственную ожидаемую signature»).
+-- Причина: `create or replace function` при ДРУГОЙ арности не заменяет функцию,
+-- а создаёт ВТОРУЮ с тем же именем. В проде, где жила старая сигнатура не из
+-- нашего списка, схема применялась «без ошибок», но PostgREST после этого либо
+-- не может выбрать кандидата (PGRST203), либо резолвит не ту версию — прод
+-- остаётся сломанным при зелёном применении миграции.
+do $$
+declare r record;
+begin
+  for r in
+    select p.oid::regprocedure as sig
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'create_booking'
+  loop
+    execute format('drop function if exists %s', r.sig);
+  end loop;
+end $$;
 
 create or replace function public.create_booking(
   p_psychologist_id       text,
@@ -1227,7 +1242,19 @@ grant execute on function public.create_booking(text, text, text, text, text, te
 --   5) все обязательные поля регистрации сохраняются (email, full_name, phone,
 --      specialization, city, about).
 -- ============================================================
-drop function if exists public.claim_psychologist_profile(text, text, text, text);
+-- Все перегрузки — до создания канонической (см. пояснение у create_booking).
+do $$
+declare r record;
+begin
+  for r in
+    select p.oid::regprocedure as sig
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'claim_psychologist_profile'
+  loop
+    execute format('drop function if exists %s', r.sig);
+  end loop;
+end $$;
 
 create or replace function public.claim_psychologist_profile(
   p_email          text,

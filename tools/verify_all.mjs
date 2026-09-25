@@ -27,6 +27,7 @@ const SUITES = [
   ['Регистрация и вход специалиста (E2E-контракт)', 'node', ['tests/registration-flow.mjs']],
   ['OTP: одноразовость, TTL, лимит попыток (настоящий auth-code)', 'node', ['--no-warnings', 'tests/auth-code-edge.mjs']],
   ['SQL-контракт schema.sql на настоящем PostgreSQL', 'node', ['tests/db-contract.mjs']],
+  ['Сходимость схемы: применение к «грязному» проду (перегрузки RPC, гранты, RLS)', 'node', ['tests/schema-convergence.mjs']],
   ['Security regression (booking authority, tenant isolation, domain validation)', 'node', ['tests/security-regression.mjs']],
   ['D1: Booking Policy enforcement на настоящем PostgreSQL', 'node', ['tests/availability-db.mjs']],
   ['D1 recovery: parity-матрица client↔server', 'node', ['tests/availability-parity.mjs']],

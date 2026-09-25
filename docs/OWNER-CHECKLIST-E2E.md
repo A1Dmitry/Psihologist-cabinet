@@ -154,15 +154,22 @@ where n.nspname = 'public'
   and p.proname in ('create_booking','claim_psychologist_profile','is_active_own_psychologist')
 order by p.proname, args;
 
--- 2) Гранты EXECUTE (явные). Ожидание: create_booking → anon+authenticated,
---    claim_psychologist_profile → только authenticated, is_active_own_psychologist
---    → только authenticated. Пустая строка = грантов нет (функцию не вызвать).
-select routine_name, grantee, string_agg(privilege_type, ',' order by privilege_type) as privs
-from information_schema.routine_privileges
-where routine_schema = 'public'
-  and routine_name in ('create_booking','claim_psychologist_profile','is_active_own_psychologist')
-group by routine_name, grantee
-order by routine_name, grantee;
+-- 2) Гранты EXECUTE. Ожидание: create_booking → anon_exec = true,
+--    claim_psychologist_profile → anon_exec = false, auth_exec = true.
+--    ВАЖНО: проверяем по pg_proc.proacl / has_function_privilege, а НЕ по
+--    information_schema.routine_privileges — этот view фильтруется по текущему
+--    пользователю и гранты anon/authenticated не показывает (проверено на
+--    PostgreSQL 18.4: выдаёт только service_role, хотя anon EXECUTE имеет).
+select p.proname,
+       pg_get_function_identity_arguments(p.oid) as args,
+       coalesce(array_to_string(p.proacl, ' | '), '(proacl NULL = EXECUTE у PUBLIC)') as acl,
+       has_function_privilege('anon', p.oid, 'EXECUTE') as anon_exec,
+       has_function_privilege('authenticated', p.oid, 'EXECUTE') as auth_exec
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.proname in ('create_booking','claim_psychologist_profile','is_active_own_psychologist')
+order by p.proname;
 
 -- 3) SR-004: колонки auth_login_codes (без них auth-code работает в legacy-режиме).
 --    Ожидание: issued_token_hash, issues, consumed_at присутствуют.
