@@ -107,7 +107,7 @@ Root cause (FACT по внешнему каналу): `supabase/schema.sql` бы
 | #21 | P1 | Server-authoritative booking — repo merged, включая п.4: демо-оплата при живом Supabase больше не пишет «оплата прошла» (local-only UX + negative `tests/demo-pay-honesty.mjs`); production-гейт: `create_booking` для anon недоступен (LIVE); Challenger + Main Re-Audit OPEN |
 | #22 | P2 | Tenant isolation / anti-spam — repo merged + тесты; `client_risks` закрыт в проде (LIVE) |
 | #34 | P1 | Challenger recovery + свежий Main Re-Audit — OPEN (проверялся 4d490d2, main ушёл на ca3b23b) |
-| #36 | P2 | Harness false-green — **CLOSED**: свежий независимый Challenger на `5f20349` ≡ `938e7f6` (`docs/ISSUE-36-CHALLENGER.md`): сырьё A1/A2/B/C повторено, все три канала красные; гейт 26/26 |
+| #36 | P2 | Harness false-green — **DoD выполнен, к закрытию владельцем**: свежий независимый Challenger на `5f20349` ≡ `938e7f6` (`docs/ISSUE-36-CHALLENGER.md`): сырьё A1/A2/B/C повторено, все три канала красные; гейт 26/26. Закрытие — за владельцем: у App-токена нет `issues:write`, auto-close не срабатывает от merge App'ом |
 | #51 | P2 | Silent suite (0 проверок, exit 0) — **CLOSED**: независимый Challenger + Main Re-Audit на `3ebce1c` (`docs/ISSUE-51-54-CHALLENGER.md`): повтор атаки C2 → гейт красный; 26/26 зелёные |
 | #54 | P2 | Probe-сводка «drift 0» без измерений — **CLOSED**: Challenger PASS (`docs/ISSUE-51-54-CHALLENGER.md`): blackhole → `измерено: 0/26`, `HTTP_0` устранён, workflow-гейт на `unreachable>0`, live-прогон читаем (Actions 06:55Z) |
 | #50 | P2 | Docs resync — этот файл, `INFRA.md` и `ISSUE-46-EVIDENCE.md` синхронизированы с продом (05:53Z); остаток #50 — RECOVERY-ORCHESTRATION/ROADMAP, Challenger + Main Re-Audit |
@@ -115,8 +115,10 @@ Root cause (FACT по внешнему каналу): `supabase/schema.sql` бы
 | #27–#31 | BA | Продуктовый backlog; не дефекты |
 
 Закрыты 2026-09-25 и перепроверены: #15 (Quality Gate DONE), #49 (probe-мусор),
-#21, #22, #34 (владельцем), #51, #54 (`docs/ISSUE-51-54-CHALLENGER.md`),
-#36 (`docs/ISSUE-36-CHALLENGER.md`).
+#21, #22, #34, #51, #54 (владельцем; независимый Challenger + Main Re-Audit по
+#51/#54 — `docs/ISSUE-51-54-CHALLENGER.md`).
+Готов к закрытию владельцем (DoD выполнен, evidence на main): #36
+(`docs/ISSUE-36-CHALLENGER.md`).
 Закрыты ранее: #7, #8, #11, #14, #18, #19, #23, #30, #33 (вердикты — триаж §3).
 
 ## Canonical authentication contract
