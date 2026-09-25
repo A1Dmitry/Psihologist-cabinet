@@ -106,6 +106,44 @@ POST /rest/v1/rpc/claim_psychologist_profile {zz_…:1}      → PGRST202
 - Зонд `create_booking` датой в прошлом гарантированно не пишет: отклоняется на
   шаге 0 функции, до advisory lock и до любых INSERT.
 
+### Подтверждение дрифта из браузера владельца — LIVE EVIDENCE, 2026-09-25
+
+Независимый канал: консоль браузера владельца (приложение открыто против
+production Supabase). Совпадает с зондом §2, но снят не из CI:
+
+```text
+GET /rest/v1/public_schedule_overrides?psychologist_id=eq.psy_catalog_19&select=*&order=date.asc → 404
+GET /rest/v1/public_schedule_overrides?psychologist_id=eq.psy_a1dmitry&select=*&order=date.asc  → 404
+```
+
+- **FACT:** оба запроса — это `supabaseSync.pullAll()` → `supabaseApi.listOverrides(psyId)`
+  (`js/services/supabaseSync.js`); идентификаторы совпадают с двумя активными
+  анкетами из `public_profiles` (`psy_catalog_19`, `psy_a1dmitry`).
+- **INFERENCE (высокая уверенность):** 404 на коллекционном запросе = объект
+  отсутствует в schema cache (PostgREST `PGRST205`), а не «пустой список»:
+  пустой список отдаётся как `200 []`. Совпадает с кодом `PGRST205`, который
+  зонд получил тем же запросом (§2).
+- **FACT:** каталог при этом грузится нормально (`listPsychologists` → 2 анкеты),
+  поэтому UI не показывал владельцу никакой проблемы: дрифт был виден только в
+  DevTools.
+- **FACT (дефект клиента, найден на этом месте и исправлен):** `pullAll()`
+  сбрасывал `services/clients/sessions/settings/scheduleBlocks`, но НЕ
+  `scheduleOverrides`, а ошибка чтения глоталась пустым `catch`. Следствия:
+  (1) строки overrides накапливались в localStorage на каждой загрузке
+  (контроль фальсификации: 6 строк после двух pull'ов вместо 2);
+  (2) однажды прочитанный с сервера «закрытый день» оставался закрытым
+  навсегда, даже когда слой перестал отвечать. Плюс отсутствие слоя было
+  неотличимо от пустого списка.
+- **Что сделано:** `db.scheduleOverrides` сбрасывается вместе с остальными
+  серверными слоями; недоступный слой возвращается в `pullAll()` как
+  `degraded: [{relation, status, code}]` и логируется одним `console.warn`
+  с лечением (переприменить `supabase/schema.sql`).
+  Доказательство: `tests/sync-degradation.mjs` — 17 проверок, контроль
+  фальсификации выполнен (без сброса 5 проверок краснеют).
+- **Остаётся за владельцем:** сам дрифт (отсутствие `schedule_overrides` /
+  `public_schedule_overrides` / D1-колонок) клиентом не лечится — только
+  переприменением схемы (Блок 2 `docs/OWNER-CHECKLIST-E2E.md`).
+
 ## 3. Application origin (TASK 2/3) — LIVE EVIDENCE
 
 - `https://a1dmitry.github.io/Psihologist-cabinet/` отдаёт приложение (HTTP 200,
@@ -136,6 +174,7 @@ POST /rest/v1/rpc/claim_psychologist_profile {zz_…:1}      → PGRST202
 | TASK 3: оба входа → один профиль | сценарий «два входа»: тот же `sub` приходит по ссылке → тот же `psychologist.id`, тот же `owner_id`, дубля нет (прежний тест брал другой email и инвариант не покрывал) | `tests/registration-flow.mjs`, 6 проверок |
 | TASK 4/5: чем владелец докажет прод | `tools/prod-e2e.mjs`: сценарий tenant isolation своей живой сессией + флаг `--link` (вход по ссылке, origin не localhost, тот же профиль; токены не печатаются) | инструмент (запуск на машине владельца) |
 | TASK 7: независимый Challenger | `docs/ISSUE-46-CHALLENGER-KIT.md` — 9 атак (A–I) с командами, критериями FAIL и формой отчёта; исполнителем НЕ сертифицирован | документ |
+| TASK 1: дрифт прода виден без DevTools | `pullAll()` больше не глотает недоступные слои: возвращает `degraded[{relation,status,code}]` + один `console.warn` с лечением; кэш `scheduleOverrides` не переживает отказ слоя (иначе закрытый день оставался закрытым навсегда, а строки дублировались на каждой загрузке) | `tests/sync-degradation.mjs` — 17 проверок + контроль фальсификации (без сброса 5 краснеют) |
 | «green CI маскирует failure» | CI раньше не запускал проверки проекта вовсе: добавлен workflow `Quality Gate` (`node tools/verify_all.mjs` + смоук маршрутов), деплой Pages ждёт его через `needs: quality-gate` | прогон в Actions: шаги `Install dev dependencies` / `Run project gate` / `Smoke routes` — success |
 
 ### Красные наборы на старте (найдено и исправлено)

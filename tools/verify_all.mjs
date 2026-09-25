@@ -24,6 +24,7 @@ const SUITES = [
   ['D1: перенос на каноническом engine (suggestSlots)', 'node', ['tests/suggest-slots.mjs']],
   ['D1: кабинет политики (overrides, лимиты, доступность услуги)', 'node', ['tests/cabinet-policy.mjs']],
   ['Воронка записи (wizard, слоты, пояса, server-first success)', 'node', ['tests/booking-wizard.mjs']],
+  ['Синхронизация: деградация при частично применённой схеме (#46)', 'node', ['tests/sync-degradation.mjs']],
   ['Регистрация и вход специалиста (E2E-контракт)', 'node', ['tests/registration-flow.mjs']],
   ['OTP: одноразовость, TTL, лимит попыток (настоящий auth-code)', 'node', ['--no-warnings', 'tests/auth-code-edge.mjs']],
   ['SQL-контракт schema.sql на настоящем PostgreSQL', 'node', ['tests/db-contract.mjs']],

@@ -84,6 +84,22 @@ function mapBlock(row) {
   });
 }
 
+/**
+ * Разобрать ошибку REST-клиента в машиночитаемый «диагноз слоя».
+ *
+ * `request()` бросает `Supabase <status>: <тело>`; тело PostgREST содержит
+ * `code` (PGRST205 = объекта нет в schema cache, PGRST204 = нет колонки).
+ * Без этого частичная схема выглядит как «данных просто нет»: 404 на
+ * public_schedule_overrides неотличим от пустого списка, поэтому дрифт
+ * прода видно только в DevTools.
+ */
+function describeRestError(e) {
+  const msg = String(e?.message || e || '');
+  const status = /Supabase (\d{3})/.exec(msg)?.[1] || null;
+  const code = /"code"\s*:\s*"([^"]+)"/.exec(msg)?.[1] || null;
+  return { status, code, message: msg.slice(0, 160) };
+}
+
 export const supabaseSync = {
   enabled() {
     return isSupabaseConfigured();
@@ -156,6 +172,16 @@ export const supabaseSync = {
     db.sessions = [];
     db.settings = [];
     db.scheduleBlocks = [];
+    // Overrides сбрасываются вместе со всеми серверными слоями: если слой
+    // недоступен (например, view public_schedule_overrides ещё не применён в
+    // проде — PostgREST 404), старый кэш из localStorage НЕ должен оставаться.
+    // Иначе закрытый день, однажды прочитанный с сервера, закрывает дату
+    // навсегда: pullAll молча падает в catch, а строка живёт в хранилище.
+    db.scheduleOverrides = [];
+
+    // Слои, которые не прочитались: relation → { status, code }.
+    // Пусто = сервер отдал всё, что просили.
+    const degraded = new Map();
 
     for (const r of rows) {
       const psyId = r.id;
@@ -168,18 +194,17 @@ export const supabaseSync = {
       try {
         const blocks = await supabaseApi.listBusyBlocks(psyId);
         (blocks || []).forEach(b => db.scheduleBlocks.push(mapBlock(b)));
-      } catch (_) { /* блокировки опциональны */ }
+      } catch (e) { degraded.set('public_schedule_blocks', describeRestError(e)); }
 
       // D1: переопределения расписания на дату (закрытые дни / особые окна)
       try {
         const overrides = await supabaseApi.listOverrides(psyId);
-        db.scheduleOverrides = (db.scheduleOverrides || []).filter(o => o.psychologistId !== psyId);
         (overrides || []).forEach(o => db.scheduleOverrides.push(new ScheduleOverride({
           id: o.id, psychologistId: o.psychologist_id, date: o.date,
           isClosed: !!o.is_closed, openFrom: o.open_from || '', openTo: o.open_to || '',
           title: o.title || '', createdAt: o.created_at
         })));
-      } catch (_) { /* overrides опциональны */ }
+      } catch (e) { degraded.set('public_schedule_overrides', describeRestError(e)); }
 
       try {
         const st = await supabaseApi.getSettings(psyId);
@@ -212,11 +237,28 @@ export const supabaseSync = {
             googleSyncBusy: prev ? prev.googleSyncBusy !== false : true
           }));
         }
-      } catch (_) { /* settings optional */ }
+      } catch (e) { degraded.set('public_settings', describeRestError(e)); }
     }
 
     db.saveChanges();
-    return { ok: true, message: `Синхронизировано психологов: ${rows.length}` };
+
+    const degradedLayers = [...degraded.entries()].map(([relation, d]) => ({ relation, ...d }));
+    if (degradedLayers.length) {
+      // Не «данных нет», а «слой не применён»: 404/PGRST205 на view означает,
+      // что схема в этой базе старше репозитория. Молчаливый catch здесь
+      // стоил бы владельцу часов поиска по DevTools.
+      console.warn(
+        '[Supabase] схема БД применена частично — слои недоступны: '
+        + degradedLayers.map(d => `${d.relation} (HTTP ${d.status || '?'}${d.code ? `, ${d.code}` : ''})`).join(', ')
+        + '. Эти слои считаются пустыми (политика доступности — по дефолтам).'
+        + ' Лечение: переприменить supabase/schema.sql в SQL Editor (docs/INFRA.md, п.2).'
+      );
+    }
+    return {
+      ok: true,
+      message: `Синхронизировано психологов: ${rows.length}`,
+      degraded: degradedLayers
+    };
   },
 
   /**
