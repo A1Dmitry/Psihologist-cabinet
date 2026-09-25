@@ -6,8 +6,8 @@
 
 ## Main SHA
 
-- **Актуальный `main`:** `df59b57cfb692f47bd08d162042c65e721be4963`
-- **Предыдущий synchronized commit:** `6a259cb816543a6dee5a70d5ddf154f4b6bd3a47` — corrected current-state/auth contract.
+- **Актуальный `main`:** `0320c40682805a4730fa03b93176b14098ceea75`
+- **Последний sync-коммит:** обновление recovery orchestration и исправленного auth-контракта.
 - **Merge PR #44:** `5d5636db74ba41fbbb19fb7ad358181f4fcdc327` — recovery Quality Gate #36.
 - **Merge PR #43:** `03c6fa57e1a53f5be9e450eeebf389865f4cc51d` — Supabase MCP roadmap.
 - `87e3951`, `4d490d2` и более ранние SHA — исторические baseline.
@@ -188,4 +188,4 @@ The current state is this file, not a historical report.
 
 ---
 
-*Синхронизировано: 2026-09-25 UTC; current main @ `df59b57cfb692f47bd08d162042c65e721be4963`. Эта запись синхронизирует repo-state и известные verification gaps; она не сертифицирует production.*
+*Синхронизировано: 2026-09-25 UTC; current main @ `0320c40682805a4730fa03b93176b14098ceea75`. Эта запись синхронизирует repo-state и известные verification gaps; она не сертифицирует production.*
