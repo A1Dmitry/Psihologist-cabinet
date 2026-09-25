@@ -401,7 +401,7 @@ function renderPortal() {
         <button onclick="navigate('cabinet')" class="px-4 py-2 rounded-full bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">Кабинет</button>`;
     } else {
       navAuth.innerHTML = `
-        <button onclick="navigate('auth',{mode:'login'})" class="text-sm text-slate-600 hover:text-indigo-700">Вход для психологов</button>
+        <button onclick="navigate('auth',{mode:'login'})" class="text-sm text-slate-600 hover:text-indigo-700">Вход для специалистов</button>
         <button onclick="navigate('auth',{mode:'register'})" class="px-4 py-2 rounded-full bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">Регистрация</button>`;
     }
   }
@@ -443,7 +443,7 @@ function renderPortal() {
   }
 
   if (!list.length) {
-    box.innerHTML = '<div class="col-span-full text-center text-slate-400 py-12">Психологи не найдены</div>';
+    box.innerHTML = '<div class="col-span-full text-center text-slate-400 py-12">Специалисты не найдены</div>';
     return;
   }
   const demoStrip = portalVm.source === 'demo'
@@ -510,7 +510,7 @@ function renderAuth() {
   const hint = $('#auth-code-hint');
   const resend = $('#auth-resend');
 
-  if (title) title.textContent = authVm.mode === 'register' ? 'Регистрация психолога' : 'Вход в кабинет';
+  if (title) title.textContent = authVm.mode === 'register' ? 'Регистрация специалиста' : 'Вход в кабинет';
   if (subtitle) {
     subtitle.textContent = authVm.mode === 'register'
       ? 'Создайте кабинет: код придёт на email'

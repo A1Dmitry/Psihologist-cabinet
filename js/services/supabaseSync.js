@@ -150,7 +150,7 @@ export const supabaseSync = {
 
     const rows = await supabaseApi.listPsychologists();
     if (!rows?.length) {
-      return { ok: false, message: 'В Supabase нет психологов — выполните seed.sql' };
+      return { ok: false, message: 'В Supabase нет специалистов — выполните seed.sql' };
     }
 
     // Серверный каталог полностью заменяет локальный seed-каталог.
@@ -256,7 +256,7 @@ export const supabaseSync = {
     }
     return {
       ok: true,
-      message: `Синхронизировано психологов: ${rows.length}`,
+      message: `Синхронизировано специалистов: ${rows.length}`,
       degraded: degradedLayers
     };
   },
