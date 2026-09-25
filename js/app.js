@@ -508,88 +508,19 @@ function renderPortal() {
   }).join('');
 }
 
-/**
- * Собрать обязательные поля регистрации с формы.
- * Полный список (email, fullName, phone, specialization, city, about) должен
- * доехать до сервера: профиль создаётся один раз, и потерянное поле потом
- * неотличимо от незаполненного.
- */
-function collectAuthRegFields() {
-  if (authVm.mode !== 'register') return;
-  authVm.fullName = $('#auth-fullname')?.value || '';
-  authVm.phone = $('#auth-phone')?.value || '';
-  authVm.specialization = $('#auth-spec')?.value || 'Психолог';
-  authVm.city = $('#auth-city')?.value || '';
-  authVm.about = $('#auth-about')?.value || '';
-}
-
 function renderAuth() {
-  if (route.params.mode) authVm.setMode(route.params.mode);
-  // После перезагрузки страницы возвращаем шаг ввода кода и ТОТ ЖЕ канал
-  // доставки (ожидание хранится в safeStorage — см. domain/registration).
-  authVm.resumePendingVerification();
   const title = $('#auth-title');
   const subtitle = $('#auth-subtitle');
-  const emailStep = $('#auth-step-email');
-  const codeStep = $('#auth-step-code');
-  const regFields = $('#auth-reg-fields');
+  if (title) title.textContent = 'Вход в кабинет';
+  if (subtitle) subtitle.textContent = 'Войдите через Google. Это единственный способ входа специалиста.';
+
   const err = $('#auth-error');
-  const hint = $('#auth-code-hint');
-  const resend = $('#auth-resend');
-
-  if (title) title.textContent = authVm.mode === 'register' ? 'Регистрация специалиста' : 'Вход в кабинет';
-  if (subtitle) {
-    subtitle.textContent = authVm.mode === 'register'
-      ? 'Создайте кабинет: код придёт на email'
-      : 'Войдите по коду, отправленному на email';
-  }
-
-  emailStep?.classList.toggle('hidden', authVm.step !== 'email');
-  codeStep?.classList.toggle('hidden', authVm.step !== 'code');
-  regFields?.classList.toggle('hidden', authVm.mode !== 'register' || authVm.step !== 'code');
-  const passWrap = $('#auth-pass-wrap');
-  passWrap?.classList.toggle('hidden', authVm.mode !== 'register'); // при входе пароль не нужен
-
-  $('#auth-email') && ($('#auth-email').value = authVm.email);
-  $('#auth-code') && ($('#auth-code').value = authVm.code);
-  const regVals = {
-    '#auth-fullname': authVm.fullName,
-    '#auth-phone': authVm.phone,
-    '#auth-spec': authVm.specialization,
-    '#auth-city': authVm.city,
-    '#auth-about': authVm.about
-  };
-  for (const [sel, val] of Object.entries(regVals)) {
-    const el = $(sel);
-    if (el && el.value !== val) el.value = val || '';
-  }
   if (err) {
     err.textContent = authVm.error || '';
     err.classList.toggle('hidden', !authVm.error);
   }
-  if (hint) {
-    // Текст — из use case (registration.verificationHint): в запасном канале
-    // Supabase Auth в письме ссылка, а не код, и форма обязана это говорить.
-    hint.textContent = authVm.step === 'code' ? authVm.codeHint : '';
-  }
-  if (resend) {
-    resend.textContent = authVm.resendLabel;
-    resend.disabled = authVm.resendIn > 0;
-    resend.classList.toggle('opacity-50', authVm.resendIn > 0);
-    resend.classList.toggle('cursor-not-allowed', authVm.resendIn > 0);
-  }
 
-  // mode tabs
-  $$('[data-auth-mode]').forEach(btn => {
-    const on = btn.dataset.authMode === authVm.mode;
-    btn.classList.toggle('bg-indigo-600', on);
-    btn.classList.toggle('text-white', on);
-    btn.classList.toggle('bg-slate-100', !on);
-  });
-
-  // Кнопка Google доступна, только когда есть анонимный ключ и мы не ушли
-  // на внешний OAuth. Без конфигурации кнопка не «успешно нажимается» —
-  // пользователь сразу видит причину (fail-closed, как и остальные входы).
+  // Кнопка Google — единственный вход. Без конфигурации не «успешно нажимается».
   const googleBtn = $('#btn-google-signin');
   const googleLabel = $('#btn-google-label');
   if (googleBtn) {
@@ -607,6 +538,11 @@ function renderAuth() {
   if (gResolution) {
     gResolution.textContent = authVm.googleResolution || '';
     gResolution.classList.toggle('hidden', !authVm.googleResolution);
+  }
+  const gRef = $('#auth-google-ref');
+  if (gRef) {
+    gRef.textContent = authVm.googleRef ? `Код обращения: ${authVm.googleRef}` : '';
+    gRef.classList.toggle('hidden', !authVm.googleRef);
   }
 }
 
@@ -2162,51 +2098,7 @@ function bindEvents() {
     renderPortal();
   });
 
-  // Auth. Шаги входа — настоящие <form> (Enter отправляет, менеджеры паролей
-  // видят форму), логика та же, что была у кнопок: слушаем submit, а не click.
-  $$('[data-auth-mode]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      authVm.setMode(btn.dataset.authMode);
-      renderAuth();
-    });
-  });
-  $('#auth-step-email')?.addEventListener('submit', async e => {
-    e.preventDefault();
-    authVm.email = $('#auth-email')?.value || '';
-    collectAuthRegFields();
-    await authVm.requestCode();
-    renderAuth();
-  });
-  $('#auth-resend')?.addEventListener('click', async () => {
-    if (authVm.resendIn > 0) return;
-    await authVm.requestCode();
-    renderAuth();
-  });
-  $('#auth-step-code')?.addEventListener('submit', async e => {
-    e.preventDefault();
-    authVm.email = $('#auth-email')?.value || authVm.email;
-    authVm.code = $('#auth-code')?.value || '';
-    authVm.password = $('#auth-password')?.value || '';
-    collectAuthRegFields();
-    // обязательные поля регистрации проверяем до обращения к серверу:
-    // код одноразовый, и тратить его на заведомо неполный профиль нельзя
-    const missing = authVm.profileError;
-    if (missing) {
-      authVm.error = missing;
-      renderAuth();
-      return;
-    }
-    const psy = await authVm.confirmCode();
-    renderAuth();
-    if (psy) {
-      // кабинет — с сервера (clients/sessions/settings/blocks/tasks/notes/entries/waiting)
-      try { await cabinetApi.refresh(psy.id); } catch (e) { console.warn('pull cabinet', e); }
-      await cabinetVm.refreshClients();
-      startTelegramLoops(psy.id);
-      navigate('cabinet');
-    }
-  });
-  // ——— Вход через Google (Supabase Auth OAuth + PKCE) ———
+  // ——— Единственный вход специалиста: Google (Supabase Auth OAuth + PKCE) ———
   $('#btn-google-signin')?.addEventListener('click', async () => {
     if (authVm.googleBusy) return;
     authVm.googleBusy = true;
@@ -2218,7 +2110,8 @@ function bindEvents() {
       await googleAuthService.startGoogleSignIn({ returnTo: '#/cabinet' });
     } catch (ex) {
       authVm.googleBusy = false;
-      authVm.setGoogleError(String(ex?.message || ex), '');
+      const fail = googleAuthService.publicAuthFailure('start_failed', ex);
+      authVm.setGoogleError(fail.message, fail.resolution || '', fail.correlationId || '');
       renderAuth();
     }
   });
@@ -2261,17 +2154,6 @@ function bindEvents() {
     }
   });
   $('#onb-logout')?.addEventListener('click', () => { doLogout(); });
-
-  $('#auth-code')?.addEventListener('input', e => {
-    // только латиница/цифры, верхний регистр — код из письма вводится без ошибок
-    e.target.value = String(e.target.value).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
-  });
-  $('#auth-back-email')?.addEventListener('click', () => {
-    authVm.step = 'email';
-    authVm.error = '';
-    authVm.notify();
-    renderAuth();
-  });
 
   // Cabinet nav
   document.addEventListener('click', e => {
@@ -2934,16 +2816,13 @@ function boot() {
     // legacy-ссылки без # нормализуются в hash без перезагрузки
     bookingVm.onAvailability = () => { if (route.name === 'booking') renderBooking(); };
 
-    // ——— Возврат после OAuth Google (`?code=…`, PKCE) ———
-    // ДОЛЖЕН идти ДО registration.consumeAuthRedirect(): иначе PKCE-код будет
-    // распознан как magic-link redirect и уйдёт на обмен БЕЗ code_verifier,
-    // то есть заведомо неудачно. URL очищается внутри consumeGoogleRedirect().
+    // ——— Возврат после OAuth Google (`?code=…`, PKCE). Email/OTP redirect
+    // психолога больше не обрабатывается (issue #88).
     let googleReturn = null;
     try {
       googleReturn = await googleAuthService.consumeGoogleRedirect();
     } catch (e) {
-      console.warn('[boot] google redirect', e?.message || e);
-      googleReturn = { kind: 'error', code: 'exception', message: String(e?.message || e) };
+      googleReturn = googleAuthService.publicAuthFailure('exception', e);
     }
     if (googleReturn?.kind === 'session') {
       const target = await finishGoogleLogin();
@@ -2953,48 +2832,9 @@ function boot() {
       return;
     }
     if (googleReturn?.kind === 'error') {
-      authVm.setGoogleError(googleReturn.message, '');
+      authVm.setGoogleError(googleReturn.message, googleReturn.resolution || '', googleReturn.correlationId || '');
       normalizeLegacyUrl();
       route = { name: 'auth', params: { mode: 'login' } };
-      navigate('auth', { mode: 'login' }, { push: false });
-      await loadServerCatalog();
-      return;
-    }
-
-    // ——— issue #23: Supabase Auth redirect (magic-link / OTP error) ———
-    // Должен выполниться ДО normalizeLegacyUrl/routeFromUrl: иначе bare
-    // `#error=otp_expired…` или `#access_token=…` молча станет portal.
-    let redirectLogin = null;
-    try {
-      redirectLogin = await registration.consumeAuthRedirect();
-    } catch (e) {
-      console.warn('[boot] auth redirect', e?.message || e);
-      redirectLogin = { ok: false, reason: 'exception', message: String(e?.message || e) };
-    }
-    if (redirectLogin?.ok && redirectLogin.psychologist) {
-      try { await cabinetApi.refresh(redirectLogin.psychologist.id); }
-      catch (e) { console.warn('[boot] pull cabinet after redirect', e?.message || e); }
-      startTelegramLoops(redirectLogin.psychologist.id);
-      normalizeLegacyUrl();
-      navigate('cabinet', {}, { push: false });
-      await loadServerCatalog();
-      showToast(redirectLogin.message || 'Вход выполнен');
-      return;
-    }
-    if (redirectLogin && redirectLogin.reason === 'auth-error') {
-      authVm.error = redirectLogin.message || 'Ссылка из письма недействительна. Запросите новый код.';
-      authVm.step = 'email';
-      normalizeLegacyUrl();
-      route = { name: 'auth', params: { mode: 'login' } };
-      navigate('auth', { mode: 'login' }, { push: false });
-      await loadServerCatalog();
-      return;
-    }
-    if (redirectLogin && redirectLogin.reason && redirectLogin.reason !== 'none' && redirectLogin.message) {
-      // session arrived but claim/load failed — keep user on auth with message
-      authVm.error = redirectLogin.message;
-      authVm.email = redirectLogin.email || authVm.email;
-      normalizeLegacyUrl();
       navigate('auth', { mode: 'login' }, { push: false });
       await loadServerCatalog();
       return;

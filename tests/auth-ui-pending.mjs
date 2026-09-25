@@ -1,21 +1,16 @@
 #!/usr/bin/env node
 /**
- * UI-контракт шага ввода кода: ожидание подтверждения переживает перезагрузку.
+ * UI-контракт входа специалиста (issue #88): Google OAuth — единственный путь.
  *
  *   node tests/auth-ui-pending.mjs
  *
- * Проверяется связка, которую не видно в доменных тестах: safeStorage →
- * registration.pendingVerification() → AuthViewModel.resumePendingVerification()
- * → renderAuth() в js/app.js (issue #14, п.3).
- *
- * Окружение — те же DOM/localStorage-заглушки, что в verify_auth.mjs;
- * импортируется НАСТОЯЩИЙ js/app.js (вместе с boot() и renderAuth).
+ * Раньше набор проверял, что шаг ввода email-кода переживает F5. Этот поток
+ * снят: психолог больше не вводит код. Набор теперь фиксирует, что форма кода
+ * отсутствует, а кнопка Google и обработчик PKCE на месте.
  */
-
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-/* ——— DOM/хранилище ——— */
 function fakeEl() {
   const t = function () {};
   return new Proxy(t, {
@@ -58,33 +53,16 @@ globalThis.confirm = () => true;
 globalThis.alert = () => {};
 globalThis.prompt = () => 'x';
 globalThis.FileReader = class {};
+globalThis.fetch = async () => ({
+  ok: false, status: 404,
+  headers: { get: () => 'application/json' },
+  text: async () => '{}', json: async () => ({})
+});
 
-/* ——— сервер: только запрос кода,verify здесь не нужен ——— */
-const calls = [];
-let fnUp = true; // false = Edge Function auth-code не задеплоена (прод 2026-09-25)
-globalThis.fetch = async (url, opts = {}) => {
-  const u = String(url);
-  const body = opts.body ? JSON.parse(opts.body) : {};
-  calls.push(u);
-  const resp = (status, json) => ({
-    ok: status < 400,
-    status,
-    headers: { get: () => 'application/json' },
-    text: async () => JSON.stringify(json),
-    json: async () => json
-  });
-  if (u.includes('/functions/v1/auth-code')) {
-    if (!fnUp) return resp(404, { code: 'NOT_FOUND', message: 'Requested function was not found' });
-    if (body.action === 'request') return resp(200, { ok: true, ttl_seconds: 120 });
-    return resp(400, { ok: false, error: 'Неизвестное действие' });
-  }
-  if (u.includes('/auth/v1/otp')) return resp(200, {});
-  if (u.includes('/rest/v1/')) return resp(200, []);
-  return resp(404, { msg: 'nf' });
-};
+await import(new URL('../js/app.js', import.meta.url).href);
 
-const { authVm } = await import(new URL('../js/app.js', import.meta.url).href);
-const { registration } = await import(new URL('../js/domain/registration.js', import.meta.url).href);
+const html = readFileSync(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf-8');
+const app = readFileSync(fileURLToPath(new URL('../js/app.js', import.meta.url)), 'utf-8');
 
 const checks = [];
 const ok = (name, cond, extra = '') => {
@@ -92,85 +70,18 @@ const ok = (name, cond, extra = '') => {
   console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${cond || !extra ? '' : ` → ${extra}`}`);
 };
 
-// ——— 1. «Первая загрузка»: код запрошен, шаг ввода открыт ———
-authVm.email = 'natalia@example.by';
-const requested = await authVm.requestCode();
-ok('запрос кода открывает шаг ввода', requested === true && authVm.step === 'code');
-ok('канал выбран и сохранён (fn)', registration.currentChannel() === 'fn', String(registration.currentChannel()));
-const stored = JSON.parse(lsMap.get('psy_pending_verification_v1') || 'null');
-ok('ожидание лежит в localStorage (переживёт F5)',
-  !!stored && stored.email === 'natalia@example.by' && stored.channel === 'fn', JSON.stringify(stored));
-ok('окно ввода тикает (120 с)', authVm.resendIn === 120, String(authVm.resendIn));
-
-// ——— 2. «Перезагрузка»: новая ViewModel, память модулей пуста ———
-const { AuthViewModel } = await import(new URL('../js/viewmodels/AuthViewModel.js', import.meta.url).href);
-const reborn = new AuthViewModel();
-ok('после перезагрузки шаг снова «email» (память чистая)', reborn.step === 'email');
-const resumed = reborn.resumePendingVerification();
-ok('resumePendingVerification восстановил шаг ввода кода', resumed === true && reborn.step === 'code');
-ok('email восстановлен из ожидания', reborn.email === 'natalia@example.by', reborn.email);
-ok('окно ввода продолжило тикнуть с остатка, а не с нуля',
-  reborn.resendIn > 0 && reborn.resendIn <= 120, String(reborn.resendIn));
-ok('повторный вызов resume не сбрасывает состояние', reborn.resumePendingVerification() === false);
-
-// ——— 3. «Перезагрузка» после истечения окна: нужен новый код ———
-lsMap.set('psy_pending_verification_v1', JSON.stringify({
-  email: 'natalia@example.by',
-  channel: 'fn',
-  requestedAt: Date.now() - 200e3,
-  expiresAt: Date.now() - 80e3
-}));
-const stale = new AuthViewModel();
-stale.resumePendingVerification();
-ok('истёкшее окно: пользователь возвращён на шаг email', stale.step === 'email', stale.step);
-ok('истёкшее окно: явное сообщение «запросите новый код»',
-  /новый код/i.test(stale.error || ''), stale.error);
-ok('истёкшее окно: протухшее ожидание удалено из хранилища',
-  registration.pendingVerification() === null);
-
-// ——— 4. Подсказка канала и отсутствие fallback ———
-// Исторически владелец получил Auth-ссылку, когда прежняя версия переключалась
-// на Supabase OTP. Новый контракт fail-closed: Auth OTP не вызывается ни при
-// 404, ни при status=0; подсказка legacy OTP остаётся только для старых писем.
-const html = readFileSync(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf-8');
-const iStep = html.indexOf('id="auth-step-code"');
-const iHint = html.indexOf('id="auth-code-hint"');
-const iPass = html.indexOf('id="auth-pass-wrap"');
-ok('index.html: элемент #auth-code-hint существует', iHint > 0, String(iHint));
-ok('index.html: подсказка внутри шага ввода кода',
-  iStep > 0 && iHint > iStep && iPass > iHint, `${iStep}/${iHint}/${iPass}`);
-
-ok('канал fn: подсказка обещает код 6–8 символов',
-  /6–8/.test(authVm.codeHint) && authVm.channel === 'fn', authVm.codeHint);
-
-// Нет pending-кода: новая попытка при 404 должна остаться fail-closed.
-registration.clearPendingVerification();
-authVm.step = 'email';
-authVm.channel = null;
-authVm.error = '';
-fnUp = false;
-authVm.email = 'fallback@example.by';
-const otpCallsBefore = calls.filter(url => url.includes('/auth/v1/otp')).length;
-const fnCallsBefore = calls.filter(url => url.includes('/functions/v1/auth-code')).length;
-const otpRequested = await authVm.requestCode();
-ok('нет Edge Function: requestCode возвращает ошибку, не переключает канал',
-  otpRequested === false && authVm.channel !== 'otp', `${authVm.channel}: ${authVm.error}`);
-ok('нет Edge Function: UI показывает причину и deployment-направление',
-  /auth-code не найдена|deployment/i.test(authVm.error), authVm.error);
-ok('нет Edge Function: отправлен только один auth-code запрос',
-  calls.filter(url => url.includes('/functions/v1/auth-code')).length === fnCallsBefore + 1);
-ok('нет Edge Function: /auth/v1/otp не вызывается',
-  calls.filter(url => url.includes('/auth/v1/otp')).length === otpCallsBefore);
-ok('нет Edge Function: новое pending-состояние не создаётся',
-  registration.peekPendingVerification() === null);
-fnUp = true;
-
-// После перезагрузки отсутствует ожидание нового письма; старый legacy OTP
-// может быть восстановлен только если он действительно был сохранён ранее.
-const afterReload = new AuthViewModel();
-const resumedFallback = afterReload.resumePendingVerification();
-ok('после перезагрузки failed request не восстанавливает канал otp',
-  resumedFallback === false && afterReload.channel !== 'otp', String(afterReload.channel));
+ok('кнопка «Войти через Google» есть в разметке', html.includes('id="btn-google-signin"') && html.includes('Войти через Google'));
+ok('заголовок входа не обещает код из письма', !/Войдите по коду/i.test(html));
+ok('нет формы email-кода психолога', !html.includes('id="auth-step-email"') && !html.includes('id="auth-send"'));
+ok('нет поля кода из письма', !html.includes('id="auth-code"') && !html.includes('id="auth-step-code"'));
+ok('нет кнопки «Получить код»', !html.includes('Получить код'));
+ok('нет вкладок Вход/Регистрация по email', !html.includes('data-auth-mode'));
+ok('app.js не вызывает requestCode (OTP UX снят)', !app.includes('requestCode()'));
+ok('app.js не вызывает consumeAuthRedirect (email-link психолога снят)', !app.includes('consumeAuthRedirect()'));
+ok('app.js запускает Google OAuth', app.includes('startGoogleSignIn'));
+ok('клиентский Google при записи (#41) не удалён',
+  readFileSync(fileURLToPath(new URL('../js/services/googleClientAuthService.js', import.meta.url)), 'utf-8')
+    .includes('signInWithGoogleIdToken'));
 
 const failed = checks.filter(([, pass]) => !pass).length;
 console.log(failed ? `\n${failed} FAILED` : '\nALL PASS');

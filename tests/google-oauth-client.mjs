@@ -353,8 +353,8 @@ try {
     /name === 'onboarding' && !googleAuthService\.hasSession\(\)/.test(appSrc));
   check('#/cabinet при незаполненном профиле уводит на онбординг',
     appSrc.includes('profileCompleted === false'));
-  check('возврат Google обрабатывается ДО magic-link redirect',
-    appSrc.indexOf('consumeGoogleRedirect()') < appSrc.indexOf('consumeAuthRedirect()'));
+  check('возврат Google обрабатывается, email-link психолога в boot отсутствует',
+    appSrc.includes('consumeGoogleRedirect()') && !appSrc.includes('consumeAuthRedirect()'));
 
 } catch (e) {
   console.error('FATAL', e);

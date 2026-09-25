@@ -34,14 +34,17 @@ export class AuthViewModel extends BaseViewModel {
     /** Ошибка входа через Google: короткая формулировка + как разрешить. */
     this.googleError = '';
     this.googleResolution = '';
+    /** Код обращения для неожиданных ошибок (не stack trace). */
+    this.googleRef = '';
     /** Ошибка формы онбординга (заполнение профиля после первого входа). */
     this.onboardingError = '';
   }
 
   /** Выставить/снять ошибку входа через Google (показывается рядом с кнопкой). */
-  setGoogleError(head = '', resolution = '') {
+  setGoogleError(head = '', resolution = '', ref = '') {
     this.googleError = String(head || '');
     this.googleResolution = String(resolution || '');
+    this.googleRef = String(ref || '');
   }
 
   get resendLabel() {

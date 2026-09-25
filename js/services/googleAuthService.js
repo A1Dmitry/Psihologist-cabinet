@@ -5,9 +5,9 @@
  *   • googleClientAuthService — опциональная Google-идентификация КЛИЕНТА при
  *     записи (GIS ID token → signInWithIdToken, сессия живёт в sessionStorage
  *     и никогда не наследуется публичной записью);
- *   • googleAuthService — вход СПЕЦИАЛИСТА в кабинет (OAuth redirect → PKCE →
- *     обычная Supabase-сессия в том же хранилище, что и вход по коду из письма:
- *     `psy_auth_session_v1`). Один браузер = одна сессия владельца кабинета.
+ *   • googleAuthService — единственный вход СПЕЦИАЛИСТА в кабинет (issue #88:
+ *     OAuth redirect → PKCE → сессия `psy_auth_session_v1`). Один браузер =
+ *     одна сессия владельца кабинета. Email/OTP для психолога не используется.
  *
  * Почему PKCE, а не implicit: приложение работает в режиме Hash History
  * (`#/cabinet`, `#/auth`). При implicit-потоке GoTrue кладёт токены в
@@ -40,6 +40,7 @@ import {
   userIdFromToken
 } from './supabaseApi.js';
 import { safeStorage } from '../core/safeStorage.js';
+import { reportClientError } from './errorLogService.js';
 
 const VERIFIER_KEY = 'psy_google_oauth_verifier_v1';
 const RETURN_KEY = 'psy_google_oauth_return_v1';
@@ -220,7 +221,7 @@ export const googleAuthService = {
     return safeStorage.getJSON(PROFILE_CACHE_KEY, null);
   },
 
-  /** Есть ли сохранённая сессия Supabase Auth (общая с входом по коду). */
+  /** Есть ли сохранённая сессия Supabase Auth (`psy_auth_session_v1`). */
   hasSession() {
     return !!readPersistedSession()?.access_token;
   },
@@ -267,8 +268,7 @@ export const googleAuthService = {
     const startedHere = !!verifier || !!safeStorage.get(RETURN_KEY);
 
     if (!code && !error) return { kind: 'none' };
-    // Не трогаем чужой PKCE/magic-link: `?code=` без нашего verifier/return
-    // принадлежит существующему consumeAuthRedirect (вход по письму).
+    // Не трогаем чужой `?code=` без нашего verifier/return (не наш OAuth).
     if (!startedHere) return { kind: 'none' };
 
     this._clearReturnParams(loc);
@@ -276,19 +276,11 @@ export const googleAuthService = {
     safeStorage.remove(RETURN_KEY);
 
     if (error) {
-      return {
-        kind: 'error',
-        code: String(error),
-        message: describeOAuthError(error, errorDescription)
-      };
+      return publicAuthFailure(error, errorDescription);
     }
 
     if (!verifier) {
-      return {
-        kind: 'error',
-        code: 'missing_verifier',
-        message: 'Вход был начат в другой вкладке или хранилище браузера очищено. Нажмите «Войти через Google» ещё раз.'
-      };
+      return publicAuthFailure('missing_verifier');
     }
 
     try {
@@ -300,7 +292,7 @@ export const googleAuthService = {
       return { kind: 'session', session };
     } catch (ex) {
       clearPersistedSession();
-      return { kind: 'error', code: 'exchange_failed', message: describeOAuthError('exchange_failed', ex?.message) };
+      return publicAuthFailure('exchange_failed', ex);
     }
   },
 
@@ -406,7 +398,16 @@ export const googleAuthService = {
   },
 
   /** Убрать ?code/?error из адресной строки, сохранив путь и hash-маршрут. */
-  _clearReturnParams(loc = globalThis.location) {
+    /**
+     * Пользовательская ошибка входа: ожидаемые случаи — без кода обращения;
+     * неожиданные — короткое сообщение + correlation id, без stack trace.
+     * Технические детали уходят только в client_error_logs.
+     */
+    publicAuthFailure(kind, technical) {
+      return publicAuthFailure(kind, technical);
+    },
+
+    _clearReturnParams(loc = globalThis.location) {
     try {
       const hist = globalThis.history;
       if (!hist?.replaceState || !loc) return;
@@ -419,18 +420,82 @@ export const googleAuthService = {
   }
 };
 
-function describeOAuthError(code, description) {
-  const raw = decodeURIComponent(String(description || '').replaceAll('+', ' ')).trim();
-  const known = {
-    access_denied: 'Вход через Google отменён или доступ не выдан. Попробуйте ещё раз и подтвердите согласие.',
-    server_error: 'Supabase Auth не смог завершить вход через Google. Попробуйте ещё раз.',
-    temporarily_unavailable: 'Сервис входа временно недоступен. Попробуйте через несколько минут.',
-    exchange_failed: 'Не удалось обменять код входа на сессию. Попробуйте войти ещё раз.',
-    validation_failed: 'Supabase Auth отклонил запрос входа. Проверьте настройки провайдера Google и redirect URL.',
-    unauthorized_client: 'Google отклонил приложение (unauthorized_client). Проверьте Client ID и разрешённые redirect URI в Google Cloud.'
+function newCorrelationId() {
+  const cryptoApi = globalThis.crypto;
+  if (cryptoApi?.getRandomValues) {
+    const bytes = new Uint8Array(4);
+    cryptoApi.getRandomValues(bytes);
+    return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  }
+  return String(Date.now()).slice(-8);
+}
+
+/** Ожидаемые OAuth-случаи: понятное сообщение, без кода обращения и без retry. */
+const EXPECTED_AUTH = {
+  access_denied: {
+    message: 'Вход через Google отменён или доступ не выдан. Нажмите «Войти через Google» ещё раз и подтвердите согласие.',
+    resolution: ''
+  },
+  missing_verifier: {
+    message: 'Вход был начат в другой вкладке или хранилище браузера очищено. Нажмите «Войти через Google» ещё раз.',
+    resolution: ''
+  },
+  exchange_failed: {
+    message: 'Сессия Google не успела создаться. Нажмите «Войти через Google» ещё раз.',
+    resolution: ''
+  },
+  provider_disabled: {
+    message: 'Вход через Google на сервере ещё не включён.',
+    resolution: 'Владельцу: Supabase Dashboard → Authentication → Providers → Google.'
+  },
+  unauthorized_client: {
+    message: 'Google отклонил приложение.',
+    resolution: 'Владельцу: проверьте Client ID и Authorized redirect URI в Google Cloud.'
+  },
+  validation_failed: {
+    message: 'Supabase Auth отклонил запрос входа.',
+    resolution: 'Владельцу: проверьте Site URL и Redirect URLs в Authentication → URL Configuration.'
+  },
+  temporarily_unavailable: {
+    message: 'Сервис входа временно недоступен. Попробуйте через несколько минут.',
+    resolution: ''
+  },
+  server_error: {
+    message: 'Сервис входа не смог завершить вход через Google. Попробуйте ещё раз позже.',
+    resolution: ''
+  },
+  network: {
+    message: 'Нет сети. Проверьте соединение и попробуйте ещё раз.',
+    resolution: ''
+  },
+  not_configured: {
+    message: 'Вход через Google ещё не настроен.',
+    resolution: 'Владельцу: anon key, Google provider и Redirect URLs в Supabase Dashboard.'
+  }
+};
+
+function publicAuthFailure(kind, technical) {
+  const raw = String(technical?.message || technical || '');
+  let code = String(kind || 'unexpected');
+  if (/Failed to fetch|NetworkError|Load failed|network/i.test(raw)) code = 'network';
+  else if (/не настроен/i.test(raw)) code = 'not_configured';
+  else if (/provider is not enabled|Unsupported provider/i.test(raw)) code = 'provider_disabled';
+  const expected = EXPECTED_AUTH[code];
+  if (expected) {
+    return { kind: 'error', code, message: expected.message, resolution: expected.resolution, correlationId: '' };
+  }
+  const id = newCorrelationId();
+  const detail = raw.slice(0, 200);
+  try {
+    reportClientError('error', { message: `google-auth:${code}`, extra: { correlation: id, detail } });
+  } catch { /* диагностика не должна ломать экран входа */ }
+  return {
+    kind: 'error',
+    code,
+    message: 'Не удалось войти через Google. Если ошибка повторится, сообщите код обращения.',
+    resolution: '',
+    correlationId: id
   };
-  const head = known[String(code)] || 'Не удалось войти через Google.';
-  return raw && !known[String(code)] ? `${head} ${raw}` : (known[String(code)] || `${head} ${raw}`.trim());
 }
 
 export default googleAuthService;

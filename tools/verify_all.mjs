@@ -55,7 +55,7 @@ const SUITES = [
   ['Claim-протокол исполнителей (ID EXEC-…, карточки, конфликты выбора Issue)', 'node', ['tests/executor-claims.mjs']],
   ['Кабинет: серии, условия, мини-кабинет, пояса', 'node', ['tools/verify_cabinet.mjs']],
   ['Авторизация: каналы кода, сессия, write-through', 'node', ['verify_auth.mjs']],
-  ['UI входа: ожидание кода переживает перезагрузку', 'node', ['tests/auth-ui-pending.mjs']],
+  ['UI входа специалиста: только Google OAuth (issue #88)', 'node', ['tests/auth-ui-pending.mjs']],
   ['Карточка специалиста из строк БД', 'node', ['verify_profile.mjs']],
   ['Telegram-уведомления', 'node', ['verify_telegram.mjs']],
   ['Роутер (Hash History)', 'node', ['test_routing.mjs']],
