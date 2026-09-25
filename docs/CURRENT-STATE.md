@@ -2,190 +2,149 @@
 
 > Единственный current-state source of truth. Исторические отчёты не переписываются и не заменяются этим документом.
 >
-> **АУДИТОР: САМ** — независимая production-сертификация в этой сессии невозможна: live Supabase не подтверждался. Repo-факты проверены по актуальному `main`, GitHub Issues и каноническим документам.
+> **АУДИТОР: ВНЕШНИЙ** для production-фактов: сняты запросами к живому проекту
+> `phiavtroybgwyjdhqqkh` из runner'а GitHub Actions (`Production read-only probe`,
+> `tools/prod-probe/probe.mjs`), а не из песочницы исполнителя.
+> **АУДИТОР: САМ** для repo-фактов: код и тесты проверены в этой же сессии
+> (`node tools/verify_all.mjs` → 22/22, `verify_pages.py` → ALL PASS).
+> Полные доказательства — `docs/ISSUE-46-EVIDENCE.md`.
 
-## Main SHA
+## Main SHA и активная ветка
 
-- **Актуальный `main`:** `0320c40682805a4730fa03b93176b14098ceea75`
-- **Последний sync-коммит:** обновление recovery orchestration и исправленного auth-контракта.
-- **Merge PR #44:** `5d5636db74ba41fbbb19fb7ad358181f4fcdc327` — recovery Quality Gate #36.
-- **Merge PR #43:** `03c6fa57e1a53f5be9e450eeebf389865f4cc51d` — Supabase MCP roadmap.
-- `87e3951`, `4d490d2` и более ранние SHA — исторические baseline.
+- **Актуальный `main`:** `dcb4093606c0c3993c6632adabb8e2685077fc04`
+- **Активная исполнительская ветка #46:** `arena/01a0d6b5-psihologist-cabinet` → **PR #47**
+- Исторические baseline: `0320c40`, `5d5636d` (PR #44), `03c6fa5` (PR #43), `87e3951`, `4d490d2`.
 
-## Статус документационного цикла #19
+## Исполнение issue #46 (P0 EXECUTOR) — что сделано
 
-`#19 = COMPLETED / DOCUMENTATION SYNCHRONIZED`.
-
-Текущий-state синхронизирован с актуальным main. Production verification и Quality Gate не входят в незавершённый остаток #19; они ведутся отдельными #18/#21/#22/#34/#36.
-
-## Что изменилось после предыдущего current-state
-
-### PR #44 / Issue #36
-
-В `main` вошёл recovery harness:
-
-- `finishSuite` не должен затирать `process.exitCode` после async failure;
-- `verify_app` имеет красный канал для IMPORT/BOOT/LOAD ошибок;
-- `verify_all` получил дополнительную защиту от false-green;
-- `harness-guard` расширен на наборы из `SUITES`;
-- negative controls и parity/E2E gate сохранены.
-
-**Статус:** implementation merged; независимый Challenger/Main Re-Audit ведутся через #36/#34.
-
-### PR #43 / Supabase MCP roadmap
-
-Добавлен roadmap read-only Supabase MCP для проверки production schema/RPC/RLS drift.
-
-**Статус:** roadmap есть; это не доказательство фактического production-подключения.
+1. **Открыт LIVE-канал инспекции прода без секретов владельца:**
+   `tools/prod-probe/probe.mjs` + workflow `.github/workflows/prod-probe.yml`
+   (26 read-only зондов; отчёт публикуется комментарием в PR).
+2. **Production drift доказан живыми ответами, а не «неизвестно»:**
+   в проде отсутствуют SR-004 (`auth_login_codes.issued_token_hash/issues/consumed_at`),
+   SR-D1 (`schedule_overrides`, `public_schedule_overrides`,
+   `session_settings.min_notice_minutes`, `services.availability`),
+   а `create_booking` **недоступен роли anon** → публичная запись в проде не работает.
+3. **Edge Functions не задеплоены (LIVE):** `auth-code` и `telegram-notify` →
+   gateway `404 NOT_FOUND`. Деплой не имитировался: `BLOCKED — OWNER ACTION REQUIRED`.
+4. **Исправлены три красных набора** (гейт не защищал от регрессий):
+   `db-contract` (анти-спам не доходил до счётчика), `security-regression`
+   (даты попадали на выходные → T02 не выполнялся), `availability-db`
+   (коллизия недели в weekLimit). После фикса — 22/22 зелёные.
+5. **Auth-контракт #40 усилен (с тестами на настоящем PostgreSQL):**
+   вход больше не реактивирует отключённый аккаунт; канонический предикат
+   `public.is_active_own_psychologist()` закрывает RLS-доступ при деактивации;
+   абсолютный срок сессии — месяц (fail-closed), refresh его не удлиняет.
+6. **Документация:** `docs/ISSUE-46-EVIDENCE.md`, Блоки 7–8 в
+   `docs/OWNER-CHECKLIST-E2E.md` (read-only SQL для владельца + срок сессии).
 
 ## Production — честный статус
 
-**Production readiness НЕ подтверждена этим аудитом.**
+**Production readiness НЕ подтверждена. Приложение в production НЕ работает**
+по основному пути (регистрация и публичная запись).
 
-Без свежего live evidence не считать доказанными:
+LIVE-факты (2026-09-25, `phiavtroybgwyjdhqqkh`):
 
-- production schema == repository `supabase/schema.sql`;
-- canonical `create_booking` signature и отсутствие overload ambiguity;
-- production RLS/policies/grants;
-- deployment `auth-code` / `telegram-notify`;
-- Resend delivery;
-- production `APP_URL` / Site URL / Redirect URLs;
-- реальный registration E2E;
-- production booking E2E;
-- production tenant-isolation regression.
+| Элемент | Статус | Класс |
+|---|---|---|
+| REST/PostgREST отвечает, каталог жив (2 активные анкеты) | работает | LIVE |
+| `auth-code` / `telegram-notify` | **не задеплоены** (404 NOT_FOUND) | LIVE |
+| SR-001/SR-003 (`sessions.*`, `public_booked_slots.duration_min`) | применены | LIVE |
+| SR-004 (`auth_login_codes.*`) | **отсутствует** | LIVE |
+| SR-D1 (`schedule_overrides`, `public_schedule_overrides`, колонки политик, `services.availability`) | **отсутствует** | LIVE |
+| `create_booking` для anon | **недоступен** (PGRST202) → публичная запись не работает | LIVE |
+| `client_risks` для anon/authenticated | закрыт (42501) — #22 в части грантов подтверждён | LIVE |
+| `auth_login_codes` строки для anon | `[]` (RLS без политик = deny) | LIVE |
+| Application origin | `https://a1dmitry.github.io/Psihologist-cabinet/` (не localhost) | LIVE |
+| Supabase Auth: `external.email=true`, `disable_signup=false`, `mailer_autoconfirm=false` | факт | LIVE |
+| Site URL / Redirect URLs в Auth | не подтверждено (Dashboard) | UNKNOWN |
+| Серверный срок сессии (≤ месяца) | не подтверждено | UNKNOWN |
+| Реальный registration E2E (код и ссылка) | не проведён | BLOCKED |
 
-Issue #18 остаётся P0, #35 — P1 deployment blocker.
+Root cause (INFERENCE, высокая уверенность): `supabase/schema.sql` не
+переприменялся в проде целиком — задокументировано в `docs/INFRA.md` п.2, теперь
+подтверждено живыми ответами.
 
 ## Repo-level состояние
 
-По текущему `main` подтверждено наличие:
+По текущей ветке подтверждено наличие и работоспособность:
 
-- registration domain / OTP flow;
-- server-authoritative booking contract;
-- tenant-isolation/security groundwork;
-- canonical D1 availability engine;
-- server-side D1 enforcement;
-- parity matrix;
-- booking E2E;
-- security-regression;
-- harness guard;
-- Toyota Quality Gate / Producer + Challenger process;
-- dependency-driven roadmap;
-- Supabase MCP verification roadmap.
+- registration domain / OTP flow, два входа (код и ссылка) в одну canonical-сессию;
+- отказ в доступе отключённому аккаунту (SQL + RLS + клиент);
+- абсолютный срок сессии (месяц) на клиенте + требование серверной настройки;
+- server-authoritative booking contract (`create_booking`) и D1 policy engine;
+- tenant isolation / anti-spam (по `created_at`), security-regression;
+- parity-матрица client↔server, booking E2E, harness guard;
+- read-only production probe (новый инструмент #46);
+- Toyota Quality Gate / Producer + Challenger process.
 
-Это **repo evidence**, а не production evidence.
+Это **repo + live-probe evidence**, а не production E2E.
 
 ## Открытые критические контуры
 
 | Issue | Priority | Current status |
 |---|---:|---|
-| #18 | P0 | Production activation + real registration E2E — OPEN / blocked or unproven |
-| #35 | P1 | Edge Functions deployment — OPEN; production deployment not independently proven |
-| #34 | P1 | Challenger recovery + fresh Main Re-Audit — OPEN |
-| #21 | P1 | Server-authoritative booking — repo implementation merged; production gate open |
-| #22 | P2 | Tenant isolation / anti-spam — repo implementation merged; production verification open |
-| #36 | P2 | Harness false-green — implementation merged; Challenger/Main Re-Audit open |
-| #40 | P1 | Psychologist auth: manual OTP + optional email-link entry — requirements open |
-| #41 | P1 | Client Google identity for optional triage attachment — requirements open |
-| #27–#31 | BA | Product backlog; not defects |
+| #46 | P0 | EXECUTOR-контур исполнен в PR #47; production-разблокировка — за владельцем (Блоки 1–8); Challenger и Main Re-Audit НЕ выполнены |
+| #35 | P1 | Edge Functions deployment — **LIVE-подтверждено: не задеплоены**; блокер на владельце |
+| #40 | P1 | Требования закрыты в repo (входы, inactive-гейт, срок сессии) с тестами; production E2E — BLOCKED |
+| #21 | P1 | Server-authoritative booking — repo merged; production-гейт: `create_booking` для anon недоступен (LIVE) |
+| #22 | P2 | Tenant isolation / anti-spam — repo merged + тесты; `client_risks` закрыт в проде (LIVE) |
+| #34 | P1 | Challenger recovery + свежий Main Re-Audit — OPEN |
+| #36 | P2 | Harness false-green — merged; независимая проверка OPEN |
+| #41 | P1 | Client Google identity — requirements open (LIVE: `external.google=false`) |
+| #27–#31 | BA | Продуктовый backlog; не дефекты |
 
-Issues #19, #30 and #33 are no longer active implementation queues: #19 documentation sync is complete; #30 was decomposed into the non-duplicating delta #31; #33 recovery implementation was superseded by the merged fixes and the independent verification chain #34/#36.
-
-## Canonical authentication contract — corrected
-
-There is **no conflict** between manual OTP and an email link. They are two entry methods into the same canonical authentication/session flow.
+## Canonical authentication contract
 
 ```text
-EMAIL / TELEGRAM
-       │
-       ├── manual one-time code ──────┐
-       │                              │
-       └── email confirmation link ───┤
-                                      ▼
-                              canonical Supabase session
-                                      │
-                                      ▼
-                              psychologist account
-                                      │
-                                      ▼
-                                  own cabinet
+manual one-time code ──┐
+                       ├──> ОДНА canonical Supabase session → owner_id = auth.uid() → свой кабинет
+email link ────────────┘
 ```
 
-Rules:
-
-- Manual code entry remains supported.
-- Email link is also supported and must establish the same canonical Supabase session.
-- The link must never point to `localhost`; it must use the production application origin and correct callback/token contract.
-- Both methods resolve the same `auth.uid()` → psychologist ownership path.
-- Do not create a second authentication engine.
-- Issue #40 now defines the link as an additional entry method, not as a forbidden alternative.
-
-This is a specification correction, not a reason to duplicate implementation.
+- Оба входа реализованы и сходятся в `finishAuthenticatedLogin` → `claimOrCreatePsychologist`.
+- Второй auth-engine не создавался; `key_verifier` — только сейф клиентов, не вход.
+- Ссылка из письма использует реальный origin (`APPLICATION_URL`), localhost отбрасывается.
+- Отключённый аккаунт: вход не реактивирует, RLS закрывает данные, сессия не сохраняется.
+- Срок сессии: не больше месяца (клиент + требование серверной настройки).
 
 ## Schema / SR status
 
-Repository `supabase/schema.sql` contains merged SR contracts for existing booking/auth/D1 work. Their presence in the repository does **not** prove production application.
-
-Production schema remains **UNKNOWN** until verified through an authorized production channel, preferably the planned read-only Supabase MCP / SQL path.
-
-## Registration status
-
-- **Repository:** registration/OTP code path exists and is covered by local tests from the previous verified cycle.
-- **Production:** NOT PROVEN.
-- Required proof remains:
-
-```text
-manual code OR email link
-        → canonical Supabase Auth session
-        → claim/owner binding
-        → own cabinet
-        → reload
-        → repeat login
-```
-
-No production-ready label may be added without this evidence.
+`supabase/schema.sql` содержит SR-001…SR-004, SR-D1 и фиксы #21/#22 плюс
+канонический предикат `is_active_own_psychologist` (#40/#46).
+**Production отличается от репозитория** — конкретный список drift см. в
+`docs/ISSUE-46-EVIDENCE.md`, §2. Устранение — действие владельца (Блок 2).
 
 ## Quality Gate status
-
-Canonical process:
 
 ```text
 MAIN → AUDIT → DEFECT/REQUIREMENT → ISSUE → PRODUCER → TESTS → CHALLENGER → MERGE → MAIN RE-AUDIT → STANDARDIZE
 ```
 
-Current blockers:
+Текущие блокеры:
 
-1. production activation / registration (#18/#35);
-2. independent verification of merged harness recovery (#36);
-3. fresh Main Re-Audit;
-4. production schema/RPC/RLS drift verification;
-5. corrected auth contract implementation and E2E (#40).
+1. production-активация владельцем (Блоки 1–8 `docs/OWNER-CHECKLIST-E2E.md`);
+2. независимый Challenger по #46/#36/#34;
+3. Main Re-Audit на новом SHA `main`;
+4. реальный registration E2E после деплоя `auth-code` и применения схемы.
 
-## Next actions — dependency order, no duplicate implementation
+## Next actions — dependency order
 
-1. **Independent Challenger #36** on the current main, including negative controls for async/import/bootstrap failures.
-2. **Production DB verification** through the planned Supabase MCP/read-only path: `pg_proc`, schema objects, grants, RLS/policies, `create_booking` overloads.
-3. **Implement the corrected dual-entry auth contract**: manual OTP + email-link, one canonical session/ownership path.
-4. Owner-side production activation for #35/#18; then real registration and booking E2E.
-5. Verify #21/#22 production security/booking behavior.
-6. **Main Re-Audit** on the resulting main SHA with fresh evidence.
-7. After every subsequent merge, synchronize this current-state document again.
+1. Владелец: Блок 2 (схема целиком) → Блок 1 (деплой функций) → Блоки 3–4 (Resend/секреты) → Блок 8 (срок сессии).
+2. Повторный прогон `Production read-only probe` — drift должен исчезнуть (отчёт в PR/issue).
+3. Владелец: Блок 5 (`tools/prod-e2e.mjs --email …`) → реальный E2E: код, ссылка, reload, повторный вход.
+4. Независимый Challenger (TASK 7 #46) → Main Re-Audit → merge → повторная синхронизация этого файла.
+5. Только после этого — BA-фичи #27–#31.
 
 ## Historical documents
 
-Do not rewrite historical reports merely to make their SHA current. They remain evidence of their original cycle. Relevant examples include:
-
-- `docs/ISSUE-14-REPORT.md`
-- `docs/ISSUE-14-CHALLENGER.md`
-- `docs/ISSUE-15-REPORT.md`
-- `docs/QUALITY-GATE-REPORT.md`
-- `docs/D1-REPORT.md`
-- `docs/ISSUE-34-REPORT.md`
-- `docs/ISSUE-34-TRIAGE.md`
-- `docs/ISSUE-19-REPORT.md`
-
-The current state is this file, not a historical report.
+Исторические отчёты не переписываются: `docs/ISSUE-14-REPORT.md`,
+`docs/ISSUE-14-CHALLENGER.md`, `docs/ISSUE-15-REPORT.md`,
+`docs/QUALITY-GATE-REPORT.md`, `docs/D1-REPORT.md`, `docs/ISSUE-34-REPORT.md`,
+`docs/ISSUE-34-TRIAGE.md`, `docs/ISSUE-19-REPORT.md`, `docs/AUDIT-2026-09-25.md`.
 
 ---
 
-*Синхронизировано: 2026-09-25 UTC; current main @ `0320c40682805a4730fa03b93176b14098ceea75`. Эта запись синхронизирует repo-state и известные verification gaps; она не сертифицирует production.*
+*Синхронизировано: 2026-09-25 UTC; baseline `main` @ `dcb4093`, исполнительская
+ветка #46 → PR #47. Документ фиксирует repo-state и LIVE-факты прода; он НЕ
+сертифицирует production-готовность.*

@@ -129,3 +129,107 @@ SQL для удаления тестового профиля печатаетс
 Мини-реклама процесса: всё это — ровно цикл Toyota Quality Gate из RULES §6
 (defect → root cause → fix → тесты → независимый Challenger → Main Re-Audit →
 production-подтверждение), применённый к #14.
+
+---
+
+## Блок 7 — Production inspection SQL (issue #46, TASK 1) — read-only, 2 минуты
+
+Зачем: канал исполнителя (PostgREST с публичным anon key) различает «объекта нет»
+и «объект есть, но anon закрыт» не для всех случаев — в частности, он не видит
+`pg_proc`, гранты EXECUTE и список RLS-политик. Этот блок закрывает разрыв.
+**Все запросы только читают** — выполнять в SQL Editor проекта
+`phiavtroybgwyjdhqqkh`, вывод можно целиком приложить к issue #46 (секретов и PII
+в выводе нет, кроме email специалистов в п.7 — при необходимости замените).
+
+```sql
+-- 1) RPC: фактические сигнатуры и overload-набор (снимает вопрос «единственная
+--    ли signature у create_booking»). Ожидание после Блока 2: ровно одна строка
+--    на каждую функцию, у create_booking — 22 аргумента.
+select p.proname,
+       pg_get_function_identity_arguments(p.oid) as args,
+       p.prosecdef as security_definer
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.proname in ('create_booking','claim_psychologist_profile','is_active_own_psychologist')
+order by p.proname, args;
+
+-- 2) Гранты EXECUTE (явные). Ожидание: create_booking → anon+authenticated,
+--    claim_psychologist_profile → только authenticated, is_active_own_psychologist
+--    → только authenticated. Пустая строка = грантов нет (функцию не вызвать).
+select routine_name, grantee, string_agg(privilege_type, ',' order by privilege_type) as privs
+from information_schema.routine_privileges
+where routine_schema = 'public'
+  and routine_name in ('create_booking','claim_psychologist_profile','is_active_own_psychologist')
+group by routine_name, grantee
+order by routine_name, grantee;
+
+-- 3) SR-004: колонки auth_login_codes (без них auth-code работает в legacy-режиме).
+--    Ожидание: issued_token_hash, issues, consumed_at присутствуют.
+select column_name, data_type
+from information_schema.columns
+where table_schema = 'public' and table_name = 'auth_login_codes'
+order by ordinal_position;
+
+-- 4) D1: объекты политики доступности. Ожидание: schedule_overrides (BASE TABLE)
+--    и public_schedule_overrides (VIEW) присутствуют.
+select table_name, table_type
+from information_schema.tables
+where table_schema = 'public'
+  and table_name in ('schedule_overrides','public_schedule_overrides',
+                     'booking_attempts','client_error_logs')
+order by table_name;
+
+-- 5) RLS: включён ли и какие политики. Ожидание: у приватных таблиц relrowsecurity=t
+--    и политики owner_select/owner_modify/... ; у client_risks — RLS без политик.
+select c.relname,
+       c.relrowsecurity,
+       coalesce(string_agg(p.polname || ' [' || p.polcmd || ']', '; ' order by p.polname),
+                '(нет политик)') as policies
+from pg_class c
+join pg_namespace n on n.oid = c.relnamespace
+left join pg_policy p on p.polrelid = c.oid
+where n.nspname = 'public' and c.relkind in ('r','v','m')
+group by c.relname, c.relrowsecurity
+order by c.relname;
+
+-- 6) Гранты на таблицы для anon/authenticated. Ожидание: у anon НЕТ select на
+--    clients/sessions/payments/client_risks/booking_attempts; есть — только на
+--    public_* и client_error_logs (insert).
+select table_name, grantee, string_agg(privilege_type, ',' order by privilege_type) as privs
+from information_schema.role_table_grants
+where table_schema = 'public' and grantee in ('anon','authenticated')
+group by table_name, grantee
+order by table_name, grantee;
+
+-- 7) Ownership: каждый кабинет привязан к auth.uid() и активен ли он.
+--    Ожидание: owner_id заполнен у тех, кто входил; owner_id IS NULL = кабинет
+--    ещё не привязан (вход создаст привязку, а не дубль).
+select p.id, p.is_active, p.owner_id, u.email as auth_email, u.created_at as auth_created
+from public.psychologists p
+left join auth.users u on u.id = p.owner_id
+order by p.created_at;
+
+-- 8) Серверный срок сессии (issue #40, п.7): конфигурация GoTrue, если доступна.
+--    Ожидание: jwt_exp ≤ 2592000 (30 дней) либо включённый session timebox.
+select * from auth.config;
+```
+
+Интерпретация «до/после»: фактическое состояние **до** применения схемы зафиксировано
+в `docs/ISSUE-46-EVIDENCE.md` (прогон `Production read-only probe`): SR-004 и D1
+отсутствуют, `create_booking` для anon недоступен. После Блока 2 повторите Блок 7
+и прогон probe — drift должен исчезнуть.
+
+---
+
+## Блок 8 — Срок сессии не больше месяца (issue #40, п.7 / #46)
+
+Клиентская граница уже реализована (`js/domain/registration.js`:
+`MAX_SESSION_AGE_DAYS = 30`, отсчёт от первой выдачи, refresh его не удлиняет).
+Серверную границу задаёт владелец:
+
+1. Dashboard → **Authentication → Providers → Email** (или **Auth → Settings**):
+   **JWT expiry / session timebox** — не больше 30 дней.
+2. Проверка — запросом 8 в Блоке 7.
+3. Если настройка недоступна в вашем тарифе/версии — зафиксируйте это в issue #46:
+   клиентская граница остаётся единственной, и это нужно отметить как остаточный риск.

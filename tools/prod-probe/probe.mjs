@@ -200,7 +200,11 @@ try {
   const r = await call('POST', '/rest/v1/rpc/create_booking', {
     body: { p_psychologist_id: '__probe__', p_session_date: '1900-01-01', p_session_time: '00:00' }
   });
-  rec('D rpc', 'create_booking(past date) — server-side reject, no write', {
+  // Ожидание: 200 + серверный отказ (schema.sql выдаёт EXECUTE anon — публичная
+  // страница записи пишет именно так). PGRST202 у anon означает: функции нет
+  // ИЛИ у anon нет EXECUTE ни на одной overload-сигнатуре — в обоих случаях
+  // публичная запись в проде не работает.
+  rec('D rpc', 'create_booking(past date) — anon must be able to call', {
     verdict: r.status === 200 && r.json?.ok === false ? 'EXISTS + server validation' : classify(r).verdict,
     status: r.status, code: r.json?.code || '', detail: brief(JSON.stringify(r.json ?? r.text), 260)
   });
@@ -227,14 +231,21 @@ for (const fn of ['create_booking', 'claim_psychologist_profile']) {
 
 /**
  * claim_psychologist_profile без аргументов (все параметры имеют defaults).
- * Ожидание: 42501 — EXECUTE отозван у anon (schema.sql). Это одновременно
- * доказательство существования функции и отзыва гранта. Даже если грант
- * окажется выдан (drift), функция вернётся на `auth.uid() is null` без записи.
+ *
+ * ВАЖНО про интерпретацию: PostgREST держит в schema cache только те функции,
+ * на которые у роли есть EXECUTE. У anon EXECUTE на claim отозван
+ * (schema.sql), поэтому PGRST202 здесь — ОЖИДАЕМЫЙ ответ, а не drift:
+ * отличить «функции нет» от «функция есть, но anon не видит» этим каналом
+ * нельзя. Различает только SQL-канал владельца — см.
+ * docs/OWNER-CHECKLIST-E2E.md, блок «Production inspection SQL».
  */
 try {
   const r = await call('POST', '/rest/v1/rpc/claim_psychologist_profile', { body: {} });
-  rec('D rpc', 'claim_psychologist_profile — anon must be denied', {
-    ...classify(r),
+  const denied = r.json?.code === 'PGRST202' || r.json?.code === '42501';
+  rec('D rpc', 'claim_psychologist_profile — anon must NOT execute', {
+    verdict: r.networkError ? 'NETWORK_ERROR'
+      : (denied ? 'DENIED_FOR_ANON(expected)' : `UNEXPECTED(${classify(r).verdict})`),
+    status: r.status, code: r.json?.code || '',
     detail: brief(r.json?.message || r.text, 260)
   });
 } catch (e) {
