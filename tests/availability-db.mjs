@@ -186,7 +186,13 @@ try {
   await setPolicy({ max_bookings_per_day: null });
 
   await setPolicy({ max_bookings_per_week: 1 });
-  const base = plusDays(14);
+  // Неделя лимита обязана быть СВОБОДНОЙ от записей других сценариев:
+  // при base = plusDays(14) её понедельник совпадал с plusDays(10) из
+  // dayLimit-блока (когда today+10 — пн…чт), слот оказывался занят, и проверка
+  // «первая запись на неделе → ok» падала не из-за недельного лимита, а из-за
+  // коллизии данных (найдено при исполнении #46). plusDays(28): понедельник
+  // этой недели ≥ today+22 — заведомо дальше всех дат набора (макс. +15).
+  const base = plusDays(28);
   const monday = addDays(base, -(isoDow(base) - 1));
   const tuesday = addDays(monday, 1);
   const rWeek1 = await book(monday, '10:00');

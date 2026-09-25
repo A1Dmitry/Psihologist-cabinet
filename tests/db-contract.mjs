@@ -210,18 +210,31 @@ try {
   check('booking: без услуги длительность = канонические 60',
     noSvc?.duration_min === 60, String(noSvc?.duration_min));
 
-  // анти-спам: 4-я запись на тот же телефон за сегодня
-  const today = new Date().toISOString().slice(0, 10);
-  let spamBlocked = null;
-  for (let i = 0; i < 4; i++) {
-    spamBlocked = await db.rpc('create_booking', {
+  // Анти-спам: 4-я запись на тот же телефон за сегодня отклоняется.
+  //
+  // Даты — ЗАВЕДОМО будущие будни (DATE = понедельник), а не «сегодня»:
+  //   • счётчик анти-спама считается по created_at (факт создания заявки),
+  //     поэтому будущая дата не спасает от лимита — это и есть фикс #22;
+  //   • прежние 08:00/09:00 выпадали из окна приёма кабинета (10:00–18:00),
+  //     заявки отклонялись расписанием и до счётчика не доходили — набор
+  //     краснел, не проверив анти-спам (найдено при исполнении #46).
+  // Слоты 11:00–14:00 свободны: выше заняты 10:00, 15:00 и 17:00–18:30.
+  const spamResults = [];
+  for (const t of ['11:00', '12:00', '13:00', '14:00']) {
+    spamResults.push(await db.rpc('create_booking', {
       p_psychologist_id: claim1.id, p_service_id: svc60,
-      p_session_date: today, p_session_time: `${String(8 + i).padStart(2, '0')}:00`,
+      p_session_date: DATE, p_session_time: t,
       p_client_name: 'Спам', p_client_phone: '+375290000000'
-    }, { role: 'anon', uid: null });
+    }, { role: 'anon', uid: null }));
   }
+  // Первые три обязаны пройти: иначе «4-я отклонена» проходит по ложной причине
+  // (всё отклонено расписанием) — ровно та маскировка, против которой Quality Gate.
+  check('booking: анти-спам — первые три записи на телефон приняты',
+    spamResults.slice(0, 3).every(r => r?.ok === true),
+    JSON.stringify(spamResults.slice(0, 3)));
   check('booking: анти-спам — 4-я запись за день на телефон отклонена',
-    spamBlocked?.ok === false, JSON.stringify(spamBlocked));
+    spamResults[3]?.ok === false && /Слишком много записей/.test(spamResults[3]?.error || ''),
+    JSON.stringify(spamResults[3]));
 
   /* ========================================================================
    * 3. ГОНКА: две параллельные транзакции на один слот
@@ -292,6 +305,56 @@ try {
     publicSlots.some(r => r.duration_min === 90), JSON.stringify(publicSlots));
   check('public_booked_slots: не раскрывает данные клиента',
     !JSON.stringify(publicSlots).includes('Анна'), JSON.stringify(publicSlots));
+
+  /* ========================================================================
+   * 5. ОТКЛЮЧЁННЫЙ АККАУНТ (issue #40, п.8 / #46, TASK 3)
+   *    Деактивация специалиста — действие владельца. Вход не должен её
+   *    отменять, а действующая сессия — продолжать давать доступ к кабинету.
+   * ====================================================================== */
+  await db.query(`update psychologists set is_active = false where id = $1`, [claim1.id]);
+
+  // 5.1 Вход (claim) не реактивирует аккаунт
+  const reactivated = await db.rpc('claim_psychologist_profile', {
+    p_email: 'natalia@example.by', p_full_name: 'Наталья Тестовая'
+  }, { uid: uidA });
+  check('inactive: вход не реактивирует кабинет (ok=false, inactive=true)',
+    reactivated?.ok === false && reactivated?.inactive === true, JSON.stringify(reactivated));
+  check('inactive: is_active в БД остался false',
+    (await db.query(`select is_active from psychologists where id = $1`, [claim1.id]))[0].is_active === false);
+  check('inactive: owner_id не изменился',
+    (await db.query(`select owner_id from psychologists where id = $1`, [claim1.id]))[0].owner_id === uidA);
+
+  // 5.2 Действующая сессия владельца больше не видит данные кабинета
+  const inactiveOwnerSessions = await db.query(`select id from sessions`, [], { role: 'authenticated', uid: uidA });
+  check('inactive: RLS закрывает сессии владельца (канонический предикат is_active)',
+    inactiveOwnerSessions.length === 0, String(inactiveOwnerSessions.length));
+
+  // 5.3 Свой профиль владелец всё ещё читает — кабинету нужна причина отказа
+  const ownRow = await db.query(`select id, is_active from psychologists where id = $1`, [claim1.id],
+    { role: 'authenticated', uid: uidA });
+  check('inactive: свой профиль читается (UI показывает причину)',
+    ownRow.length === 1 && ownRow[0].is_active === false, JSON.stringify(ownRow));
+
+  // 5.4 Писать в свой профиль отключённый владелец не может
+  const updRows = await db.query(
+    `update psychologists set about = 'взлом' where id = $1 returning id`, [claim1.id],
+    { role: 'authenticated', uid: uidA });
+  check('inactive: запись в свой профиль отклонена (0 строк)',
+    updRows.length === 0, JSON.stringify(updRows));
+  check('inactive: about в БД не изменился',
+    (await db.query(`select about from psychologists where id = $1`, [claim1.id]))[0].about !== 'взлом');
+
+  // 5.5 Реактивация — только явным действием владельца (service_role), не входом
+  await db.query(`update psychologists set is_active = true where id = $1`, [claim1.id]);
+  const afterReactivation = await db.query(`select id from sessions`, [], { role: 'authenticated', uid: uidA });
+  check('reactivated: доступ владельца восстановлен владельцем (service_role)',
+    afterReactivation.length > 0, String(afterReactivation.length));
+  const claimAfter = await db.rpc('claim_psychologist_profile', {
+    p_email: 'natalia@example.by', p_full_name: 'Наталья Тестовая'
+  }, { uid: uidA });
+  check('reactivated: повторный вход возвращает ТОТ ЖЕ профиль (без дубля)',
+    claimAfter?.ok === true && claimAfter?.id === claim1.id && claimAfter?.created === false,
+    JSON.stringify(claimAfter));
 } catch (e) {
   // Любой крэш основного потока — красный чек, иначе хвост пропускается
   // и async-exit-hook форсит exit 0 (маскировка провала, D1-QG-004).
