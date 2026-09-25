@@ -2,7 +2,7 @@
 
 > **АУДИТОР: САМ** — repo-level synchronization audit, 2026-09-25 UTC. Это маршрут выполнения, а не новый источник требований и не production-сертификация. Канонические критерии находятся в связанных Issues; актуальное состояние — `docs/CURRENT-STATE.md`.
 
-**Current main:** `6a259cb816543a6dee5a70d5ddf154f4b6bd3a47`
+**Current main:** `2d2897b160a903f2d9a0dff6fdc338de217439c7`
 
 **Исторические baseline:** `03c6fa5`, `87e3951` и `4d490d2` относятся к предыдущим циклам.
 
@@ -32,7 +32,7 @@ Issues #19, #30 and #33 are no longer execution queues: #19 documentation synchr
 ## Next execution sequence
 
 ```text
-CURRENT-STATE sync @ 6a259cb
+CURRENT-STATE sync @ 2d2897b
         ↓
 #36 independent Challenger
         ↓
@@ -81,4 +81,4 @@ A merge or green CI does not close a production/security gate. If a required P0/
 
 ---
 
-*Синхронизировано: 2026-09-25 UTC; current main @ `6a259cb816543a6dee5a70d5ddf154f4b6bd3a47`.*
+*Синхронизировано: 2026-09-25 UTC; current main @ `2d2897b160a903f2d9a0dff6fdc338de217439c7`.*
