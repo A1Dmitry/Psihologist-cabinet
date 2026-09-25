@@ -105,8 +105,11 @@ const must = [
   ['реквизиты: р/с', 'BY67ALFA30132A03540010270000'],
   ['реквизиты: назначение', 'Назначение платежа'],
   ['адрес практики', 'ул. Свердлова, 16'],
-  ['карта (embed)', 'output=embed'],
-  ['карта: адрес в запросе', encodeURIComponent('Гродно')],
+  ['карта: адрес в data-map-query', 'data-map-query="Гродно, г. Гродно, ул. Свердлова, 16"'],
+  ['карта: заглушка data-map-box', 'data-map-box'],
+  ['карта: Яндекс по умолчанию (кнопка)', 'data-map-load="yandex"'],
+  ['карта: Google — альтернатива (кнопка)', 'data-map-load="google"'],
+  ['карта: кнопка «Показать карту»', 'Показать карту'],
   ['маршрут Google', 'google.com/maps/dir'],
   ['маршрут Яндекс', 'yandex.ru/maps'],
   ['телефон tel:', 'tel:+375297804545'],
@@ -120,6 +123,32 @@ const must = [
   ['SEO-ссылка на запись', '/book/']
 ];
 for (const [name, needle] of must) contains.push([name, profHtml.includes(needle)]);
+
+// —— MX-07 (#66): карта НЕ грузится автоматически — только по тапу ——
+contains.push(['карта: авто-iframe НЕ рендерится (MX-07)', !profHtml.includes('<iframe')]);
+contains.push(['карта: embed-ссылка НЕ в исходном HTML', !profHtml.includes('output=embed')]);
+
+// поведение: тап по кнопке подгружает iframe (Яндекс по умолчанию, Google — фолбэк)
+let mapBoxHtml = '';
+const mapBoxStub = {
+  dataset: { mapQuery: 'Гродно, г. Гродно, ул. Свердлова, 16' },
+  set innerHTML(v) { mapBoxHtml = String(v); }
+};
+const mapBtnStub = provider => {
+  const btn = {
+    dataset: { mapLoad: provider },
+    closest: sel => (sel === 'button[data-map-load]' ? btn : sel === '[data-map-box]' ? mapBoxStub : null)
+  };
+  return btn;
+};
+const mapEv = provider => ({ target: { closest: sel => sel === 'button[data-map-load]' ? mapBtnStub(provider) : null } });
+for (const fn of listeners['click'] || []) fn(mapEv('yandex'));
+contains.push(['карта: тап → iframe подгружен', mapBoxHtml.includes('<iframe')]);
+contains.push(['карта: тап → Яндекс-embed по умолчанию', mapBoxHtml.includes('https://yandex.ru/map-widget/v1/')]);
+contains.push(['карта: адрес в запросе embed', mapBoxHtml.includes(encodeURIComponent('Гродно'))]);
+mapBoxHtml = '';
+for (const fn of listeners['click'] || []) fn(mapEv('google'));
+contains.push(['карта: Google-фолбэк по явной кнопке', mapBoxHtml.includes('maps.google.com') && mapBoxHtml.includes('output=embed')]);
 
 let failed = 0;
 for (const [n, okk] of contains) { console.log((okk ? 'PASS' : 'FAIL') + '  ' + n); if (!okk) failed++; }

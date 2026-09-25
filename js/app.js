@@ -1498,13 +1498,23 @@ function renderProfile() {
   ].filter(Boolean).join('');
 
   // —— Адрес практики и схема проезда (как на сайте специалиста) ——
+  // MX-07: карта НЕ грузится автоматически (Google-embed в целевых сетях часто
+  // недоступен и «подвешивает» страницу). По умолчанию — лёгкая заглушка
+  // (адрес + кнопка), iframe (Яндекс по умолчанию, Google — альтернативой)
+  // подгружается только по тапу — см. bindEvents() [data-map-load].
   const mapQuery = [p.city, p.address].filter(Boolean).join(', ');
   const addressHtml = (p.address || p.city) ? `
       <h3 class="font-semibold text-slate-900 mt-6">Адрес практики и проезд</h3>
       <p class="mt-2 text-sm text-slate-700">${esc([p.address, p.city].filter(Boolean).join(', '))}</p>
       ${p.address ? `
-      <div class="mt-3 rounded-xl overflow-hidden border">
-        <iframe src="https://maps.google.com/maps?q=${encodeURIComponent(mapQuery)}&z=15&output=embed" width="100%" height="260" style="border:0" loading="lazy" title="Схема проезда"></iframe>
+      <div class="mt-3 rounded-xl overflow-hidden border" data-map-box data-map-query="${esc(mapQuery)}">
+        <div class="p-4 bg-slate-50 flex flex-col sm:flex-row sm:items-center gap-3">
+          <div class="text-sm text-slate-700 flex-1">📍 ${esc(p.address)}${p.city ? `, ${esc(p.city)}` : ''}</div>
+          <div class="flex flex-wrap gap-2 shrink-0">
+            <button type="button" data-map-load="yandex" class="px-4 py-2 rounded-full bg-slate-900 text-white text-sm font-medium">🗺️ Показать карту</button>
+            <button type="button" data-map-load="google" class="px-4 py-2 rounded-full border border-slate-300 bg-white text-slate-700 text-sm font-medium">Google</button>
+          </div>
+        </div>
       </div>
       <div class="mt-2 flex flex-wrap gap-2">
         <a href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(mapQuery)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium">🚗 Маршрут (Google Maps)</a>
@@ -2262,6 +2272,20 @@ function bindEvents() {
   document.addEventListener('click', e => {
     const add = e.target.closest('[data-pe-add]');
     if (add) addPeRow(add.dataset.peAdd);
+  });
+
+  // —— Схема проезда: iframe подгружается только по тапу (MX-07, issue #66) ——
+  // Яндекс — по умолчанию (целевой рынок), Google — явная альтернатива.
+  document.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-map-load]');
+    if (!btn) return;
+    const box = btn.closest('[data-map-box]');
+    if (!box) return;
+    const q = box.dataset.mapQuery || '';
+    const src = btn.dataset.mapLoad === 'google'
+      ? `https://maps.google.com/maps?q=${encodeURIComponent(q)}&z=15&output=embed`
+      : `https://yandex.ru/map-widget/v1/?text=${encodeURIComponent(q)}&z=15`;
+    box.innerHTML = `<iframe src="${esc(src)}" width="100%" height="260" style="border:0" loading="lazy" title="Схема проезда" referrerpolicy="no-referrer-when-downgrade"></iframe>`;
   });
 
   // ——— Занятость: блокировки + Google Calendar ———
