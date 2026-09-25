@@ -40,6 +40,7 @@ const SUITES = [
   ['Синхронизация: деградация при частично применённой схеме (#46)', 'node', ['tests/sync-degradation.mjs']],
   ['Read-only probe: «не измерено» честно отличается от «drift 0» (#54)', 'node', ['tests/prod-probe-report.mjs']],
   ['Регистрация и вход специалиста (E2E-контракт)', 'node', ['tests/registration-flow.mjs']],
+  ['CORS-контракт Edge Functions: канонический allow-list + покрытие клиента', 'node', ['tests/cors-contract.mjs']],
   ['OTP: одноразовость, TTL, лимит попыток (настоящий auth-code)', 'node', ['--no-warnings', 'tests/auth-code-edge.mjs']],
   ['SQL-контракт schema.sql на настоящем PostgreSQL', 'node', ['tests/db-contract.mjs']],
   ['Сходимость схемы: применение к «грязному» проду (перегрузки RPC, гранты, RLS)', 'node', ['tests/schema-convergence.mjs']],

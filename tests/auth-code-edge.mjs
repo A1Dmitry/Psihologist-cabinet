@@ -253,6 +253,20 @@ console.log('\n── auth-code (настоящий исходник Edge Functi
     const hh = opts.headers.get('Access-Control-Allow-Headers') || '';
     truthy(/content-type/i.test(hh), hh);
   });
+  // Канонический allow-list Supabase (docs/guides/functions/cors): он обязан
+  // покрывать не только то, что шлёт SPA сегодня, но и заголовки SDK —
+  // x-retry-count (авто-ретраи postgrest-js) и traceparent/tracestate/baggage
+  // (client-side tracing). Иначе функция, задеплоенная один раз, перестаёт
+  // вызываться из браузера после обновления SDK — с той же консольной
+  // CORS-ошибкой, что и 404/401. Статический контракт — tests/cors-contract.mjs.
+  ok('OPTIONS → Allow-Headers = канонический список Supabase', () => {
+    const hh = (opts.headers.get('Access-Control-Allow-Headers') || '')
+      .split(',').map(s => s.trim().toLowerCase()).filter(Boolean).sort();
+    // тот же канонический список, что и в tests/cors-contract.mjs
+    const canonical = ['authorization', 'x-client-info', 'apikey', 'content-type',
+      'x-retry-count', 'traceparent', 'tracestate', 'baggage'].sort();
+    eq(hh.join(','), canonical.join(','), hh.join(','));
+  });
   ok('OPTIONS → Allow-Headers содержит apikey/x-client-info/authorization', () => {
     const hh = (opts.headers.get('Access-Control-Allow-Headers') || '').toLowerCase();
     ['apikey', 'x-client-info', 'authorization'].forEach(k =>

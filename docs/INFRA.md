@@ -120,6 +120,18 @@
    > в `supabase/config.toml`. Отчёт публикуется комментарием в PR
    > (workflow `Production read-only probe`), тот же гейт встроен в
    > `supabase-deploy.yml` (шаги «Verify CORS preflight» и «Production reachability»).
+   >
+   > **Третья причина той же консольной ошибки — слишком узкий allow-list.**
+   > Supabase требует, чтобы `Access-Control-Allow-Headers` покрывал ВСЕ заголовки
+   > вызывающего клиента (<https://supabase.com/docs/guides/functions/cors>):
+   > `x-retry-count` (авто-ретраи postgrest-js) и `traceparent` / `tracestate` /
+   > `baggage` (client-side tracing). Функция, задеплоенная с узким списком,
+   > перестаёт вызываться из браузера после обновления SDK — лечится только
+   > редеплоем, а в консоли выглядит как та же CORS-ошибка. Канонический список
+   > объявлен в обеих функциях и запинен: `tests/cors-contract.mjs` (список,
+   > равенство контрактов двух функций, покрытие заголовков фронтенда —
+   > с falsification-контролем) + поведенческая проверка `OPTIONS`
+   > в `tests/auth-code-edge.mjs`.
 
    > **Симптом после клика по ссылке из письма (issue #23):**
    > ```
