@@ -242,8 +242,8 @@ export function applyProfileSeo(psy, services, pageUrl, { bookUrl } = {}) {
 export function applyPortalSeo(baseUrl) {
   const canonicalUrl = seoUrl(baseUrl);
   setMeta({
-    title: 'ПсихоПортал — кабинеты психологов · запись на консультацию',
-    description: 'Каталог психологов: публичный профиль, услуги и цены, онлайн-запись на консультацию. Минск, Гродно и вся Беларусь.',
+    title: 'ПсихоПортал — кабинеты специалистов · запись на консультацию',
+    description: 'Каталог специалистов: публичный профиль, услуги и цены, онлайн-запись на консультацию. Минск, Гродно и вся Беларусь.',
     url: canonicalUrl,
     ogType: 'website'
   });
