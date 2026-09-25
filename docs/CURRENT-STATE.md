@@ -4,10 +4,11 @@
 >
 > **АУДИТОР: ВНЕШНИЙ** для production-фактов: сняты запросами к живому проекту
 > `phiavtroybgwyjdhqqkh` из runner'а GitHub Actions (`Production read-only probe`,
-> `tools/prod-probe/probe.mjs`), а не из песочницы исполнителя.
-> **АУДИТОР: САМ** для repo-фактов: код и тесты проверены в этой же сессии
-> (`node tools/verify_all.mjs` → 22/22, `verify_pages.py` → ALL PASS).
-> Полные доказательства — `docs/ISSUE-46-EVIDENCE.md`.
+> `tools/prod-probe/probe.mjs`), а не из песочницы исполнителя. Свежее LIVE-среза
+> нет (запуск probe из агентской сессии — 403; последний срез 2026-09-25).
+> **АУДИТОР: САМ** для repo-фактов: код и тесты проверены в сессии ресинка
+> (`node tools/verify_all.mjs` → 24/24, `verify_pages.py` → ALL PASS на `ca3b23b`).
+> Полные доказательства — `docs/ISSUE-46-EVIDENCE.md`, `docs/ISSUE-TRIAGE-2026-09-25.md` (§§8–10).
 
 ## Main SHA и активная ветка
 
@@ -37,6 +38,11 @@
    абсолютный срок сессии — месяц (fail-closed), refresh его не удлиняет.
 6. **Документация:** `docs/ISSUE-46-EVIDENCE.md`, Блоки 7–8 в
    `docs/OWNER-CHECKLIST-E2E.md` (read-only SQL для владельца + срок сессии).
+7. **PR #47 MERGED** (`b1dbf1a`), затем **PR #48 MERGED** (`ca3b23b`): честный канал
+   доставки кодового входа (`verificationHint` — «в запасном канале ссылка, а не код»)
+   + `#auth-code-hint` в форме (мёртвая ссылка `js/app.js:499` устранена).
+8. **Main Re-Audit мержа PR #48:** гейт 24/24 + `verify_pages.py` ALL PASS на `ca3b23b`
+   (`docs/ISSUE-TRIAGE-2026-09-25.md`, §9). Регрессий нет.
 
 ## Production — честный статус
 
@@ -84,15 +90,20 @@ Root cause (INFERENCE, высокая уверенность): `supabase/schema.
 
 | Issue | Priority | Current status |
 |---|---:|---|
-| #46 | P0 | EXECUTOR-контур исполнен в PR #47; production-разблокировка — за владельцем (Блоки 1–8); Challenger и Main Re-Audit НЕ выполнены |
-| #35 | P1 | Edge Functions deployment — **LIVE-подтверждено: не задеплоены**; блокер на владельце |
+| #46 | P0 | EXECUTOR-контур исполнен, PR #47 + PR #48 merged; production-разблокировка — за владельцем (Блоки 1–8); Challenger (TASK 7) и Main Re-Audit НЕ выполнены |
+| #35 | P1 | Edge Functions deployment — **LIVE-подтверждено: не задеплоены** (срез 2026-09-25, свежее нет — dispatch probe 403); блокер на владельце |
 | #40 | P1 | Требования закрыты в repo (входы, inactive-гейт, срок сессии) с тестами; production E2E — BLOCKED |
-| #21 | P1 | Server-authoritative booking — repo merged; production-гейт: `create_booking` для anon недоступен (LIVE) |
+| #21 | P1 | Server-authoritative booking — repo merged; completePayment local-only жив (п.4); production-гейт: `create_booking` для anon недоступен (LIVE) |
 | #22 | P2 | Tenant isolation / anti-spam — repo merged + тесты; `client_risks` закрыт в проде (LIVE) |
-| #34 | P1 | Challenger recovery + свежий Main Re-Audit — OPEN |
-| #36 | P2 | Harness false-green — merged; независимая проверка OPEN |
-| #41 | P1 | Client Google identity — requirements open (LIVE: `external.google=false`) |
+| #34 | P1 | Challenger recovery + свежий Main Re-Audit — OPEN (проверялся 4d490d2, main ушёл на ca3b23b) |
+| #36 | P2 | Harness false-green — implementation merged + независимый Challenger PASS на ca3b23b; к закрытию владельцем; follow-up — #51 |
+| #51 | P2 | Silent suite (0 проверок, exit 0) проходит гейт зелёным — найден Challenger'ом #36, воспроизведён |
+| #50 | P2 | Docs resync + verification gate #19 — OPEN; этот файл ресинкнут (producer), RECOVERY/ROADMAP + Challenger + Main Re-Audit pending |
+| #41 | P1 | Client Google identity — requirements open (LIVE: external.google=false) |
 | #27–#31 | BA | Продуктовый backlog; не дефекты |
+
+Закрыты 2026-09-25 и перепроверены: #15 (Quality Gate DONE), #49 (probe-мусор).
+Закрыты ранее: #7, #8, #11, #14, #18, #19, #23, #30, #33 (вердикты — триаж §3).
 
 ## Canonical authentication contract
 
@@ -124,17 +135,20 @@ MAIN → AUDIT → DEFECT/REQUIREMENT → ISSUE → PRODUCER → TESTS → CHALL
 Текущие блокеры:
 
 1. production-активация владельцем (Блоки 1–8 `docs/OWNER-CHECKLIST-E2E.md`);
-2. независимый Challenger по #46/#36/#34;
-3. Main Re-Audit на новом SHA `main`;
-4. реальный registration E2E после деплоя `auth-code` и применения схемы.
+2. закрытие #36 владельцем (Challenger PASS готов) + фикс #51;
+3. независимый Challenger по #46 (TASK 7) и #34 (свежий, на `ca3b23b`);
+4. Main Re-Audit на новом SHA `main` + завершение #50 (RECOVERY/ROADMAP);
+5. реальный registration E2E после деплоя `auth-code` и применения схемы.
 
 ## Next actions — dependency order
 
-1. Владелец: Блок 2 (схема целиком) → Блок 1 (деплой функций) → Блоки 3–4 (Resend/секреты) → Блок 8 (срок сессии).
-2. Повторный прогон `Production read-only probe` — drift должен исчезнуть (отчёт в PR/issue).
-3. Владелец: Блок 5 (`tools/prod-e2e.mjs --email …`) → реальный E2E: код, ссылка, reload, повторный вход.
-4. Независимый Challenger (TASK 7 #46) → Main Re-Audit → merge → повторная синхронизация этого файла.
-5. Только после этого — BA-фичи #27–#31.
+1. Владелец: закрыть #36 (evidence — `docs/ISSUE-TRIAGE-2026-09-25.md`, §10).
+2. Producer: фикс #51 (silent suite) → Challenger → merge → Main Re-Audit.
+3. Владелец: Блок 2 (схема целиком) → Блок 1 (деплой функций) → Блоки 3–4 (Resend/секреты) → Блок 8 (срок сессии).
+4. Повторный прогон `Production read-only probe` — drift должен исчезнуть (отчёт в PR/issue).
+5. Владелец: Блок 5 (`tools/prod-e2e.mjs --email …`) → реальный E2E: код, ссылка, reload, повторный вход.
+6. Независимый Challenger (TASK 7 #46) → Main Re-Audit → merge → повторная синхронизация этого файла.
+7. Только после этого — BA-фичи #27–#31.
 
 ## Historical documents
 
