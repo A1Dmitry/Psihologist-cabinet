@@ -21,18 +21,18 @@ BASE_URL = (os.environ.get('BASE_URL') or 'http://127.0.0.1:8765').rstrip('/')
 SLUG = os.environ.get('CHECK_SLUG') or 'nataliya-mikhajlovskaya-19'
 
 CHECKS = [
-    ('/', 200, 'ПсихоПортал'),
-    ('/index.html', 200, 'ПсихоПортал'),
+    ('/', 200, 'Портал профессиональных услуг'),
+    ('/index.html', 200, 'Портал профессиональных услуг'),
     ('/js/app.js', 200, 'import'),
     ('/js/core/dbContext.js', 200, 'export'),
     ('/css/tailwind.css', 200, '--tw-'),       # сборка Tailwind (не runtime CDN)
     (f'/psy/{SLUG}', 200, 'js/app.js'),          # страница специалиста (SPA-fallback)
     (f'/book/{SLUG}', 200, 'js/app.js'),         # страница записи (SPA-fallback)
-    ('/cabinet', 200, 'ПсихоПортал'),
-    ('/auth', 200, 'ПсихоПортал'),
-    ('/onboarding', 200, 'ПсихоПортал'),   # онбординг после первого входа через Google
-    ('/booking-done', 200, 'ПсихоПортал'),
-    ('/reply?reply=demo', 200, 'ПсихоПортал'),
+    ('/cabinet', 200, 'Портал профессиональных услуг'),
+    ('/auth', 200, 'Портал профессиональных услуг'),
+    ('/onboarding', 200, 'Портал профессиональных услуг'),   # онбординг после первого входа через Google
+    ('/booking-done', 200, 'Портал профессиональных услуг'),
+    ('/reply?reply=demo', 200, 'Портал профессиональных услуг'),
     ('/js/definitely-missing.js', 404, None),    # битые ассеты не маскируются
 ]
 
