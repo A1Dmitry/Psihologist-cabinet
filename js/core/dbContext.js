@@ -162,16 +162,10 @@ export class DbContext {
           { label: 'Семейная консультация', url: 'https://api.bepaid.by/products/prd_eec3c942ea52cfed/pay', kind: 'service' },
           { label: 'Свободный платёж', url: 'https://nataliamikhailouskaya.by/donation', kind: 'donation' }
         ],
-        paymentRequisites: {
-          recipient: 'ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ МИХАЙЛОВСКАЯ НАТАЛИЯ МИХАЙЛОВНА',
-          legalAddress: 'РБ, Г. ГРОДНО, УЛ. ПРОЛЕТАРСКАЯ, Д. 54 ОФ. 65',
-          unp: '591945736',
-          account: 'BY67ALFA30132A03540010270000',
-          bankName: 'ЗАО «Альфа-Банк»',
-          bik: 'ALFABY2X',
-          purpose: 'оплата за консультацию по охране здоровья или консультация',
-          donationUrl: 'https://nataliamikhailouskaya.by/donation'
-        },
+        // Банковские и регистрационные реквизиты (получатель, юр. адрес, УНП,
+        // р/с, банк, БИК) — персональные данные и в демо-данных не хранятся:
+        // специалист заполняет их сам в кабинете («Профиль» → «Реквизиты для оплаты»).
+        paymentRequisites: null,
         services: [
           { name: 'Очная консультация', price: 80, currency: 'BYN', duration: 60, format: 'offline', description: 'в г. Гродно (Беларусь)', payUrl: 'https://api.bepaid.by/products/prd_4b68b00019808a21/pay', sortOrder: 1 },
           { name: 'Супружеское (семейное) консультирование', price: 110, currency: 'BYN', duration: 90, format: 'offline', description: 'личный приём в г. Гродно', payUrl: 'https://api.bepaid.by/products/prd_eec3c942ea52cfed/pay', sortOrder: 2 },
