@@ -21,6 +21,8 @@ import { sessionSeriesService } from '../services/sessionSeriesService.js';
 import { clientCabinetService, suggestSlots, MATERIAL_KINDS, weekdayOfLabel } from '../services/clientCabinetService.js';
 import { cabinetStatsService, moneyLabel } from '../services/cabinetStatsService.js';
 import { reminderService } from '../services/reminderService.js';
+// MX-03 (#64): единственная каноническая замена нативных confirm()/prompt().
+import { uiConfirm, copyText } from './uiDialogs.js';
 // Тот же specifier, что в app.js (?v=…): один экземпляр модуля и тот же cache-bust (#73).
 import { icsEventText, icsEventFileName } from '../services/calendarService.js?v=20260925-ics';
 import {
@@ -94,9 +96,9 @@ function openModal({ id = 'cab3-modal', title = '', body = '', onSubmit = null, 
   if (existing) existing.remove();
   const wrap = document.createElement('div');
   wrap.id = id;
-  wrap.className = 'fixed inset-0 z-[60] flex items-center justify-center modal-bg p-4';
+  wrap.className = 'modal-sheet fixed inset-0 z-[60] flex items-center justify-center modal-bg p-4';
   wrap.innerHTML = `
-    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl max-h-[90vh] overflow-y-auto" data-c3-modal-card>
+    <div class="modal-panel bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl max-h-[90vh] overflow-y-auto" data-c3-modal-card>
       <div class="flex items-start justify-between gap-3 mb-3">
         <h3 class="text-lg font-bold">${esc(title)}</h3>
         <button type="button" data-c3="modal-close" class="text-slate-400 hover:text-slate-700 text-xl leading-none">&times;</button>
@@ -860,8 +862,12 @@ const handlers = {
   },
   'series-pause': (el, vm) => { vm.pauseSeries(el.dataset.id); rerenderCabinet(); },
   'series-resume': (el, vm) => { vm.resumeSeries(el.dataset.id); rerenderCabinet(); },
-  'series-delete': (el, vm) => {
-    if (confirm('Удалить серию? Будущие встречи серии будут сняты.')) {
+  'series-delete': async (el, vm) => {
+    if (await uiConfirm({
+      title: 'Удалить серию?',
+      message: 'Будущие встречи серии будут сняты.',
+      confirmLabel: 'Удалить серию'
+    })) {
       vm.removeSeries(el.dataset.id);
       rerenderCabinet();
     }
@@ -887,20 +893,28 @@ const handlers = {
     rerenderCabinet();
     toast('Ссылка клиента создана');
   },
-  'link-rotate': (el, vm) => {
-    if (!confirm('Заменить ссылку? Старая перестанет открываться у клиента.')) return;
+  'link-rotate': async (el, vm) => {
+    if (!(await uiConfirm({
+      title: 'Заменить ссылку?',
+      message: 'Старая ссылка перестанет открываться у клиента.',
+      confirmLabel: 'Заменить'
+    }))) return;
     vm.clientAccessLink(el.dataset.id, { rotate: true });
     rerenderCabinet();
   },
-  'link-revoke': (el, vm) => {
-    if (!confirm('Отозвать доступ по ссылке?')) return;
+  'link-revoke': async (el, vm) => {
+    if (!(await uiConfirm({
+      title: 'Отозвать доступ по ссылке?',
+      message: 'Клиент больше не сможет открыть свой мини-кабинет по этой ссылке.',
+      confirmLabel: 'Отозвать'
+    }))) return;
     vm.revokeClientAccessLink(el.dataset.token);
     rerenderCabinet();
   },
   'link-copy': async (el, vm) => {
     const value = $('#c3-link')?.value || '';
-    try { await navigator.clipboard.writeText(value); toast('Ссылка скопирована'); }
-    catch { window.prompt('Скопируйте ссылку:', value); }
+    const r = await copyText(value, { title: 'Ссылка клиента', label: 'Ссылка' });
+    toast(r.ok ? 'Ссылка скопирована' : 'Скопируйте ссылку вручную', !r.ok);
   },
   'link-preview': (el, vm) => {
     const url = clientCabinetService.tokenUrl(el.dataset.token, currentBase());
@@ -968,7 +982,7 @@ const handlers = {
       }
     });
   },
-  'wait-plan': (el, vm) => {
+  'wait-plan': async (el, vm) => {
     const w = vm.waiting.find(x => x.id === el.dataset.id);
     if (!w) return;
     openModal({
@@ -1009,8 +1023,12 @@ const handlers = {
     document.getElementById('cc-reply-wrap')?.remove();
     document.querySelectorAll('#reply-actions').forEach(a => a.classList.add('hidden'));
   },
-  'cc-reply-no': (el) => {
-    if (!confirm('Отменить запись?')) return;
+  'cc-reply-no': async (el) => {
+    if (!(await uiConfirm({
+      title: 'Отменить запись?',
+      message: 'Специалист получит отказ, слот освободится.',
+      confirmLabel: 'Отменить запись'
+    }))) return;
     const res = reminderService.respond(el.dataset.token, 'declined');
     toast(res.message, !res.ok);
     setTimeout(() => renderClientCabinetPage(el.dataset.token), 50);
@@ -1143,11 +1161,17 @@ export const cabinetUi = {
       const fn = handlers[action];
       if (!fn) return;
       e.preventDefault();
-      try {
-        fn(el, this.vm);
-      } catch (err) {
+      const fail = err => {
         console.warn('[cabinetUi]', action, err);
         toast('Не получилось выполнить действие', true);
+      };
+      try {
+        const res = fn(el, this.vm);
+        // Асинхронные действия (диалоги #64, серии и т.п.) обязаны попадать
+        // в тот же обработчик ошибок, иначе отказ станет unhandled rejection.
+        if (res && typeof res.then === 'function') res.catch(fail);
+      } catch (err) {
+        fail(err);
       }
     });
 

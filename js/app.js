@@ -28,6 +28,8 @@ import { resolveDurationMinutes, DEFAULT_DURATION_MIN } from './domain/duration.
 import { registration } from './domain/registration.js';
 // [Агент 3 · кабинет и клиенты] новые блоки кабинета и страница клиента по ссылке
 import { cabinetUi } from './views/cabinetUi.js';
+// MX-03 (#64): единственная каноническая замена нативных confirm()/prompt().
+import { uiConfirm, uiPrompt, copyText } from './views/uiDialogs.js';
 import { bookingTriageWizard } from './views/bookingTriageWizard.js';
 import { googleAuthService } from './services/googleAuthService.js';
 
@@ -90,6 +92,21 @@ const SOCIAL_TITLES = {
   telegram: 'Telegram', instagram: 'Instagram', skype: 'Skype',
   whatsapp: 'WhatsApp', viber: 'Viber', vk: 'VK', other: 'Ссылка'
 };
+
+/**
+ * BL-05 (#64): единственная точка переключения кнопки «Записаться» в режим
+ * отправки (disabled + «Отправляем…»). Вызывается и рендером, и обработчиком
+ * клика — расхождение подписи и disabled исключено.
+ */
+function renderBookingSubmitState(submitting) {
+  const btn = $('#book-submit');
+  if (!btn) return;
+  const busy = submitting === undefined ? !!bookingVm.submitting : !!submitting;
+  btn.disabled = busy;
+  btn.classList.toggle('opacity-60', busy);
+  btn.classList.toggle('cursor-not-allowed', busy);
+  btn.textContent = busy ? 'Отправляем…' : 'Записаться';
+}
 
 function showToast(msg, isError) {
   const el = $('#toast');
@@ -271,8 +288,12 @@ window.addEventListener('hashchange', () => {
 window.navigate = navigate;
 // debug/тесты: доступ к внутренностям роутера (Hash History)
 window.__router = { routeFromUrl, routeUrl, normalizeLegacyUrl, hashPath, sameRoute };
-window.resetPortalData = () => {
-  if (!confirm('Сбросить все данные портала?')) return;
+window.resetPortalData = async () => {
+  if (!(await uiConfirm({
+    title: 'Сбросить данные портала?',
+    message: 'Локальное зеркало будет пересобрано заново. Данные на сервере не удаляются.',
+    confirmLabel: 'Сбросить'
+  }))) return;
   db.resetToSeed();
   authService.logout();
   navigate('portal');
@@ -373,12 +394,8 @@ window.sharePsyLink = async function (slug) {
   if (navigator.share) {
     try { await navigator.share({ title: document.title, text, url }); return; } catch (_) { /* отмена */ }
   }
-  try {
-    await navigator.clipboard.writeText(url);
-    showToast('Ссылка скопирована: ' + url);
-  } catch (_) {
-    window.prompt('Скопируйте ссылку:', url);
-  }
+  const copied = await copyText(url, { title: 'Ссылка записи', label: 'Ссылка' });
+  showToast(copied.ok ? 'Ссылка скопирована' : 'Скопируйте ссылку вручную', !copied.ok);
 };
 
 /** Диагностика сервера: что применено в БД, что нет (показывается в UI) */
@@ -814,19 +831,32 @@ function renderCabJournal() {
     btn.onclick = () => { cabinetVm.confirmSession(btn.dataset.jConfirm); renderCabJournal(); };
   });
   box.querySelectorAll('[data-j-note]').forEach(btn => {
-    btn.onclick = () => {
+    btn.onclick = async () => {
       const s = cabinetVm.sessions.find(x => x.id === btn.dataset.jNote);
-      const text = prompt('Запись о сессии (видна только вам):');
-      if (text?.trim() && s) {
+      if (!s) return;
+      const text = await uiPrompt({
+        title: 'Запись о сессии',
+        label: 'Видна только вам',
+        value: '',
+        placeholder: 'Что было на сессии, наблюдения, план работы…',
+        hint: 'Текст сохраняется в карточке клиента. При отмене введённое не теряется.',
+        key: `session-note-${s.id}`,
+        rows: 5
+      });
+      if (text?.trim()) {
         cabinetVm.addClientEntry({ clientId: s.clientId, sessionId: s.id, date: s.date, text: text.trim() });
         showToast('Запись сохранена в карточке клиента');
       }
     };
   });
   box.querySelectorAll('[data-j-noshow]').forEach(btn => {
-    btn.onclick = () => {
+    btn.onclick = async () => {
       const s = cabinetVm.sessions.find(x => x.id === btn.dataset.jNoshow);
-      if (s && confirm('Отметить неявку клиента?')) {
+      if (s && (await uiConfirm({
+        title: 'Отметить неявку клиента?',
+        message: `${s.date} ${s.time}`,
+        confirmLabel: 'Отметить неявку'
+      }))) {
         s.status = 'no_show';
         db.saveChanges();
         cabinetApi.pushSessionPatch(s.id, { status: 'no_show' });
@@ -1056,13 +1086,17 @@ function renderTgClients() {
   }).join('');
   box.querySelectorAll('[data-tg-copy-invite]').forEach(btn => {
     btn.onclick = async () => {
-      try { await navigator.clipboard.writeText(btn.dataset.tgCopyInvite); showToast('Ссылка-приглашение скопирована'); }
-      catch (_) { window.prompt('Скопируйте ссылку:', btn.dataset.tgCopyInvite); }
+      const r = await copyText(btn.dataset.tgCopyInvite, { title: 'Ссылка-приглашение', label: 'Ссылка' });
+      showToast(r.ok ? 'Ссылка-приглашение скопирована' : 'Скопируйте ссылку вручную', !r.ok);
     };
   });
   box.querySelectorAll('[data-tg-unlink]').forEach(btn => {
     btn.onclick = async () => {
-      if (!confirm('Отключить Telegram-уведомления этому клиенту?')) return;
+      if (!(await uiConfirm({
+        title: 'Отключить Telegram-уведомления?',
+        message: 'Клиент перестанет получать уведомления в Telegram.',
+        confirmLabel: 'Отключить'
+      }))) return;
       cabinetVm.setClientTelegramChat(btn.dataset.tgUnlink, '');
       renderTgClients();
     };
@@ -1182,8 +1216,8 @@ function bindClientTelegramBlock(box) {
   });
   box.querySelectorAll('[data-tg-copy]').forEach(btn => {
     btn.onclick = async () => {
-      try { await navigator.clipboard.writeText(btn.dataset.tgCopy); showToast('Ссылка скопирована'); }
-      catch (_) { window.prompt('Скопируйте ссылку:', btn.dataset.tgCopy); }
+      const r = await copyText(btn.dataset.tgCopy, { title: 'Ссылка', label: 'Ссылка' });
+      showToast(r.ok ? 'Ссылка скопирована' : 'Скопируйте ссылку вручную', !r.ok);
     };
   });
 }
@@ -1246,8 +1280,12 @@ function renderClientDetail() {
   });
   bindClientTelegramBlock(box);
   box.querySelectorAll('[data-del-entry]').forEach(btn => {
-    btn.onclick = () => {
-      if (confirm('Удалить запись?')) {
+    btn.onclick = async () => {
+      if (await uiConfirm({
+        title: 'Удалить запись?',
+        message: 'Запись журнала клиента будет удалена без восстановления.',
+        confirmLabel: 'Удалить'
+      })) {
         cabinetVm.removeClientEntry(btn.dataset.delEntry);
         renderCabClients();
       }
@@ -1904,7 +1942,10 @@ function renderBooking() {
     nextBtn.classList.toggle('opacity-50', !canNext);
     nextBtn.onclick = () => goStep(bookingVm.step + 1);
   }
-  if (submitBtn) submitBtn.classList.toggle('hidden', bookingVm.step !== 3);
+  if (submitBtn) {
+    submitBtn.classList.toggle('hidden', bookingVm.step !== 3);
+    renderBookingSubmitState();
+  }
   const navHint = $('#book-nav-hint');
   if (navHint) {
     navHint.textContent = bookingVm.step === 3
@@ -2201,7 +2242,9 @@ function bindEvents() {
   $('#onb-logout')?.addEventListener('click', () => { doLogout(); });
 
   // Cabinet nav
-  document.addEventListener('click', e => {
+  // async — внутри асинхронные UI-диалоги (#64): удаление сессии/клиента и
+  // отмена сессии спрашивают подтверждение через uiConfirm.
+  document.addEventListener('click', async e => {
     const nav = e.target.closest('.cab-nav-btn');
     if (nav?.dataset.tab) {
       cabinetVm.switchTab(nav.dataset.tab);
@@ -2210,7 +2253,11 @@ function bindEvents() {
     const es = e.target.closest('[data-edit-session]');
     if (es) openSessionModal(es.dataset.editSession);
     const ds = e.target.closest('[data-del-session]');
-    if (ds && confirm('Удалить сессию?')) {
+    if (ds && (await uiConfirm({
+      title: 'Удалить сессию?',
+      message: 'Сессия будет удалена из журнала и из расписания.',
+      confirmLabel: 'Удалить'
+    }))) {
       cabinetVm.deleteSession(ds.dataset.delSession);
       renderCabinet();
     }
@@ -2222,7 +2269,11 @@ function bindEvents() {
     const ec = e.target.closest('[data-edit-client]');
     if (ec) openClientModal(ec.dataset.editClient);
     const dc = e.target.closest('[data-del-client]');
-    if (dc && confirm('Удалить клиента?')) {
+    if (dc && (await uiConfirm({
+      title: 'Удалить клиента?',
+      message: 'Карточка клиента, его заметки и записи журнала будут удалены.',
+      confirmLabel: 'Удалить'
+    }))) {
       cabinetVm.deleteClient(dc.dataset.delClient);
       renderCabinet();
     }
@@ -2450,13 +2501,13 @@ function bindEvents() {
     await cabinetVm.syncGoogleCalendar();
     renderCabinet();
   });
-  $('#btn-copy-link')?.addEventListener('click', () => {
+  $('#btn-copy-link')?.addEventListener('click', async () => {
     const inp = $('#pub-link');
-    if (inp) {
-      inp.select();
-      try { navigator.clipboard.writeText(inp.value); } catch { /* */ }
-      showToast('Ссылка скопирована');
-    }
+    if (!inp) return;
+    // Копируем через Clipboard API; если контекст не-secure — sheet с готовым
+    // текстом (нативного prompt больше нет), тост говорит правду.
+    const r = await copyText(inp.value, { title: 'Публичная ссылка записи', label: 'Ссылка' });
+    showToast(r.ok ? 'Ссылка скопирована' : 'Скопируйте ссылку вручную', !r.ok);
   });
 
   // Session modal
@@ -2561,7 +2612,10 @@ function bindEvents() {
     }
   });
 
-  $('#book-submit')?.addEventListener('click', () => {
+  $('#book-submit')?.addEventListener('click', async () => {
+    // BL-05 (#64): повторный тап во время полёта игнорируется (вторая заявка
+    // не создаётся); кнопка на время async-шага disabled.
+    if (bookingVm.submitting) return;
     bookingVm.nickname = $('#bk-nickname')?.value || '';
     bookingVm.name = bookingVm.nickname;
     bookingVm.phone = $('#bk-phone')?.value || '';
@@ -2570,7 +2624,15 @@ function bindEvents() {
     bookingVm.consent = $('#bk-consent')?.checked ?? true;
     bookingVm.honeypot = $('#bk-website')?.value || '';
     (async () => {
-      const session = await bookingVm.submit();
+      renderBookingSubmitState(true);
+      let session = null;
+      try {
+        session = await bookingVm.submit();
+      } finally {
+        // Ошибка/отказ сервера возвращают кнопку в рабочее состояние —
+        // «залипшая» disabled-кнопка не должна блокировать повторную попытку.
+        renderBookingSubmitState(false);
+      }
       if (!session) {
         renderBooking();
         if (bookingVm.error) showToast(bookingVm.error, true);
@@ -2588,7 +2650,8 @@ function bindEvents() {
     })();
   });
 
-  document.addEventListener('click', e => {
+  // async — внутри подтверждение отмены сессии через uiConfirm (#64).
+  document.addEventListener('click', async e => {
     const payBtn = e.target.closest('[data-pay-demo]');
     if (payBtn) {
       const method = payBtn.dataset.payDemo;
@@ -2609,7 +2672,11 @@ function bindEvents() {
       renderCabinet();
     }
     const cancelSes = e.target.closest('[data-cancel-session]');
-    if (cancelSes && confirm('Отменить сессию?')) {
+    if (cancelSes && (await uiConfirm({
+      title: 'Отменить сессию?',
+      message: 'Слот освободится, клиенту уйдёт уведомление об отмене.',
+      confirmLabel: 'Отменить сессию'
+    }))) {
       cabinetVm.cancelSession(cancelSes.dataset.cancelSession);
       renderCabinet();
     }
@@ -2641,8 +2708,12 @@ function bindEvents() {
     showToast(res.message, !res.ok);
     renderClientReply();
   });
-  $('#btn-reply-no')?.addEventListener('click', () => {
-    if (!confirm('Отменить запись?')) return;
+  $('#btn-reply-no')?.addEventListener('click', async () => {
+    if (!(await uiConfirm({
+      title: 'Отменить запись?',
+      message: 'Специалист получит отказ, слот освободится.',
+      confirmLabel: 'Отменить запись'
+    }))) return;
     const res = reminderService.respond(pendingReplyToken || route.params.token, 'declined');
     showToast(res.message, !res.ok);
     renderClientReply();
@@ -2686,7 +2757,10 @@ function bindEvents() {
   });
 
   // Modal backdrop
-  $$('[id^="modal-"]').forEach(m => {
+  // Диалоги #modal-confirm/#modal-prompt закрывает сам uiDialogs (иначе промис
+  // остался бы вечно неразрешённым и вызывающий код ждал бы ответа).
+  const DIALOG_IDS = new Set(['modal-confirm', 'modal-prompt']);
+  $$('[id^="modal-"]').filter(m => !DIALOG_IDS.has(m.id)).forEach(m => {
     m.addEventListener('click', e => { if (e.target === m) closeModal(m.id); });
   });
 }
