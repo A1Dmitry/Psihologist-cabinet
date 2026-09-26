@@ -29,7 +29,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CSS_PATH = join(ROOT, 'css/tailwind.css');
 
 /** Классы-маркеры поведения (JS-селекторы) — стилей не имеют и не должны. */
-const BEHAVIORAL_CLASSES = new Set(['page', 'cab-nav-btn', 'cab-tab', 'pe-row', 'pe-list', 'book-step', 'own-page-btn']);
+const BEHAVIORAL_CLASSES = new Set(['page', 'cab-nav-btn', 'cab-tab', 'pe-row', 'pe-list', 'book-step', 'own-page-btn', 'wait-badge']);
 
 /** Форма токена, который вообще может быть utility-классом Tailwind. */
 const UTILITY_SHAPE = /^[a-z-][a-z0-9[\]/().:_-]*$/;

@@ -34,6 +34,7 @@ const SUITES = [
   ['D1: кабинет политики (overrides, лимиты, доступность услуги)', 'node', ['tests/cabinet-policy.mjs']],
   ['Воронка записи (wizard, слоты, пояса, server-first success)', 'node', ['tests/booking-wizard.mjs']],
   ['Мобильные диалоги/CTA и защита от двойной отправки (#64: MX-03/05/06, BL-05)', 'node', ['tests/mobile-ux.mjs']],
+  ['Мобильный кабинет 1.0: tab bar, sheet «Ещё», карточки с меню «…» (#63: MX-01/02/04)', 'node', ['tests/mobile-cabinet.mjs']],
   ['Issue #74: первый визит /book/{slug} — мастер переживает загрузку каталога', 'node', ['tests/booking-first-visit.mjs']],
   ['Клиентский Google Auth (опрос при записи): nonce, GoTrue, изоляция сессий, RPC bearer', 'node', ['tests/google-client-auth.mjs']],
   ['Вход специалиста через Google: PKCE, base path Pages, привязка без email из браузера', 'node', ['tests/google-oauth-client.mjs']],

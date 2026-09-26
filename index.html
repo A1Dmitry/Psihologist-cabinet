@@ -271,7 +271,7 @@
           <button data-tab="notepad" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Блокнот</button>
           <button data-tab="telegram" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Уведомления</button>
           <button data-tab="services" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Услуги</button>
-          <button data-tab="waiting" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800 flex justify-between">Ожидание <span id="wait-badge" class="bg-rose-500 text-[10px] px-1.5 rounded-full hidden">0</span></button>
+          <button data-tab="waiting" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800 flex justify-between">Ожидание <span id="wait-badge" class="wait-badge bg-rose-500 text-[10px] px-1.5 rounded-full hidden">0</span></button>
           <button data-tab="stats" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Статистика</button>
           <button data-tab="reminders" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Напоминания</button>
           <button data-tab="payments" class="cab-nav-btn w-full text-left px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800">Оплата и защита</button>
@@ -294,19 +294,20 @@
           <span class="font-semibold">Кабинет</span>
           <button onclick="navigate('portal')" class="text-sm text-slate-300">Портал</button>
         </div>
-        <div class="md:hidden flex overflow-x-auto gap-1 px-3 py-2 bg-white border-b text-sm">
-          <button data-tab="home" class="cab-nav-btn px-3 py-1.5 rounded-full bg-indigo-600 text-white whitespace-nowrap">Главная</button>
-          <button data-tab="journal" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Книга записей</button>
-          <button data-tab="schedule" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Расписание</button>
-          <button data-tab="blocks" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Занятость</button>
-          <button data-tab="clients" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Клиенты</button>
-          <button data-tab="tasks" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Задачи</button>
-          <button data-tab="notepad" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Блокнот</button>
-          <button data-tab="telegram" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Уведомления</button>
-          <button data-tab="waiting" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Ожидание</button>
-          <button data-tab="services" class="cab-nav-btn px-3 py-1.5 rounded-full bg-slate-100 whitespace-nowrap">Услуги</button>
-        </div>
-        <div class="p-4 sm:p-6 max-w-5xl">
+        <!-- Мобильная навигация кабинета (issue #63, MX-01/MX-02, F1): bottom tab bar —
+             4 ключевых раздела + «Ещё» (sheet `#modal-more` с остальными 11).
+             Все 15 разделов доступны со смартфона; чипов-ленты больше нет.
+             Активное состояние и бейдж ожидания выставляет renderCabinet(). -->
+        <nav id="cab-tabbar" class="cab-tabbar md:hidden bg-white border-t border-slate-200" aria-label="Навигация кабинета">
+          <div class="flex">
+            <button data-tab="home" class="cab-nav-btn cab-tabbar-btn text-indigo-600" aria-label="Главная"><span class="cab-tabbar-ico" aria-hidden="true">🏠</span><span>Главная</span></button>
+            <button data-tab="journal" class="cab-nav-btn cab-tabbar-btn text-slate-400" aria-label="Книга записей"><span class="cab-tabbar-ico" aria-hidden="true">📖</span><span>Журнал</span></button>
+            <button data-tab="schedule" class="cab-nav-btn cab-tabbar-btn text-slate-400" aria-label="Расписание"><span class="cab-tabbar-ico" aria-hidden="true">📅</span><span>Расписание</span></button>
+            <button data-tab="clients" class="cab-nav-btn cab-tabbar-btn text-slate-400" aria-label="Клиенты"><span class="cab-tabbar-ico" aria-hidden="true">👥</span><span>Клиенты</span></button>
+            <button id="cab-more-btn" type="button" class="cab-tabbar-btn text-slate-400" aria-haspopup="dialog" aria-label="Ещё: все разделы кабинета"><span class="cab-tabbar-ico" aria-hidden="true">⋯</span><span>Ещё</span><span class="wait-badge bg-rose-500 text-white text-[10px] px-1.5 rounded-full hidden">0</span></button>
+          </div>
+        </nav>
+        <div class="cab-content p-4 sm:p-6 max-w-5xl">
           <div id="tab-home" class="cab-tab">
             <h1 class="text-2xl font-bold mb-4">Главная</h1>
             <div class="grid lg:grid-cols-3 gap-5">
@@ -924,6 +925,35 @@
       <div class="flex gap-3 mt-6">
         <button id="sv-save" class="flex-1 py-2.5 rounded-full bg-indigo-600 text-white font-medium">Сохранить</button>
         <button onclick="closeModal('modal-service')" class="px-5 py-2.5 rounded-full border">Отмена</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== SHEET «ЕЩЁ» (issue #63, MX-01) ==========
+       Остальные 11 разделов кабинета для смартфона: тот же канон
+       `.modal-sheet`/`.modal-panel`, что у модалок кабинета и uiConfirm.
+       Кнопки — обычные .cab-nav-btn: переключение вкладок обрабатывает
+       существующая делегация в js/app.js, закрытие sheet — контроллер
+       js/views/cabinetMobile.js. Порядок и названия — как в сайдбаре. -->
+  <div id="modal-more" class="modal-sheet fixed inset-0 z-50 hidden items-center justify-center modal-bg p-4"
+       role="dialog" aria-modal="true" aria-label="Все разделы кабинета">
+    <div class="modal-panel bg-white rounded-2xl max-w-md w-full p-4 shadow-xl max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between mb-2 px-2">
+        <div class="font-semibold">Все разделы</div>
+        <button id="cab-more-close" type="button" class="w-11 h-11 inline-flex items-center justify-center rounded-full text-slate-500" aria-label="Закрыть">✕</button>
+      </div>
+      <div class="grid gap-1">
+        <button data-tab="blocks" class="cab-nav-btn w-full text-left px-4 py-3 rounded-xl min-h-[44px] bg-slate-100">Занятость</button>
+        <button data-tab="tasks" class="cab-nav-btn w-full text-left px-4 py-3 rounded-xl min-h-[44px] bg-slate-100">Задачи</button>
+        <button data-tab="notepad" class="cab-nav-btn w-full text-left px-4 py-3 rounded-xl min-h-[44px] bg-slate-100">Блокнот</button>
+        <button data-tab="telegram" class="cab-nav-btn w-full text-left px-4 py-3 rounded-xl min-h-[44px] bg-slate-100">Уведомления</button>
+        <button data-tab="services" class="cab-nav-btn w-full text-left px-4 py-3 rounded-xl min-h-[44px] bg-slate-100">Услуги</button>
+        <button data-tab="waiting" class="cab-nav-btn w-full text-left px-4 py-3 rounded-xl min-h-[44px] bg-slate-100">Ожидание</button>
+        <button data-tab="stats" class="cab-nav-btn w-full text-left px-4 py-3 rounded-xl min-h-[44px] bg-slate-100">Статистика</button>
+        <button data-tab="reminders" class="cab-nav-btn w-full text-left px-4 py-3 rounded-xl min-h-[44px] bg-slate-100">Напоминания</button>
+        <button data-tab="payments" class="cab-nav-btn w-full text-left px-4 py-3 rounded-xl min-h-[44px] bg-slate-100">Оплата и защита</button>
+        <button data-tab="link" class="cab-nav-btn w-full text-left px-4 py-3 rounded-xl min-h-[44px] bg-slate-100">Ссылка записи</button>
+        <button data-tab="profile" class="cab-nav-btn w-full text-left px-4 py-3 rounded-xl min-h-[44px] bg-slate-100">Профиль</button>
       </div>
     </div>
   </div>

@@ -30,6 +30,8 @@ import { registration } from './domain/registration.js';
 import { cabinetUi } from './views/cabinetUi.js';
 // MX-03 (#64): единственная каноническая замена нативных confirm()/prompt().
 import { uiConfirm, uiPrompt, copyText } from './views/uiDialogs.js';
+// MX-01/MX-02/MX-04 (#63): bottom tab bar + sheet «Ещё» + меню «…» в строках.
+import { bindCabinetMobile, closeMoreSheet, closeAllCabMenus } from './views/cabinetMobile.js';
 import { bookingTriageWizard } from './views/bookingTriageWizard.js';
 import { googleAuthService } from './services/googleAuthService.js';
 
@@ -325,6 +327,10 @@ window.resetPortalData = async () => {
 
 // ——— Views ———
 function render() {
+  // MX-01/MX-04 (#63): смена страницы закрывает sheet «Ещё» и меню «…» —
+  // они привязаны к кабинету и не должны переживать навигацию.
+  closeMoreSheet();
+  closeAllCabMenus();
   $$('.page').forEach(p => p.classList.add('hidden'));
   const map = {
     portal: 'page-portal',
@@ -622,7 +628,13 @@ function renderCabinet() {
 
   $$('.cab-nav-btn').forEach(btn => {
     const on = btn.dataset.tab === cabinetVm.tab;
-    if (btn.closest('aside')) {
+    if (btn.closest('#cab-tabbar')) {
+      // MX-02 (#63): активная вкладка таб-бара подсвечена индиго.
+      btn.classList.toggle('text-indigo-600', on);
+      btn.classList.toggle('text-slate-400', !on);
+      if (on) btn.setAttribute('aria-current', 'page');
+      else btn.removeAttribute('aria-current');
+    } else if (btn.closest('aside')) {
       btn.classList.toggle('bg-slate-800', on);
       btn.classList.toggle('font-medium', on);
       btn.classList.toggle('text-slate-300', !on);
@@ -633,12 +645,24 @@ function renderCabinet() {
     }
   });
 
-  const badge = $('#wait-badge');
-  if (badge) {
-    const n = cabinetVm.waiting.length;
-    if (n) { badge.textContent = n; badge.classList.remove('hidden'); }
-    else badge.classList.add('hidden');
+  // MX-01 (#63): «Ещё» активно, когда открыта вкладка из sheet — т.е. когда
+  // текущей вкладки нет среди кнопок таб-бара (выводится из DOM, без дубля
+  // списка разделов в JS).
+  const moreBtn = $('#cab-more-btn');
+  if (moreBtn) {
+    const inBar = $$('#cab-tabbar [data-tab]').some(b => b.dataset.tab === cabinetVm.tab);
+    moreBtn.classList.toggle('text-indigo-600', !inBar);
+    moreBtn.classList.toggle('text-slate-400', inBar);
+    if (!inBar) moreBtn.setAttribute('aria-current', 'page');
+    else moreBtn.removeAttribute('aria-current');
   }
+
+  // Бейдж «Ожидание»: сайдбар + таб-бар (класс .wait-badge на обоих).
+  const waitCount = cabinetVm.waiting.length;
+  $$('.wait-badge').forEach(badge => {
+    if (waitCount) { badge.textContent = waitCount; badge.classList.remove('hidden'); }
+    else badge.classList.add('hidden');
+  });
 
   if (cabinetVm.tab === 'home') {
     cabinetVm.refreshClients().then(() => renderCabHome());
@@ -673,6 +697,10 @@ function renderCabHome() {
     box.innerHTML = list.map(s => {
       const cl = cabinetVm.clientById(s.clientId);
       const sv = cabinetVm.serviceById(s.serviceId);
+      // MX-04 (#63): primary — первое действие десктопного порядка (оплата, если
+      // требуется, иначе «Изменить»); остальное — в меню «…». На десктопе обёртки
+      // display:contents, порядок и тексты кнопок — как раньше.
+      const payFirst = s.status === 'held' || (s.requiresPayment && s.paymentStatus === 'unpaid');
       return `<div class="flex items-center gap-4 p-4 border-b border-slate-50 last:border-0">
         <div class="w-1 h-12 rounded-full ${s.status === 'pending' ? 'bg-amber-400' : 'bg-indigo-400'}"></div>
         <div class="flex-1 min-w-0">
@@ -685,9 +713,18 @@ function renderCabHome() {
             ${s.changeConsentStatus === 'pending' ? ' · ⏳ ждём согласие на перенос' : ''}</div>
         </div>
         <span class="text-xs px-2 py-1 rounded-full ${statusClass(s.status)}">${statusLabel(s.status)}</span>
-        ${s.status === 'held' || (s.requiresPayment && s.paymentStatus === 'unpaid') ? `<button data-mark-paid="${s.id}" class="text-xs text-emerald-600">Чек/оплата</button>` : ''}
-        <button data-edit-session="${s.id}" class="text-xs text-indigo-600">Изменить</button>
-        <button data-no-show="${s.id}" class="text-xs text-slate-400">Неявка</button>
+        <div class="cab-actions-inline">
+          ${payFirst
+            ? `<button data-mark-paid="${s.id}" class="cab-primary text-xs text-emerald-600">Чек/оплата</button>`
+            : `<button data-edit-session="${s.id}" class="cab-primary text-xs text-indigo-600">Изменить</button>`}
+          <div class="cab-menu-wrap">
+            <button type="button" data-cab-menu="cab-menu-home-${s.id}" class="cab-menu-toggle" aria-haspopup="true" aria-expanded="false" aria-label="Другие действия">⋯</button>
+            <div id="cab-menu-home-${s.id}" class="cab-menu">
+              ${payFirst ? `<button data-edit-session="${s.id}" class="text-xs text-indigo-600">Изменить</button>` : ''}
+              <button data-no-show="${s.id}" class="cab-menu-danger text-xs text-slate-400">Неявка</button>
+            </div>
+          </div>
+        </div>
       </div>`;
     }).join('');
   }
@@ -745,8 +782,13 @@ function renderCabSchedule() {
         <div class="text-sm text-slate-500">закрыто от записи${b.dateTo && b.dateTo !== b.dateFrom ? ` · до ${esc(b.dateTo)}` : ''}${b.timeFrom ? ` · ${esc(b.timeFrom)}–${esc(b.timeTo || '')}` : ' · весь день'}</div>
       </div>
       <span class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">${esc(cabinetVm.blockKindLabels[b.kind] || 'Занят')}</span>
-      <button data-del-block="${esc(b.id)}" class="text-sm text-rose-500">Снять</button>
+      <button data-del-block="${esc(b.id)}" class="text-sm text-rose-500 min-h-[44px] inline-flex items-center">Снять</button>
     </div>`).join('');
+// MX-04 (#63): в строке расписания primary «Изменить» идёт в DOM раньше панели
+// «…» (мобильный порядок: primary слева, «…» справа), а визуально на десктопе —
+// «В календарь · Изменить · Удалить» как раньше: за это отвечают desktop-only
+// классы cab-ord-1/2/3 (см. css/tailwind.src.css). Порядок табов на десктопе
+// отличается от визуального на одну перестановку — зафиксировано в отчёте §5.
   box.innerHTML = blockRows + list.map(s => {
     const cl = cabinetVm.clientById(s.clientId);
     const sv = cabinetVm.serviceById(s.serviceId);
@@ -764,13 +806,19 @@ function renderCabSchedule() {
       <div class="flex-1"><div class="font-medium">${cl?.name || '—'}</div>
       <div class="text-sm text-slate-500">${sv?.name || ''} ${s.meetLink ? '· <a class="text-blue-600" href="'+s.meetLink+'" target="_blank">Meet</a>' : ''}</div></div>
       <span class="text-xs px-2 py-1 rounded-full ${statusClass(s.status)}">${statusLabel(s.status)}</span>
-      <a href="${esc(gcal)}" target="_blank" rel="noopener" class="text-sm text-emerald-600">В календарь</a>
-      <button data-edit-session="${s.id}" class="text-sm text-indigo-600">Изменить</button>
-      <button data-del-session="${s.id}" class="text-sm text-rose-500">Удалить</button>
+      <div class="cab-actions-inline">
+        <button data-edit-session="${s.id}" class="cab-primary cab-ord-2 text-sm text-indigo-600">Изменить</button>
+        <div class="cab-menu-wrap">
+          <button type="button" data-cab-menu="cab-menu-sch-${s.id}" class="cab-menu-toggle" aria-haspopup="true" aria-expanded="false" aria-label="Другие действия">⋯</button>
+          <div id="cab-menu-sch-${s.id}" class="cab-menu">
+            <a href="${esc(gcal)}" target="_blank" rel="noopener" class="cab-ord-1 text-sm text-emerald-600">В календарь</a>
+            <button data-del-session="${s.id}" class="cab-menu-danger cab-ord-3 text-sm text-rose-500">Удалить</button>
+          </div>
+        </div>
+      </div>
     </div>`;
   }).join('');
 }
-
 // ——— Книга записей ———
 function renderCabJournal() {
   const filtersBox = $('#journal-filters');
@@ -817,12 +865,19 @@ function renderCabJournal() {
         <span class="text-xs px-2 py-1 rounded-full ${statusClass(s.status)}">${statusLabel(s.status)}</span>
       </div>
       ${s.note ? `<div class="text-xs text-slate-400 mt-1 whitespace-pre-line">Комментарий к записи: ${esc(s.note)}</div>` : ''}
-      <div class="flex flex-wrap gap-3 mt-2 text-sm">
-        ${canConfirm ? `<button data-j-confirm="${s.id}" class="text-emerald-600">Подтвердить</button>` : ''}
-        <button data-edit-session="${s.id}" class="text-indigo-600">Перенести/изменить</button>
-        <button data-j-note="${s.id}" class="text-indigo-600">+ запись о сессии</button>
-        ${s.date >= todayStr() && !['cancelled', 'done', 'no_show'].includes(s.status) ? `<button data-j-noshow="${s.id}" class="text-slate-400">Неявка</button>` : ''}
-        <a href="${esc(gcal)}" target="_blank" rel="noopener" class="text-emerald-600">В календарь</a>
+      <div class="cab-actions flex flex-wrap gap-3 mt-2 text-sm">
+        ${canConfirm
+          ? `<button data-j-confirm="${s.id}" class="cab-primary text-emerald-600">Подтвердить</button>`
+          : `<button data-edit-session="${s.id}" class="cab-primary text-indigo-600">Перенести/изменить</button>`}
+        <div class="cab-menu-wrap">
+          <button type="button" data-cab-menu="cab-menu-j-${s.id}" class="cab-menu-toggle" aria-haspopup="true" aria-expanded="false" aria-label="Другие действия">⋯</button>
+          <div id="cab-menu-j-${s.id}" class="cab-menu">
+            ${canConfirm ? `<button data-edit-session="${s.id}" class="text-indigo-600">Перенести/изменить</button>` : ''}
+            <button data-j-note="${s.id}" class="text-indigo-600">+ запись о сессии</button>
+            ${s.date >= todayStr() && !['cancelled', 'done', 'no_show'].includes(s.status) ? `<button data-j-noshow="${s.id}" class="cab-menu-danger text-slate-400">Неявка</button>` : ''}
+            <a href="${esc(gcal)}" target="_blank" rel="noopener" class="text-emerald-600">В календарь</a>
+          </div>
+        </div>
       </div>
     </div>`;
   }).join('');
@@ -2159,6 +2214,8 @@ function renderSuccess() {
 
 // ——— Event bindings ———
 function bindEvents() {
+  // Мобильный кабинет (#63): тогглы «…», sheet «Ещё», закрытие по Escape/подложке.
+  bindCabinetMobile();
   // Реальные <a href> (индексируются) + SPA-навигация без перезагрузки
   document.addEventListener('click', e => {
     const bookA = e.target.closest('a[data-spa-book]');
@@ -2248,6 +2305,8 @@ function bindEvents() {
     const nav = e.target.closest('.cab-nav-btn');
     if (nav?.dataset.tab) {
       cabinetVm.switchTab(nav.dataset.tab);
+      // MX-01 (#63): выбор раздела в sheet «Ещё» закрывает sheet.
+      if (nav.closest('#modal-more')) closeMoreSheet();
       renderCabinet();
     }
     const es = e.target.closest('[data-edit-session]');
