@@ -2,8 +2,13 @@
 
 Цель этого документа — не просто перечислить функции, а организовать работы **по зависимостям**, чтобы параллельные работы не конфликтовали, не создавали вторые реализации одного домена и не опережали серверные инварианты.
 
-> **Статус сверки (issue #19, 2026-09-24, main @ `87e3951`):** статусы ниже
-> проверены против текущего кода/`schema.sql` (grep + `npm run verify` 22/22).
+> **Статус сверки (issue #50, 2026-09-26, main @ `a8953d1`):** статусы ниже
+> проверены против текущего кода/`schema.sql` (grep + `npm run verify` на `a8953d1`;
+> детали — `docs/ISSUE-50-REPORT.md`). Сверка #19 (2026-09-24, `87e3951`) закрыла
+> свой scope, но её verification gate не был выполнен до закрытия — post-facto
+> gate выполняется этой сверкой. **Канон входа специалиста — Google OAuth через
+> Supabase Auth** (решение владельца 2026-09-25, #88); Email/OTP/`auth-code`
+> для психолога CANCELLED и не восстанавливаются.
 > Production-статус любого ✅ не означает production deployment — production
 > только по фактическому evidence (`docs/INFRA.md`, `docs/CURRENT-STATE.md`).
 
@@ -23,9 +28,11 @@
 | Service → windows | ✅ T-04 |
 | Public free/busy | ✅ |
 | Google Calendar iCal groundwork | ✅ |
-| Payment policy groundwork | ✅ server authority в main (PR #25; #21 — код closed, гейты/production открыты) |
-| Client reply token | ✅ / расширяется T-12 |
-| Telegram psychologist notifications | ✅ T-16 (код; production-деплой функции — #35) |
+| Payment policy groundwork | ✅ server authority в main (PR #25; #21 закрыта 2026-09-25 — repo-часть + demo-pay honesty PR #56; production-гейт `create_booking`/anon отдельно) |
+| Client reply token | ✅ / расширяется T-12 (мини-кабинет клиента: .ics «В календарь» ✅ #65) |
+| Telegram psychologist notifications | ✅ T-16 (код; production-деплой `telegram-notify` — #35, LEAVE OPEN до не-404 ответа endpoint) |
+| Клиентский .ics «В календарь» (Apple/Outlook) | ✅ #65 (PR #73/#75; `tests/ics-event.mjs`) |
+| Вход специалиста Google OAuth | ✅ repo (#88, PR #89); production-активация — #40 |
 | Consent checkbox | ✅ T-25: факт + `consent_at` на сервере (`clients`, `booking_attempts`, PR #9); версия текста — #29 |
 | Waitlist storage | ⚠️ T-24 |
 | Client portal | ⚠️ T-12 |
@@ -51,50 +58,45 @@
 **0. TASK-P0-SUPABASE-PORTAL — безопасный портал психологов — P0 / НАИВЫСШИЙ ПРИОРИТЕТ**
 
 Канон задачи и статус: [`docs/TASK-P0-SUPABASE-PORTAL.md`](TASK-P0-SUPABASE-PORTAL.md)
-(сохранена 2026-09-24 по решению владельца, реализация не начата). Охватывает и
-поглощает цели #18/#23 в части email-redirect, одноразовой привязки и RLS-изоляции:
+(сохранена 2026-09-24 по решению владельца, реализация не начата; параметры
+раздела 4 по-прежнему не получены). Охватывает и поглощает цели #18/#23 в части
+email-redirect, одноразовой привязки и RLS-изоляции:
 `app_url + callback → подтверждение email → серверная привязка по коду →
-owner_id = auth.uid() → только свои данные`. Ниже идущие #18/#21/#22 не
-переопределяют этот контракт (`docs/RULES.md` §6.14 — один источник истины).
+owner_id = auth.uid() → только свои данные`. **Коррекция 2026-09-25 (канон #88):**
+login-часть (email-подтверждение/код) пересмотрена — единственный вход специалиста
+через Google OAuth; RLS-изоляция и неполученные параметры раздела 4 остаются
+нерешёнными. Ниже идущие #21/#22 не переопределяют этот контракт
+(`docs/RULES.md` §6.14 — один источник истины).
 
-**1. #18 — Production Auth / Registration E2E — P0**
+**1. #18 — Production Auth / Registration E2E — P0 — ✅ ЗАКРЫТА (2026-09-25)**
 
-Закрыть реальный production-контур:
+Преемник production-очереди — #46 (закрыта владельцем 2026-09-25, «historical»);
+production-остаток текущего канона — **#40** (Google-вход: provider/миграция/E2E)
+и **#35** (`telegram-notify` deploy). Реальный production E2E не проводился.
 
-`real email → OTP → Auth → owner_id=auth.uid() → cabinet → reload`
+**2. #21 — Server-authoritative Booking — P1 — ✅ ЗАКРЫТА (2026-09-25)**
 
-Статус (2026-09-24): код готов (PR #20/#25); production — ЗАБЛОКИРОВАНО
-доступами владельца (см. `docs/CURRENT-STATE.md`).
+`create_booking` деривирует оплату/длительность/hold серверно, anti-spam по
+`created_at`; п.4 (demo-pay honesty) закрыт PR #56. Production-гейт
+(`create_booking` для anon — PGRST202 на срезе 2026-09-25) учтён в
+`docs/CURRENT-STATE.md` и не даёт production-ready.
 
-**2. #21 — Server-authoritative Booking — P1**
+**3. #22 — Tenant Isolation / Anti-spam — P1 — ✅ ЗАКРЫТА (2026-09-25)**
 
-Сделать сервер единственным источником истины для booking status, payment state, amount, duration, hold expiry и booking-time validation.
+`client_risks` без политик для `anon`/`authenticated` (только
+`service_role`/security definer), `booking_attempts` tenant-scoped;
+LIVE-срез 2026-09-25 подтверждает запрет anon на `client_risks`.
 
-Статус (2026-09-24): **код merged в main (PR #25)** — `create_booking` деривирует
-оплату/длительность/hold серверно, anti-spam по `created_at`; независимый
-Challenger repo-части — в отчёте #34 (TASK 8). Открыто: production re-apply
-`schema.sql` + Main Re-Audit + server-side paid transition (T-17, demo-pay
-local-only).
+#18, #21 и #22 могли выполняться параллельно **только если они не изменяли один и
+тот же участок schema/RPC без координации**. Перед следующим phase обязателен Main Re-Audit.
 
-**3. #22 — Tenant Isolation / Anti-spam — P1**
+**4. #19 — Current-State Documentation — ✅ ЗАКРЫТА (2026-09-25), verification gate — post-facto #50**
 
-Закрыть cross-tenant reads, ownership, anti-spam и server-side identity.
-
-Статус (2026-09-24): **код merged в main (PR #25)** — `client_risks`
-без политик для `anon`/`authenticated` (только `service_role`/security definer),
-`booking_attempts` tenant-scoped. Открыто: Main Re-Audit/production (как #21).
-
-#18, #21 и #22 могут выполняться параллельно **только если они не изменяют один и тот же участок schema/RPC без координации**. Перед следующим phase обязателен Main Re-Audit.
-
-**4. #19 — Current-State Documentation**
-
-После #18/#21/#22 обновить единственный current-state source of truth. Исторические отчёты не переписывать.
-
-Статус (2026-09-24): **implementation completed; independent verification
-pending** — документационная часть (все 8 пунктов DoD) выполнена на main @
-`87e3951` (`docs/CURRENT-STATE.md`, баннеры historical, сверка ROADMAP/SR/RULES —
-`docs/ISSUE-19-REPORT.md`); independent Challenger + Main Re-Audit — **OPEN**.
-Закрывать #19 только после Challenger + Main Re-Audit (RULES §6.7).
+Документационная часть выполнена на main @ `87e3951` (`docs/ISSUE-19-REPORT.md`);
+закрыта **без** Challenger + Main Re-Audit вопреки собственному отчёту (§11) —
+верификационный gate этой сверки выполняется issue #50 (настоящая сверка,
+`docs/ISSUE-50-REPORT.md`). Kaizen-кандидат #19 §8 (ресинк CURRENT-STATE как
+артефакт Main Re-Audit) — решение сопровождающего, зафиксировано в #50.
 
 ### PHASE 2 — Existing Booking Foundation
 
@@ -119,7 +121,8 @@ max-advance, буферы, increment, service availability, `schedule_overrides`
 дневные/недельные лимиты), SR-D1 в `schema.sql`; регрессия —
 `tests/availability-policy.mjs`, `tests/availability-db.mjs`,
 `tests/availability-parity.mjs`, `tests/booking-e2e.mjs`.
-Production: re-apply `schema.sql` — pending (INFRA п.2).
+Production: схема SR-D1 применена владельцем 2026-09-25 (LIVE-срез); остаток —
+`create_booking` для anon (PGRST202) → публичная запись в production не работает.
 
 Канонический контракт:
 
@@ -205,9 +208,11 @@ Intake отдельно от consent. Это сбор данных, не диа�
 
 Не показывать success до подтверждения критической серверной операции.
 
-**23. T-16 — Psychologist Telegram — DONE**
+**23. T-16 — Psychologist Telegram — DONE (код)**
 
-Не переделывать без дефекта.
+Не переделывать без дефекта. Production-деплой функции `telegram-notify` — #35
+(после коррекции владельца #35 покрывает **только** telegram-notify; LEAVE OPEN
+до не-404 ответа endpoint).
 
 **24. T-19 — Payment Links in Notifications — P1/P2**
 
@@ -269,11 +274,14 @@ Intake отдельно от consent. Это сбор данных, не диа�
 
 ## 3. Dependency Graph
 
-`#15`
+(✅ — узел закрыт; production-нога теперь — #35 telegram-notify + #40 Google-вход;
+канон входа — Google OAuth, #88)
+
+`#15` ✅
 ` ↓`
-`#18 + #21 + #22`
+`#18` ✅ `+ #21` ✅ `+ #22` ✅
 ` ↓`
-`#19`
+`#19` ✅ (verification gate post-facto — #50)
 ` ↓`
 `T-01/T-02/T-03/T-04`
 ` ↓`
@@ -360,7 +368,9 @@ Local/PostgreSQL/CI ≠ production. Production-ready только после ф�
 D1 (единый Availability + Booking Policy Engine) — **реализован в main**
 (PR #32 + recovery #33, 2026-09-24). Следующие архитектурные узлы по
 dependency order: **D5** (server-enforced cancellation/reschedule policy) и
-**D2** (waitlist matching + exclusive claim); production-нога (#18/#35) остаётся
-P0 и держит Stop-the-Line до фактического production evidence.
+**D2** (waitlist matching + exclusive claim); production-нога остаётся блокером:
+**#35** (`telegram-notify` deploy, LEAVE OPEN до не-404) и **#40** (активация
+Google-входа + production E2E; канон — #88) держат production-ready закрытым
+до фактического production evidence.
 
 Все остальные booking-capabilities должны потреблять D1, а не реализовывать собственную копию.
