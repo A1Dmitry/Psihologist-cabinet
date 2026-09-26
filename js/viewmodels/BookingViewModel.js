@@ -85,6 +85,8 @@ export class BookingViewModel extends BaseViewModel {
     this.clientGoogleUser = null;
     this.consent = true;
     this.honeypot = ''; // bots fill this — must stay empty
+    // BL-05 (#64): true, пока идёт submit() — UI блокирует повторную отправку.
+    this.submitting = false;
     this.done = false;
     this.successText = '';
     this.createdSessionId = null;
@@ -912,6 +914,23 @@ export class BookingViewModel extends BaseViewModel {
   }
 
   async submit() {
+    // BL-05 / issue #64: защита от двойной отправки. Повторный вызов во время
+    // полёта (двойной тап на мобильном) не создаёт вторую заявку, не пишет
+    // вторую строку и не переводит UI в success. Флаг — presentation-состояние:
+    // порядок validate → server transaction → persist → success не меняется
+    // (RULES §6.14).
+    if (this.submitting) return false;
+    this.submitting = true;
+    this.notify();
+    try {
+      return await this._submitOnce();
+    } finally {
+      this.submitting = false;
+      this.notify();
+    }
+  }
+
+  async _submitOnce() {
     this.error = '';
     if (!this.psychologist) {
       this.error = 'Психолог не выбран';

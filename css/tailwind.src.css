@@ -22,3 +22,43 @@ body {
   background: rgba(15, 23, 42, .45);
   backdrop-filter: blur(4px);
 }
+
+/* ——— Мобильные sheets, safe-area и sticky CTA (issue #64, MX-03/MX-05/MX-06) ———
+ * Ниже `@tailwind utilities` → кастомные правила перекрывают utility-классы
+ * (тот же вес селектора, более поздний порядок). Десктопное поведение
+ * модалок/воронки не меняется: всё внутри media max-width: 767px. */
+
+/* Sticky-хедеры под «челкой» iPhone: padding = safe-area сверху. */
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+@media (max-width: 767px) {
+  /* Модалка → bottom-sheet: панель прижата к низу, во всю ширину, скроллится. */
+  .modal-sheet {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .modal-panel {
+    max-width: none;
+    width: 100%;
+    max-height: 92dvh;
+    overflow-y: auto;
+    border-radius: 1.25rem 1.25rem 0 0;
+    padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Sticky CTA воронки записи: кнопки «Далее/Записаться» всегда на экране. */
+  .book-cta {
+    position: sticky;
+    bottom: 0;
+    z-index: 40;
+    margin-left: -1rem;
+    margin-right: -1rem;
+    margin-bottom: -0.5rem;
+    padding: 0.75rem 1rem calc(0.75rem + env(safe-area-inset-bottom, 0px));
+    background: rgba(248, 250, 252, .96);
+    backdrop-filter: blur(6px);
+    border-top: 1px solid #e2e8f0;
+  }
+}

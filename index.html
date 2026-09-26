@@ -2,7 +2,9 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- viewport-fit=cover — обязательное условие для env(safe-area-inset-*) на iPhone
+       (issue #64, MX-05): без него safe-area снизу/сверху всегда 0. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <!-- ============ SEO: сайт как портал для специалистов И клиентов ============
        Индексация веб-пауками и индексаторами ведётся в позиции
        «мультипрофильный портал для специалистов (самозанятых, ИП) и
@@ -130,7 +132,7 @@
   <!-- Tailwind CSS — предсобранный файл вместо runtime CDN (cdn.tailwindcss.com
        не для продакшена). Пересборка: см. tailwind.config.js и css/tailwind.src.css;
        полнота набора классов проверяется tools/verify_tailwind.mjs. -->
-  <link rel="stylesheet" href="%BASE%css/tailwind.css?v=20260925-ics">
+  <link rel="stylesheet" href="%BASE%css/tailwind.css?v=20260926-mobile">
   <meta name="google-site-verification" content="iHgb0gtomBxqJ_Tx8QHGLZoJVMjGUJ2wWXIIPmHuo2w" />
 </head>
 <body class="bg-slate-50 text-slate-800 antialiased min-h-screen">
@@ -138,7 +140,7 @@
 
   <!-- ========== PORTAL ========== -->
   <div id="page-portal" class="page hidden">
-    <header class="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-100">
+    <header class="safe-top sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-100">
       <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
         <button onclick="navigate('portal')" class="font-bold text-lg text-indigo-700 tracking-tight">ПсихоПортал</button>
         <div class="flex items-center gap-3">
@@ -666,7 +668,7 @@
 
   <!-- ========== PSY PROFILE (SEO-лендинг специалиста) ========== -->
   <div id="page-profile" class="page hidden">
-    <header class="sticky top-0 z-40 bg-white border-b">
+    <header class="safe-top sticky top-0 z-40 bg-white border-b">
       <div class="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
         <button onclick="navigate('portal')" class="text-sm text-slate-500">← Каталог</button>
         <span class="font-semibold text-sm truncate max-w-[50%]" id="prof-header-name"></span>
@@ -678,7 +680,7 @@
 
   <!-- ========== BOOKING (запись — отдельный шаг) ========== -->
   <div id="page-booking" class="page hidden">
-    <header class="sticky top-0 z-40 bg-white border-b">
+    <header class="safe-top sticky top-0 z-40 bg-white border-b">
       <div class="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
         <button onclick="navigate('portal')" class="text-sm text-slate-500">← Каталог</button>
         <span class="font-semibold">Запись</span>
@@ -749,11 +751,14 @@
           </div>
         </section>
 
-        <!-- ——— Навигация по шагам ——— -->
-        <div class="flex items-center gap-3 mt-7">
+        <!-- ——— Навигация по шагам ———
+             MX-06 (issue #64): на мобильном блок прижат к низу экрана
+             (класс .book-cta → sticky + safe-area), на десктопе — обычный поток.
+             Шаг воронки, порядок validate → server transaction → persist — без изменений. -->
+        <div id="book-cta" class="book-cta flex items-center gap-3 mt-7">
           <button id="book-back" type="button" class="hidden px-5 py-3.5 rounded-full border border-slate-300 text-slate-700 font-medium hover:bg-slate-50">← Назад</button>
           <button id="book-next" type="button" class="flex-1 py-3.5 rounded-full bg-indigo-600 text-white font-semibold hover:bg-indigo-700">Далее</button>
-          <button id="book-submit" type="button" class="hidden flex-1 py-3.5 rounded-full bg-indigo-600 text-white font-semibold hover:bg-indigo-700">Записаться</button>
+          <button id="book-submit" type="button" class="hidden flex-1 py-3.5 rounded-full bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed">Записаться</button>
         </div>
         <p id="book-nav-hint" class="text-xs text-slate-400 mt-2.5 text-center"></p>
       </div>
@@ -763,7 +768,7 @@
 
   <!-- ========== CLIENT CABINET / REPLY (секретная ссылка клиента) ========== -->
   <div id="page-client-reply" class="page hidden">
-    <header class="sticky top-0 z-40 bg-white border-b">
+    <header class="safe-top sticky top-0 z-40 bg-white border-b">
       <div class="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
         <span class="font-semibold text-sm">ПсихоПортал · кабинет клиента</span>
         <button onclick="navigate('portal')" class="text-sm text-slate-500 hover:text-indigo-600">На портал</button>
@@ -808,8 +813,8 @@
   </div>
 
   <!-- Modals -->
-  <div id="modal-session" class="fixed inset-0 z-50 hidden items-center justify-center modal-bg p-4">
-    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl max-h-[90vh] overflow-y-auto">
+  <div id="modal-session" class="modal-sheet fixed inset-0 z-50 hidden items-center justify-center modal-bg p-4">
+    <div class="modal-panel bg-white rounded-2xl max-w-md w-full p-6 shadow-xl max-h-[90vh] overflow-y-auto">
       <h3 id="sess-modal-title" class="text-lg font-bold mb-4">Сессия</h3>
       <input type="hidden" id="sess-id">
       <div class="space-y-3 text-sm">
@@ -876,8 +881,8 @@
     </div>
   </div>
 
-  <div id="modal-client" class="fixed inset-0 z-50 hidden items-center justify-center modal-bg p-4">
-    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl">
+  <div id="modal-client" class="modal-sheet fixed inset-0 z-50 hidden items-center justify-center modal-bg p-4">
+    <div class="modal-panel bg-white rounded-2xl max-w-md w-full p-6 shadow-xl">
       <h3 class="text-lg font-bold mb-4">Клиент</h3>
       <input type="hidden" id="cl-id">
       <div class="space-y-3 text-sm">
@@ -894,8 +899,8 @@
     </div>
   </div>
 
-  <div id="modal-service" class="fixed inset-0 z-50 hidden items-center justify-center modal-bg p-4">
-    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl">
+  <div id="modal-service" class="modal-sheet fixed inset-0 z-50 hidden items-center justify-center modal-bg p-4">
+    <div class="modal-panel bg-white rounded-2xl max-w-md w-full p-6 shadow-xl">
       <h3 class="text-lg font-bold mb-4">Услуга</h3>
       <div class="space-y-3 text-sm">
         <div><label class="font-medium">Название *</label><input id="sv-name" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
@@ -923,6 +928,42 @@
     </div>
   </div>
 
-  <script type="module" src="%BASE%js/app.js?v=20260925-ics"></script>
+  <!-- ========== UI-ДИАЛОГИ (issue #64, MX-03) ==========
+       Единственная каноническая замена нативных confirm()/prompt():
+       js/views/uiDialogs.js. На мобильном — bottom-sheet (класс modal-sheet +
+       modal-panel): во всю ширину, со скроллом, с safe-area снизу; на десктопе —
+       привычное центрированное окно. Деструктивное подтверждение — красная кнопка. -->
+  <div id="modal-confirm" class="modal-sheet fixed inset-0 z-[60] hidden items-center justify-center modal-bg p-4"
+       role="dialog" aria-modal="true" aria-labelledby="ui-confirm-title">
+    <div class="modal-panel bg-white rounded-2xl max-w-md w-full p-6 shadow-xl">
+      <h3 id="ui-confirm-title" class="text-lg font-bold mb-2">Подтвердите действие</h3>
+      <p id="ui-confirm-message" class="text-sm text-slate-600 whitespace-pre-wrap"></p>
+      <div class="flex flex-col-reverse sm:flex-row gap-3 mt-6">
+        <button type="button" id="ui-confirm-ok"
+                class="flex-1 py-3 rounded-full bg-rose-600 text-white font-medium hover:bg-rose-700">Подтвердить</button>
+        <button type="button" id="ui-confirm-cancel"
+                class="flex-1 py-3 rounded-full border border-slate-300 text-slate-700 font-medium">Отмена</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-prompt" class="modal-sheet fixed inset-0 z-[60] hidden items-center justify-center modal-bg p-4"
+       role="dialog" aria-modal="true" aria-labelledby="ui-prompt-title">
+    <div class="modal-panel bg-white rounded-2xl max-w-md w-full p-6 shadow-xl">
+      <h3 id="ui-prompt-title" class="text-lg font-bold mb-4">Введите текст</h3>
+      <label id="ui-prompt-label" for="ui-prompt-text" class="text-sm font-medium"></label>
+      <textarea id="ui-prompt-text" rows="4"
+                class="w-full mt-1 px-3 py-2 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-300 resize-none"></textarea>
+      <p id="ui-prompt-hint" class="hidden text-xs text-slate-400 mt-2"></p>
+      <div class="flex flex-col-reverse sm:flex-row gap-3 mt-6">
+        <button type="button" id="ui-prompt-ok"
+                class="flex-1 py-3 rounded-full bg-indigo-600 text-white font-medium hover:bg-indigo-700">Сохранить</button>
+        <button type="button" id="ui-prompt-cancel"
+                class="flex-1 py-3 rounded-full border border-slate-300 text-slate-700 font-medium">Отмена</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="%BASE%js/app.js?v=20260926-mobile"></script>
 </body>
 </html>
