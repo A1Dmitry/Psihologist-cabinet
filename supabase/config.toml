@@ -9,12 +9,17 @@ project_id = "phiavtroybgwyjdhqqkh"
 # CLI (>= v1.178) применяет эти флаги при `supabase functions deploy`
 # (при деплое из Dashboard флаг задаётся вручную / --no-verify-jwt).
 #
-# `auth-code` здесь НАМЕРЕННО отсутствует: вход специалиста — только Google
-# OAuth через Supabase Auth (#88), почтовый код входа отменён, функция не
-# должна деплоиться или восстанавливаться (#35, коррекция 2026-09-25).
+# `auth-code` здесь НАМЕРЕННО отсутствует: почтовый код входа специалиста
+# отменён (#88). Web-вход — Google OAuth, Telegram Mini App — отдельная
+# функция `telegram-auth`; `auth-code` не должна деплоиться (#35).
 # Отсутствие секции — тоже защита: случайный `functions deploy auth-code`
 # уедет с verify_jwt=true (fail-closed), а не как анонимная выдача кодов.
 # Исходник supabase/functions/auth-code/ сохранён как legacy-контракт под
 # тестами (tests/auth-code-edge.mjs, tests/cors-contract.mjs), в прод не идёт.
 [functions.telegram-notify]
+verify_jwt = false
+
+# Telegram Mini App sends signed initData before the user has a Supabase session;
+# the function validates Telegram's HMAC itself and requires JWT only for `link`.
+[functions.telegram-auth]
 verify_jwt = false

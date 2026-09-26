@@ -462,6 +462,26 @@ export const supabaseApi = {
     return Array.isArray(rows) ? rows[0] : rows;
   },
 
+  /** Telegram self-signup/login; RPC accepts no client-supplied identity. */
+  async linkTelegramSpecialist() {
+    const rows = await request('rpc/link_or_create_psychologist_for_telegram', {
+      method: 'POST', body: JSON.stringify({})
+    });
+    return Array.isArray(rows) ? rows[0] : rows;
+  },
+
+  /** Telegram onboarding; server verifies auth.uid() and private Telegram mapping. */
+  async completeTelegramProfile({ fullName = '', phone = '', specialization = '', city = '', about = '' } = {}) {
+    const rows = await request('rpc/complete_telegram_psychologist_profile', {
+      method: 'POST',
+      body: JSON.stringify({
+        p_full_name: fullName, p_phone: phone, p_specialization: specialization,
+        p_city: city, p_about: about
+      })
+    });
+    return Array.isArray(rows) ? rows[0] : rows;
+  },
+
   /**
    * Онбординг: сохранить поля профиля и выставить profile_completed = true.
    * Пишет только поля существующей схемы: full_name, phone, specialization,

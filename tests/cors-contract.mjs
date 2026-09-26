@@ -74,6 +74,7 @@ function readCors(file) {
 
 const authCode = readCors('supabase/functions/auth-code/index.ts');
 const tgNotify = readCors('supabase/functions/telegram-notify/index.ts');
+const tgAuth = readCors('supabase/functions/telegram-auth/index.ts');
 
 ok('auth-code: Allow-Headers — канонический список Supabase', () => {
   eq(authCode.headers.join(', '), CANONICAL_HEADERS.join(', '), 'список заголовков');
@@ -85,14 +86,16 @@ ok('auth-code: Allow-Origin задан (иначе preflight не пройдёт
   truthy(authCode.origin === '*' || /^https?:\/\//.test(authCode.origin), authCode.origin);
 });
 
-/* ── B. Обе функции объявляют один контракт ─────────────────────────────── */
-ok('auth-code и telegram-notify: CORS-контракт идентичен', () => {
-  eq(tgNotify.headers.join(', '), authCode.headers.join(', '), 'Allow-Headers расходятся');
-  eq(tgNotify.methods.join(', '), authCode.methods.join(', '), 'Allow-Methods расходятся');
-  eq(tgNotify.origin, authCode.origin, 'Allow-Origin расходятся');
+/* ── B. Edge Functions объявляют один контракт ───────────────────────────── */
+ok('telegram-notify и telegram-auth: CORS-контракт идентичен', () => {
+  for (const cors of [tgNotify, tgAuth]) {
+    eq(cors.headers.join(', '), authCode.headers.join(', '), 'Allow-Headers расходятся');
+    eq(cors.methods.join(', '), authCode.methods.join(', '), 'Allow-Methods расходятся');
+    eq(cors.origin, authCode.origin, 'Allow-Origin расходятся');
+  }
 });
-ok('telegram-notify: Allow-Headers — канонический список Supabase', () => {
-  eq(tgNotify.headers.join(', '), CANONICAL_HEADERS.join(', '), 'список заголовков');
+ok('telegram-notify и telegram-auth: Allow-Headers — канонический список Supabase', () => {
+  for (const cors of [tgNotify, tgAuth]) eq(cors.headers.join(', '), CANONICAL_HEADERS.join(', '), 'список заголовков');
 });
 
 /* ── C. Allow-list покрывает то, что шлёт фронтенд ──────────────────────── */

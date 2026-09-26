@@ -14,14 +14,10 @@ name: Deploy Supabase Edge Functions
 # Когда секреты заданы и деплой выполнялся, неответ = красный (деплой не прошёл)
 # — зелёный статус означает «endpoint поднят» (#35).
 #
-# ОБЪЁМ ДЕПЛОЯ (каноническая коррекция #35 от 2026-09-25, #88): вход
-# специалиста — ТОЛЬКО Google OAuth через Supabase Auth. Почтовый код входа
-# отменён, поэтому Edge Function `auth-code` больше НЕ деплоится этим
-# workflow и НЕ должна отвечать в проде: «must not be deployed or restored».
-# Деплоится единственная функция — `telegram-notify` (серверные уведомления
-# владельца; вызывает js/services/telegramService.js). Финальный шаг проверяет
-# оба факта: telegram-notify отвечает, auth-code отсутствует. Появление
-# снятой функции в проде — это возрождение отменённого пути входа и красный.
+# Edge Functions: telegram-notify для уведомлений и telegram-auth для
+# Telegram Mini App входа (HMAC initData + серверная привязка к существующему
+# владельцу). Отменённая `auth-code` по-прежнему НЕ деплоится и не должна
+# отвечать в проде; Telegram-вход реализован отдельным защищённым endpoint.
 
 on:
   push:
@@ -55,8 +51,8 @@ jobs:
         if: ${{ env.SUPABASE_ACCESS_TOKEN == '' || env.SUPABASE_PROJECT_ID == '' }}
         run: |
           echo "::notice::SUPABASE_ACCESS_TOKEN (secret) или SUPABASE_PROJECT_ID (variable) не заданы."
-          echo "Деплой вручную: supabase functions deploy telegram-notify (см. docs/INFRA.md)."
-          echo "auth-code снята (#35/#88) и не деплоится: вход специалиста — только Google OAuth."
+          echo "Деплой вручную: supabase functions deploy telegram-notify и telegram-auth (см. docs/INFRA.md)."
+          echo "auth-code снята (#35/#88) и не деплоится; telegram-auth — отдельный путь входа Mini App."
 
       - name: Checkout
         if: ${{ env.SUPABASE_ACCESS_TOKEN != '' && env.SUPABASE_PROJECT_ID != '' }}
@@ -73,6 +69,7 @@ jobs:
         if: ${{ env.SUPABASE_ACCESS_TOKEN != '' && env.SUPABASE_PROJECT_ID != '' }}
         run: |
           supabase functions deploy telegram-notify --project-ref "$SUPABASE_PROJECT_ID" --no-verify-jwt
+          supabase functions deploy telegram-auth --project-ref "$SUPABASE_PROJECT_ID" --no-verify-jwt
 
       # Функция должна отвечать (не 404/401): пустой POST → 400 от
       # telegram-notify. Ранний детект случайного отката verify_jwt.
@@ -91,6 +88,17 @@ jobs:
               echo "::error::$fn недоступна после деплоя (HTTP $code) — проверьте verify_jwt."; exit 1
             fi
           done
+          # Для telegram-auth ожидаем прикладной 401 проверки initData;
+          # gateway-401 имеет другое тело и означает неверный verify_jwt.
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://${SUPABASE_PROJECT_ID}.supabase.co/functions/v1/telegram-auth" \
+            -H "Content-Type: application/json" -d '{}')
+          auth_code=$(printf '%s' "$response" | tail -n1)
+          auth_body=$(printf '%s' "$response" | sed '$d')
+          echo "telegram-auth -> HTTP $auth_code (invalid initData probe)"
+          if [ "$auth_code" != "401" ] || ! printf '%s' "$auth_body" | grep -q 'Некорректные данные Telegram'; then
+            echo "::error::telegram-auth не прошла signed-initData smoke (HTTP $auth_code)."; exit 1
+          fi
 
       # Preflight ровно как у браузера: OPTIONS + Origin приложения +
       # Access-Control-Request-*. Ожидание: 2xx и Allow-Origin/Allow-Methods.
@@ -99,7 +107,7 @@ jobs:
         env:
           ORIGIN: https://a1dmitry.github.io
         run: |
-          for fn in telegram-notify; do
+          for fn in telegram-notify telegram-auth; do
             hdrs=$(curl -s -D - -o /dev/null -X OPTIONS \
               "https://${SUPABASE_PROJECT_ID}.supabase.co/functions/v1/${fn}" \
               -H "Origin: ${ORIGIN}" \
@@ -145,7 +153,7 @@ jobs:
           }
 
           # 1) Требуемая функция: telegram-notify обязана отвечать (не 404).
-          for fn in telegram-notify; do
+          for fn in telegram-notify telegram-auth; do
             code=$(probe -X POST \
               "https://${PROJECT_REF}.supabase.co/functions/v1/${fn}" \
               -H "Content-Type: application/json" -d '{}')
@@ -171,7 +179,7 @@ jobs:
           fi
 
           # 3) Снятая функция: auth-code НЕ должна отвечать (#35 «must not be
-          # deployed or restored», #88 — вход только Google OAuth). Отсутствие
+          # deployed or restored», #88 — auth-code снята; web-вход Google + отдельный Telegram Mini App). Отсутствие
           # доказывается фактом gateway-404; «нет сети» (000) — это НЕ
           # доказательство отсутствия, а неизмеренность.
           retired_code=$(probe -X POST \
@@ -191,7 +199,7 @@ jobs:
           # секретов: это живая анонимная функция выдачи кодов, которой по канону
           # быть не должно. К «ожиданию владельца» это отношения не имеет.
           if [ "$revived" = "1" ]; then
-            echo "::error::auth-code отвечает в проде (HTTP $retired_code) — возрождён отменённый путь входа. Канон: #35/#88 (вход специалиста только Google OAuth), функция не должна быть задеплоена."
+            echo "::error::auth-code отвечает в проде (HTTP $retired_code) — возрождён отменённый путь входа. Канон: #35/#88 (auth-code — отменённый OTP-путь, Google + отдельный Telegram Mini App), функция не должна быть задеплоена."
             echo "::error::Действие владельца: Supabase Dashboard → Edge Functions → удалить auth-code (или supabase functions delete auth-code --project-ref ${PROJECT_REF})."
             exit 1
           fi
@@ -199,7 +207,7 @@ jobs:
           if [ "$missing" = "1" ]; then
             if [ "$HAS_SECRETS" = "true" ]; then
               echo "::error::telegram-notify не отвечает в проде (404/нет сети/preflight): деплой не выполнен или откатился. Блокер #35."
-              echo "::error::Действие владельца: docs/OWNER-CHECKLIST-E2E.md, Блок 1 (SUPABASE_ACCESS_TOKEN + SUPABASE_PROJECT_ID → supabase functions deploy telegram-notify --no-verify-jwt)."
+              echo "::error::Действие владельца: docs/TELEGRAM-MINIAPP-AUTH.md + docs/OWNER-CHECKLIST-E2E.md (секреты Supabase; deploy telegram-notify и telegram-auth)."
               exit 1
             else
               echo "::warning::telegram-notify не отвечает в проде (404/нет сети/preflight): деплой не выполнен — требуется действие владельца (блокер #35). CI остаётся зелёным (advisory), прод-проверка — в прод-зонде."
@@ -210,4 +218,4 @@ jobs:
           if [ "$unknown" = "1" ]; then
             echo "::warning::Прод-состояние измерено не полностью: по снятой auth-code ответа не получили. Это не «всё чисто»."
           fi
-          echo "telegram-notify отвечает в проде, снятая auth-code отсутствует — статус зелёный обоснован."
+          echo "telegram-notify и telegram-auth отвечают в проде, снятая auth-code отсутствует — статус зелёный обоснован."
