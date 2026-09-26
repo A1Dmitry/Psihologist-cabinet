@@ -1,20 +1,20 @@
 # Recovery orchestration — dependency ledger
 
 > **АУДИТОР: САМ** — repo-level synchronization audit, 2026-09-26 UTC (issue #50,
-> `EXEC--sg3Nf8dnc`). Это маршрут выполнения, а не новый источник требований
+> `EXEC-_k1zAnZrvi`). Это маршрут выполнения, а не новый источник требований
 > и не production-сертификация. Канонические критерии находятся в связанных Issues;
 > актуальное состояние — `docs/CURRENT-STATE.md`.
 
-**Current main:** `a8953d12cf4a623305936d951501321cafcd5d3e` (merge PR #91, 2026-09-25T18:42Z)
+**Current main:** `9171cc1090564346b7208b4a7e5dfe7b906e9394` (merge PR #98, 2026-09-26T12:12Z)
 
-**Исторические baseline:** `03c6fa5`, `87e3951`, `4d490d2`, `2d2897b`, `b1dbf1a`, `b0313e8`
+**Исторические baseline:** `03c6fa5`, `87e3951`, `4d490d2`, `2d2897b`, `b1dbf1a`, `b0313e8`, `a8953d1`, `a467553`
 относятся к предыдущим циклам (см. `docs/CURRENT-STATE.md`).
 
 | Очередь | Canonical issue | Условие перехода | Текущее состояние |
 |---|---|---|---|
 | P0 | #67 | TASK 1: production re-check без баннера + live-стек; TASK 2–5: UPDATE услуг до public booking, «Настройки», error contract, сейф UX; Challenger + Main Re-Audit по каждому TASK | OPEN / TASK 1 repo-фикс merged (PR #77/#85); TASK 2–5 не начаты |
 | P0 | #63 | Bottom tab bar + все 15 разделов со смартфона + карточные действия; `verify_pages.py` + `npm run verify`; Challenger + Main Re-Audit | OPEN / не начат |
-| P1 | #64 | Sheets вместо prompt/confirm, sticky CTA, safe-area, `submitting`-guard; двойной submit — негативный тест; Challenger + Main Re-Audit | OPEN / не начат |
+| P1 | #64 | Sheets вместо prompt/confirm, sticky CTA, safe-area, `submitting`-guard; двойной submit — негативный тест; Challenger + Main Re-Audit | OPEN / **реализовано в main** (PR #97, merge `a467553`; остаток: Challenger + устройство владельца) |
 | P1 | #35 | `telegram-notify` задеплоен; endpoint smoke не-404; raw live evidence (**только** telegram-notify — коррекция владельца 2026-09-25; LEAVE OPEN до не-404) | OPEN / деплой не подтверждён; блокер — секреты владельца |
 | P1 | #40 | Google provider включён (Client ID/Secret, Site URL/Redirects), миграция применена, реальный Google-вход E2E | OPEN / repo-канон закрыт (#88); production — OWNER ACTION REQUIRED |
 | P1 | #41 | Production E2E настоящего Google/Supabase + независимый Challenger (local mocks не закрывают) | OPEN / repo-часть merged (PR #62) |
@@ -42,7 +42,7 @@ Issues #18, #19, #21, #22, #30, #33, #34, #36, #46 больше не execution q
 ## Next execution sequence
 
 ```text
-CURRENT-STATE sync @ a8953d1 (issue #50 — этот ресинк)
+CURRENT-STATE sync @ 9171cc1 (issue #50 — этот ресинк)
         ↓
 владелец: Google provider + миграция (#40) + деплой telegram-notify (#35)
         ↓
@@ -91,6 +91,6 @@ A merge or green CI does not close a production/security gate. If a required P0/
 
 ---
 
-*Синхронизировано: 2026-09-26 UTC (issue #50, `EXEC--sg3Nf8dnc`); current main @
-`a8953d12cf4a623305936d951501321cafcd5d3e`. Production-строки — по LIVE-срезу
+*Синхронизировано: 2026-09-26 UTC (issue #50 — ресинк, исполнитель
+`EXEC-_k1zAnZrvi`); current main @ `9171cc1090564346b7208b4a7e5dfe7b906e9394` (PR #98). Production-строки — по LIVE-срезу
 2026-09-25 (см. `docs/CURRENT-STATE.md`), без свежей перепроверки.*

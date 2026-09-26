@@ -3,10 +3,10 @@
 > Единственный current-state source of truth. Исторические отчёты не переписываются и не заменяются этим документом.
 >
 > **АУДИТОР: САМ** для repo-фактов: код, тесты и документы проверены в сессии
-> issue #64 (`npm run verify` на снимке `main @ a467553` — 39 наборов, 1737 проверок,
-> **все зелёные**, включая новый `tests/mobile-ux.mjs`; гейт #92 исправлен в PR #95;
+> issue #50 (`npm run verify` на снимке `main @ 9171cc1` — 39 наборов, 1737 проверок,
+> **все зелёные** при наличии БД, включая новый `tests/mobile-ux.mjs`; гейт #92 исправлен в PR #95;
 > детали — `docs/ISSUE-64-REPORT.md`, `docs/MAIN-AUDIT-64.md`; `git`/`gh`-срез
-> трекера 2026-09-26T12:12Z).
+> трекера 2026-09-26T14:09Z).
 > **АУДИТОР: ВНЕШНИЙ** для production-фактов: последний срез живого проекта
 > `phiavtroybgwyjdhqqkh` снят `Production read-only probe` из runner'а GitHub Actions
 > (`tools/prod-probe/probe.mjs`) **2026-09-25** (05:53Z). Свежего LIVE-среза нет:
@@ -15,15 +15,15 @@
 
 ## Main SHA и активная ветка
 
-- **Актуальный `origin/main` при этой синхронизации:** `a4675537e1e783f6fa79f7bc8068a6599dcc1a87`
-  (merge PR #97 — mobile UX #64, 2026-09-26T12:08Z; deploy GitHub Pages по этому SHA — success).
-  Ветка `arena/01a0dd90-psihologist-cabinet` продолжает его локально.
+- **Актуальный `origin/main` при этой синхронизации:** `9171cc1090564346b7208b4a7e5dfe7b906e9394`
+  (merge PR #98 — docs sync #64 Main Re-Audit, 2026-09-26T12:12Z; deploy GitHub Pages по этому SHA — success).
+  Ветка `arena/01a0ddb8-psihologist-cabinet` продолжает его локально.
 - Исторические baseline: `dcb4093`, `0320c40`, `5d5636d` (PR #44), `03c6fa5` (PR #43),
   `87e3951`, `4d490d2`, `2d2897b`, `b1dbf1a` (PR #47), `ca3b23b` (PR #48), `d28ae94` (PR #52),
   `3d4210d` (PR #53), `3ebce1c` (PR #56), `938e7f6` (PR #58), `b0313e8` (PR #61).
 - Влито в main 2026-09-26 после `a8953d1`: #93/#94 (`ресинк current-state` + Main Re-Audit #50),
   #95 (#92 — `verify_cabinet` без дата-зависимости, PR #95), #96 (#66 — карта/мессенджеры,
-  PR #96), #97 (#64 — мобильные диалоги/CTA + защита от двойной отправки).
+  PR #96), #97 (#64 — мобильные диалоги/CTA + защита от двойной отправки), #98 (Main Re-Audit #64 sync, PR #98).
 - Влито в main 2026-09-25 после `b0313e8`: #62 (`triage + client Google auth`),
   #68 (`BA mobile`), #70/#71 (`claim-протокол` + Main Re-Audit #69), #72 (`RRSI §7`),
   #73/#75 (`.ics` клиенту, #65), #77 (`reload кабинета`, #67/#76), #78 (`первый визит`, #74),
@@ -79,7 +79,7 @@ Root cause (FACT по внешнему каналу): `supabase/schema.sql` пр
 устранено владельцем 2026-09-25; остаток — деплой `telegram-notify` и доступность
 `create_booking` для anon (причина различима только SQL-каналом владельца).
 
-## Repo-level состояние (факты на `a8953d1`)
+## Repo-level состояние (факты на `9171cc1`)
 
 Подтверждено наличием кода и прогоном тестов (`npm run verify`, `tests/*`;
 **внимание:** гейт не полностью зелёный — дата-зависимый набор
@@ -179,9 +179,9 @@ MAIN → AUDIT → DEFECT/REQUIREMENT → ISSUE → PRODUCER → TESTS → CHALL
 
 ---
 
-*Синхронизировано: 2026-09-26 UTC (issue #64 → Main Re-Audit, исполнитель
-`EXEC-zIPWd7Mtyl`; артефакт перехода Main Re-Audit → СТАНДАРТИЗАЦИЯ, RULES §6.7 п. 6);
-repo-state — `origin/main` @ `a467553` (PR #97 merged, deploy Pages success).
+*Синхронизировано: 2026-09-26 UTC (issue #50 — ресинк current-state, исполнитель
+`EXEC-_k1zAnZrvi`; артефакт перехода Main Re-Audit → СТАНДАРТИЗАЦИЯ, RULES §6.7 п. 6);
+repo-state — `origin/main` @ `9171cc1` (PR #98 merged, deploy Pages success).
 Документ фиксирует repo-state и LIVE-факты прода срезом 2026-09-25 (05:53Z) —
 свежего LIVE-среза в этой сессии нет (egress закрыт). Документ НЕ сертифицирует
 production-готовность: реальный E2E не проводился. Детали — `docs/ISSUE-64-REPORT.md`,
