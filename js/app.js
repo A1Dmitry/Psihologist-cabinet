@@ -1395,7 +1395,7 @@ function renderCabReminders() {
       <div>
         <div class="font-medium">${cl?.name || '—'} · ${s ? s.date + ' ' + s.time : ''}</div>
         <div class="text-slate-500 text-xs mt-1">на ${r.scheduledFor ? new Date(r.scheduledFor).toLocaleString('ru-RU') : '—'} · ${stMap[r.status] || r.status}</div>
-        ${r.status === 'sent' ? `<button type="button" data-open-token="${r.responseToken}" class="text-xs text-indigo-600 mt-1">Открыть ответ клиента (демо)</button>` : ''}
+        ${r.status === 'sent' ? `<button type="button" data-open-token="${r.responseToken}" class="text-xs text-indigo-600 mt-1">Записать ответ клиента</button>` : ''}
       </div>
       <div class="text-xs text-slate-400 max-w-xs line-clamp-2">${(r.messageBody || '').slice(0, 120)}…</div>
     </div>`;
@@ -2710,19 +2710,10 @@ function bindEvents() {
     }
   });
 
-  $('#btn-process-reminders')?.addEventListener('click', () => {
-    const res = cabinetVm.processReminders();
-    const box = $('#reminder-outbox');
-    if (box && res.outbox?.length) {
-      box.classList.remove('hidden');
-      box.innerHTML = '<div class="font-medium mb-2">Демо-исходящие сообщения:</div>' + res.outbox.map(o =>
-        `<div class="mb-3 border-b border-amber-100 pb-2"><div class="text-xs text-slate-500">→ ${o.to}</div><pre class="whitespace-pre-wrap text-xs mt-1">${o.body}</pre>
-         <button type="button" data-open-token="${o.token}" class="text-indigo-600 text-xs mt-1">Симулировать ответ клиента</button></div>`
-      ).join('');
-    }
-    renderCabinet();
-  });
-
+  // issue #121: симуляция «Отправить due сейчас» → «Демо-исходящие сообщения» /
+  // «Симулировать ответ клиента» снята: она помечала напоминания `sent` без
+  // доставки. Реальная отправка — telegramService.sendDueReminders (startTelegramLoops).
+  // Ниже — специалист записывает ответ клиента, полученный по телефону/в мессенджере.
   document.addEventListener('click', e => {
     const tok = e.target.closest('[data-open-token]');
     if (tok) {

@@ -29,7 +29,7 @@
  * поэтому все проверки здесь читают ТЕКУЩУЮ разметку контейнера после рендера,
  * а не кэш прежних узлов; браузерный смоук — verify_pages.py против devserver.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -73,6 +73,30 @@ check('A8 BookingViewModel: нет completePayment / demoPayIsLocalOnly / localO
     && !/localOnly:\s*true/.test(bvmSrc) && !bvmSrc.includes('paySession('));
 check('A9 bookingTriageWizard: нет демо-режима и «демо-заявки»',
   !/демо/i.test(wizardSrc));
+// A11–A12 (решение владельца 2026-09-26, «больше никаких демо»): демо/симуляций нет
+// нигде в продукте — ни на публичной странице, ни в кабинете. Свип по всему
+// исполняемому коду (index.html + js/**), комментарии исключены.
+const cabinetSrc = stripJsComments(readFileSync(join(ROOT, 'js/viewmodels/CabinetViewModel.js'), 'utf8'));
+const reminderSrc = stripJsComments(readFileSync(join(ROOT, 'js/services/reminderService.js'), 'utf8'));
+const paymentSrc = stripJsComments(readFileSync(join(ROOT, 'js/services/paymentService.js'), 'utf8'));
+check('A11 кабинет: нет симуляции напоминаний («Отправить due сейчас», outbox, «Симулировать ответ», processDue/processReminders, card_demo)',
+  !html.includes('btn-process-reminders') && !html.includes('reminder-outbox')
+    && !appSrc.includes('Симулировать') && !appSrc.includes('processReminders') && !appSrc.includes('(демо)')
+    && !cabinetSrc.includes('processReminders') && !reminderSrc.includes('processDue(')
+    && !paymentSrc.includes('card_demo') && !paymentSrc.includes('demo_'));
+const sweepFiles = ['index.html', 'privacy.html', ...readdirSync(join(ROOT, 'js'), { recursive: true })
+  .filter(f => String(f).endsWith('.js')).map(f => join('js', String(f)))];
+const sweepHits = [];
+for (const rel of sweepFiles) {
+  const raw = readFileSync(join(ROOT, rel), 'utf8');
+  const code = rel.endsWith('.html') ? stripHtmlComments(raw) : stripJsComments(raw);
+  code.split('\n').forEach((line, i) => {
+    if (/демо|demo|симул|simulat/i.test(line)) sweepHits.push(`${rel}:${i + 1}`);
+  });
+}
+check('A12 свип продукта (index.html, privacy.html, js/**): вне комментариев нет «демо/demo/симул»',
+  sweepHits.length === 0, sweepHits.slice(0, 8).join(', '));
+
 check('A10 catalogReady — один источник истины в PortalViewModel (DRY, RULES §6.14)',
   /get catalogReady\(\)/.test(portalVmSrc) && !/source === 'server' \|\| /.test(appSrc)
     && (appSrc.match(/portalVm\.catalogReady/g) || []).length >= 2);
