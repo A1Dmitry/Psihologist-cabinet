@@ -1513,42 +1513,87 @@ function renderProfile() {
         ${req.purpose ? `<div>Назначение платежа: ${esc(req.purpose)}</div>` : ''}
       </div>` : '';
 
-  // —— Контакты и связь: телефон + мессенджеры + соцсети (как принято на сайтах специалистов) ——
+  // —— Контакты и связь: телефон + мессенджеры + соцсети ——
   const digits = String(p.phone || '').replace(/\D/g, '');
   const tg = socials.find(x => x.kind === 'telegram' && x.url);
   const ig = socials.find(x => x.kind === 'instagram' && x.url);
+
+  const icons = {
+    phone: `<svg class="w-5 h-5 fill-current shrink-0" viewBox="0 0 24 24"><path d="M6.62 10.79a15.053 15.053 0 006.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></svg>`,
+    whatsapp: `<svg class="w-5 h-5 fill-current shrink-0" viewBox="0 0 24 24"><path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.299.412 2.503 1.112 3.487l-.729 2.661 2.728-.715a5.728 5.728 0 0 0 2.657.66h.002c3.181 0 5.767-2.586 5.768-5.766 0-3.18-2.586-5.767-5.77-5.767zm3.373 8.163c-.144.405-.837.774-1.17.825-.312.046-.72.072-2.132-.513-1.808-.748-2.955-2.593-3.045-2.713-.09-.12-.735-.978-.735-1.865 0-.887.465-1.323.63-1.492.165-.168.36-.21.48-.21.12 0 .24.001.345.006.111.006.261-.042.408.318.15.36.51 1.245.555 1.335.045.09.075.195.015.315-.06.12-.09.195-.18.3-.09.105-.189.235-.27.315-.09.09-.184.188-.079.368.105.18.468.772 1.004 1.238.689.598 1.27.784 1.45.874.18.09.285.075.39-.045.105-.12.45-.525.57-.705.12-.18.24-.15.405-.09.165.06 1.05.495 1.23.585.18.09.3.135.345.21.045.075.045.435-.099.84zm-3.373-10.335c-4.28 0-7.763 3.483-7.765 7.765 0 1.368.358 2.703 1.038 3.882L4 20l4.312-1.131a7.712 7.712 0 0 0 3.719 1.028h.003c4.281 0 7.764-3.483 7.765-7.765 0-4.282-3.483-7.765-7.768-7.765z"/></svg>`,
+    viber: `<svg class="w-5 h-5 fill-current shrink-0" viewBox="0 0 24 24"><path d="M19.67 15.74c-.67-.28-3.92-1.92-4.52-2.12-.61-.2-1.06-.28-1.51.28-.45.56-1.74 2.12-2.13 2.56-.39.44-.78.5-1.45.22-.67-.28-2.83-1.04-5.39-3.32-1.99-1.77-3.34-3.96-3.73-4.63-.39-.67-.04-1.03.24-1.31.25-.25.56-.67.84-1 .28-.33.37-.56.56-.95.19-.39.09-.73-.05-1.01-.14-.28-1.28-3.08-1.75-4.22-.46-1.11-.93-.96-1.28-.98-.33-.02-.71-.02-1.09-.02-.38 0-.99.14-1.51.56C.47 5.43 0 7.19 0 9.17c0 2.87.97 5.76 2.75 8.35 2.15 3.14 5.09 5.56 8.56 6.88 1.13.43 2.27.67 3.39.67 1.48 0 2.88-.41 3.99-1.2 1.48-1.05 2.31-2.61 2.31-4.28 0-.58-.11-1.16-.33-1.85z"/></svg>`,
+    telegram: `<svg class="w-5 h-5 fill-current shrink-0" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12s5.37 12 12 12 12-5.37 12-12S18.63 0 12 0zm5.56 8.16l-2.02 9.51c-.15.7-.56.87-1.13.54l-3.06-2.26-1.48 1.42c-.16.16-.3.3-.61.3l.22-3.11 5.66-5.12c.25-.22-.05-.34-.38-.13l-7 4.41-3.02-.95c-.66-.2-.67-.66.14-.98l11.8-4.55c.55-.2 1.03.14.88.92z"/></svg>`,
+    email: `<svg class="w-5 h-5 fill-current shrink-0" viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>`,
+    instagram: `<svg class="w-5 h-5 fill-current shrink-0" viewBox="0 0 24 24"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 2.156 4.919 5.406.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 5.234-4.919 5.383-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-2.199-4.919-5.424-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-5.234 4.919-5.383 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>`,
+    website: `<svg class="w-5 h-5 fill-current shrink-0" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>`
+  };
+
+  const iconBtnActive = (color) => `w-11 h-11 inline-flex items-center justify-center rounded-xl transition-all shadow-sm ${color}`;
+  const iconBtnDisabled = `w-11 h-11 inline-flex items-center justify-center rounded-xl bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed opacity-50`;
+
   const contactBtns = [
-    p.phone ? `<a href="tel:+${esc(digits)}" class="px-4 py-2 rounded-full bg-slate-900 text-white text-sm font-medium">📞 ${esc(p.phone)}</a>` : '',
-    digits ? `<a href="https://wa.me/${esc(digits)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full bg-emerald-500 text-white text-sm font-medium">WhatsApp</a>` : '',
-    digits ? `<a href="viber://chat?number=%2B${esc(digits)}" class="px-4 py-2 rounded-full bg-violet-600 text-white text-sm font-medium">Viber</a>` : '',
-    tg ? `<a href="${esc(tg.url)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full bg-sky-500 text-white text-sm font-medium">Telegram</a>` : '',
-    p.publicEmail ? `<a href="mailto:${esc(p.publicEmail)}" class="px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium">✉️ Email</a>` : '',
-    ig ? `<a href="${esc(ig.url)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium">Instagram</a>` : '',
-    p.website ? `<a href="${esc(p.website)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium">🌐 Сайт</a>` : ''
-  ].filter(Boolean).join('');
+    p.phone
+      ? `<a href="tel:+${esc(digits)}" title="Телефон: ${esc(p.phone)}" aria-label="Телефон: ${esc(p.phone)}" class="${iconBtnActive('bg-slate-900 text-white hover:bg-slate-800')}">${icons.phone}</a>`
+      : `<span class="${iconBtnDisabled}" title="Телефон не указан">${icons.phone}</span>`,
+
+    digits
+      ? `<a href="https://wa.me/${esc(digits)}" target="_blank" rel="noopener noreferrer" title="WhatsApp: +${esc(digits)}" aria-label="WhatsApp" class="${iconBtnActive('bg-emerald-600 text-white hover:bg-emerald-700')}">${icons.whatsapp}</a>`
+      : `<span class="${iconBtnDisabled}" title="WhatsApp недоступен">${icons.whatsapp}</span>`,
+
+    digits
+      ? `<a href="viber://chat?number=%2B${esc(digits)}" title="Viber: +${esc(digits)}" aria-label="Viber" class="${iconBtnActive('bg-purple-600 text-white hover:bg-purple-700')}">${icons.viber}</a>`
+      : `<span class="${iconBtnDisabled}" title="Viber недоступен">${icons.viber}</span>`,
+
+    tg
+      ? `<a href="${esc(tg.url)}" target="_blank" rel="noopener noreferrer" title="Telegram: ${esc(tg.url)}" aria-label="Telegram" class="${iconBtnActive('bg-sky-500 text-white hover:bg-sky-600')}">${icons.telegram}</a>`
+      : `<span class="${iconBtnDisabled}" title="Telegram не указан">${icons.telegram}</span>`,
+
+    p.publicEmail
+      ? `<a href="mailto:${esc(p.publicEmail)}" title="Email: ${esc(p.publicEmail)}" aria-label="Email" class="${iconBtnActive('border border-slate-300 text-slate-700 bg-white hover:bg-slate-50')}">${icons.email}</a>`
+      : `<span class="${iconBtnDisabled}" title="Email не указан">${icons.email}</span>`,
+
+    ig
+      ? `<a href="${esc(ig.url)}" target="_blank" rel="noopener noreferrer" title="Instagram: ${esc(ig.url)}" aria-label="Instagram" class="${iconBtnActive('bg-gradient-to-r from-purple-500 via-pink-500 to-amber-500 text-white hover:opacity-90')}">${icons.instagram}</a>`
+      : `<span class="${iconBtnDisabled}" title="Instagram не указан">${icons.instagram}</span>`,
+
+    p.website
+      ? `<a href="${esc(p.website)}" target="_blank" rel="noopener noreferrer" title="Сайт: ${esc(p.website)}" aria-label="Сайт" class="${iconBtnActive('border border-slate-300 text-slate-700 bg-white hover:bg-slate-50')}">${icons.website}</a>`
+      : `<span class="${iconBtnDisabled}" title="Сайт не указан">${icons.website}</span>`
+  ].join('');
 
   // —— Адрес практики и схема проезда (как на сайте специалиста) ——
   // MX-07: карта НЕ грузится автоматически (Google-embed в целевых сетях часто
   // недоступен и «подвешивает» страницу). По умолчанию — лёгкая заглушка
   // (адрес + кнопка), iframe (Яндекс по умолчанию, Google — альтернативой)
   // подгружается только по тапу — см. bindEvents() [data-map-load].
-  const mapQuery = [p.city, p.address].filter(Boolean).join(', ');
+  const rawAddr = (p.address || '').trim();
+  const city = (p.city || '').trim();
+  let mapQuery = rawAddr;
+  if (!mapQuery) {
+    mapQuery = city;
+  } else if (city && !rawAddr.toLowerCase().includes(city.toLowerCase())) {
+    mapQuery = `${city}, ${rawAddr}`;
+  }
+
   const addressHtml = (p.address || p.city) ? `
       <h3 class="font-semibold text-slate-900 mt-6">Адрес практики и проезд</h3>
-      <p class="mt-2 text-sm text-slate-700">${esc([p.address, p.city].filter(Boolean).join(', '))}</p>
+      <p class="mt-2 text-sm text-slate-700">${esc(rawAddr || city)}</p>
       ${p.address ? `
-      <div class="mt-3 rounded-xl overflow-hidden border" data-map-box data-map-query="${esc(mapQuery)}">
-        <div class="p-4 bg-slate-50 flex flex-col sm:flex-row sm:items-center gap-3">
-          <div class="text-sm text-slate-700 flex-1">📍 ${esc(p.address)}${p.city ? `, ${esc(p.city)}` : ''}</div>
-          <div class="flex flex-wrap gap-2 shrink-0">
-            <button type="button" data-map-load="yandex" class="px-4 py-2 rounded-full bg-slate-900 text-white text-sm font-medium">🗺️ Показать карту</button>
-            <button type="button" data-map-load="google" class="px-4 py-2 rounded-full border border-slate-300 bg-white text-slate-700 text-sm font-medium">Google</button>
+      <div class="mt-3 rounded-xl overflow-hidden border bg-slate-50" data-map-box data-map-query="${esc(mapQuery)}">
+        <div class="p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200">
+          <div class="text-sm font-medium text-slate-800 flex items-center gap-1.5">
+            <span>📍</span> ${esc(p.address)}${p.city && !p.address.toLowerCase().includes(p.city.toLowerCase()) ? `, ${esc(p.city)}` : ''}
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <button type="button" data-map-load="yandex" class="h-10 px-4 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors inline-flex items-center justify-center gap-1.5 min-w-[140px]">🗺️ Показать карту</button>
+            <button type="button" data-map-load="google" class="h-10 px-4 rounded-xl border border-slate-300 bg-white text-slate-700 text-sm font-medium hover:bg-slate-100 transition-colors inline-flex items-center justify-center gap-1.5 min-w-[100px]">Google</button>
           </div>
         </div>
+        <div data-map-frame class="hidden w-full bg-slate-100"></div>
       </div>
-      <div class="mt-2 flex flex-wrap gap-2">
-        <a href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(mapQuery)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium">🚗 Маршрут (Google Maps)</a>
-        <a href="https://yandex.ru/maps/?text=${encodeURIComponent(mapQuery)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium">🚕 Маршрут (Яндекс)</a>
+      <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+        <a href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(mapQuery)}" data-route-link target="_blank" rel="noopener noreferrer" class="h-11 inline-flex items-center justify-center gap-2 px-4 rounded-xl border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 text-sm font-medium transition-colors shadow-sm">🚗 Маршрут (Google Maps)</a>
+        <a href="https://yandex.ru/maps/?rtext=~${encodeURIComponent(mapQuery)}" data-route-link target="_blank" rel="noopener noreferrer" class="h-11 inline-flex items-center justify-center gap-2 px-4 rounded-xl border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 text-sm font-medium transition-colors shadow-sm">🚕 Маршрут (Яндекс)</a>
       </div>` : ''}` : '';
 
   // пометка первоисточника (фото/данные — с официального сайта специалиста, через БД портала)
@@ -1623,7 +1668,7 @@ function renderProfile() {
       ${addressHtml}
 
       ${contactBtns ? `<h3 class="font-semibold text-slate-900 mt-6">Связь и мессенджеры</h3>
-      <div class="mt-2 flex flex-wrap gap-2">${contactBtns}</div>` : ''}
+      <div class="mt-2.5 flex flex-wrap items-center gap-2">${contactBtns}</div>` : ''}
     </div>
     ${srcHost ? `<p class="mt-4 text-xs text-slate-400 text-center">Профиль из БД портала · фото и данные — с официального сайта: <a href="${esc(p.sourceUrl)}" target="_blank" rel="noopener" class="underline">${esc(srcHost)}</a></p>` : ''}`;
 
@@ -2305,18 +2350,52 @@ function bindEvents() {
     if (add) addPeRow(add.dataset.peAdd);
   });
 
-  // —— Схема проезда: iframe подгружается только по тапу (MX-07, issue #66) ——
-  // Яндекс — по умолчанию (целевой рынок), Google — явная альтернатива.
+  // —— Схема проезда: iframe подгружается по тапу (MX-07, issue #66) ——
+  // Яндекс — по умолчанию (целевой рынок), Google — альтернатива.
+  // Сохраняется возможность переключения между картами и адресная плашка.
   document.addEventListener('click', e => {
     const btn = e.target.closest('button[data-map-load]');
     if (!btn) return;
     const box = btn.closest('[data-map-box]');
     if (!box) return;
-    const q = box.dataset.mapQuery || '';
-    const src = btn.dataset.mapLoad === 'google'
+    const q = (box.dataset && box.dataset.mapQuery) || '';
+    const provider = (btn.dataset && btn.dataset.mapLoad) || 'yandex';
+    const src = provider === 'google'
       ? `https://maps.google.com/maps?q=${encodeURIComponent(q)}&z=15&output=embed`
       : `https://yandex.ru/map-widget/v1/?text=${encodeURIComponent(q)}&z=15`;
-    box.innerHTML = `<iframe src="${esc(src)}" width="100%" height="260" style="border:0" loading="lazy" title="Схема проезда" referrerpolicy="no-referrer-when-downgrade"></iframe>`;
+
+    // Переключение подсветки кнопок
+    const allBtns = box.querySelectorAll ? box.querySelectorAll('button[data-map-load]') : [];
+    allBtns.forEach(b => {
+      const isAct = b === btn;
+      if (isAct) {
+        b.className = 'min-h-[44px] px-4 py-2 rounded-full bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors';
+      } else {
+        b.className = 'min-h-[44px] px-4 py-2 rounded-full border border-slate-300 bg-white text-slate-700 text-sm font-medium hover:bg-slate-100 transition-colors';
+      }
+    });
+
+    const iframeHtml = `<iframe src="${esc(src)}" width="100%" height="260" style="border:0" loading="lazy" title="Схема проезда (${provider === 'google' ? 'Google Maps' : 'Яндекс.Карты'})" referrerpolicy="no-referrer-when-downgrade"></iframe>`;
+
+    const frame = box.querySelector ? box.querySelector('[data-map-frame]') : null;
+    if (frame) {
+      frame.innerHTML = iframeHtml;
+      if (frame.classList) frame.classList.remove('hidden');
+    } else {
+      box.innerHTML = iframeHtml;
+    }
+  });
+
+  // Открытие внешних ссылок на маршруты (гарантирует открытие из iframe песочниц)
+  document.addEventListener('click', e => {
+    const routeA = e.target.closest('a[data-route-link]');
+    if (routeA && routeA.href) {
+      try {
+        window.open(routeA.href, '_blank', 'noopener,noreferrer');
+      } catch {
+        // fallback to default browser navigation
+      }
+    }
   });
 
   // ——— Занятость: блокировки + Google Calendar ———
