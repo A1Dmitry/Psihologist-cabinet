@@ -106,7 +106,7 @@ function baseOf(pageUrl) {
   }
 }
 
-/** Хлебные крошки schema.org: ПсихоПортал → Специалист → (Запись). */
+/** Хлебные крошки schema.org: Портал профессиональных услуг → Специалист → (Запись). */
 export function buildBreadcrumbs(baseUrl, items) {
   const list = (items || []).filter(Boolean).map((it, i) => ({
     '@type': 'ListItem',
@@ -143,7 +143,7 @@ function reserveAction(bookUrl, psyName) {
  * этой метки в индекс попадали бы пустые карточки («Психолог не найден»).
  */
 export function applyNoIndex(reason = '') {
-  document.title = 'Страница не найдена — ПсихоПортал';
+  document.title = 'Страница не найдена — Портал профессиональных услуг';
   setRobots('noindex,nofollow');
   clearJsonLd();
   if (reason) console.info('[SEO] noindex:', reason);
@@ -211,7 +211,7 @@ export function buildProfileJsonLd(psy, services, pageUrl, { bookUrl } = {}) {
 
   const base = baseOf(pageUrl);
   const breadcrumbs = buildBreadcrumbs(base, [
-    { name: 'ПсихоПортал', url: base },
+    { name: 'Портал профессиональных услуг', url: base },
     { name: psy.fullName, url: pageUrl }
   ]);
 
@@ -242,7 +242,7 @@ export function applyProfileSeo(psy, services, pageUrl, { bookUrl } = {}) {
 export function applyPortalSeo(baseUrl) {
   const canonicalUrl = seoUrl(baseUrl);
   setMeta({
-    title: 'ПсихоПортал — кабинеты специалистов · запись на консультацию',
+    title: 'Портал профессиональных услуг — кабинеты специалистов · запись на консультацию',
     description: 'Каталог специалистов: публичный профиль, услуги и цены, онлайн-запись на консультацию. Минск, Гродно и вся Беларусь.',
     url: canonicalUrl,
     ogType: 'website'
@@ -250,7 +250,7 @@ export function applyPortalSeo(baseUrl) {
   setJsonLd({
     '@context': 'https://schema.org',
     '@type': 'WebSite',
-    name: 'ПсихоПортал',
+    name: 'Портал профессиональных услуг',
     url: canonicalUrl,
     potentialAction: {
       '@type': 'SearchAction',
@@ -272,8 +272,8 @@ export function applyBookingSeo(psy, pageUrl, { service } = {}) {
     ? `«${service.name}»${service.duration ? `, ${service.duration} мин` : ''}${service.price ? `, ${service.price} ${service.currency === 'RUB' ? 'рос. руб.' : 'бел. руб.'}` : ''}`
     : '';
   const title = svcText
-    ? `Запись на ${svcText} — ${psy.fullName} · ПсихоПортал`
-    : `Запись — ${psy.fullName} · ПсихоПортал`;
+    ? `Запись на ${svcText} — ${psy.fullName} · Портал профессиональных услуг`
+    : `Запись — ${psy.fullName} · Портал профессиональных услуг`;
   const description = `Онлайн-запись к специалисту ${psy.fullName}${psy.city ? ` (${psy.city})` : ''}`
     + `${svcText ? ` на ${svcText}` : ''}: выбор свободного времени в вашем часовом поясе`
     + ' и удобного способа оплаты. Без регистрации.';
@@ -286,7 +286,7 @@ export function applyBookingSeo(psy, pageUrl, { service } = {}) {
   });
   const base = baseOf(pageUrl);
   setJsonLd(buildBreadcrumbs(base, [
-    { name: 'ПсихоПортал', url: base },
+    { name: 'Портал профессиональных услуг', url: base },
     { name: psy.fullName, url: psy.slug ? `${base}psy/${encodeURIComponent(psy.slug)}` : null },
     { name: 'Запись' }
   ]));
