@@ -1,5 +1,6 @@
 # Инфраструктура продакшена — runbook и статус
 
+> **2026-09-26: Supabase Preview убран из аудиторов** — внешний check `Supabase Preview` (Supabase GitHub App, `https://supabase.com/dashboard/project/phiavtroybgwyjdhqqkh/branches`) **не является Quality Gate** и не блокирует PR. Для `docs/`-PR он `SKIPPED` (`This git branch is not associated with any Supabase Branch`) — это корректно. Quality Gate = `verify` + `probe` (см. `verify.yml`/`prod-probe.yml`).
 > Владелец процесса: Агент 1 (инфраструктура и интеграция).
 > Обновлено: 2026-09-23; сверено с main @ `87e3951` 2026-09-24 (issue #19) —
 > чек-лист без изменений по фактам (production-проверок из песочницы нет).
