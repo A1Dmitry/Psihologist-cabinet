@@ -2,161 +2,138 @@
 
 > Единственный current-state source of truth. Исторические отчёты не переписываются и не заменяются этим документом.
 >
-> **АУДИТОР: ВНЕШНИЙ** для production-фактов: сняты запросами к живому проекту
-> `phiavtroybgwyjdhqqkh` из runner'а GitHub Actions (`Production read-only probe`,
-> `tools/prod-probe/probe.mjs`), а не из песочницы исполнителя. Свежее LIVE-среза
-> нет (запуск probe из агентской сессии — 403; последний срез 2026-09-25).
-> **АУДИТОР: САМ** для repo-фактов: код и тесты проверены в сессии ресинка
-> (`node tools/verify_all.mjs` → 24/24, `verify_pages.py` → ALL PASS на `ca3b23b`).
-> Полные доказательства — `docs/ISSUE-46-EVIDENCE.md`, `docs/ISSUE-TRIAGE-2026-09-25.md` (§§8–10).
+> **АУДИТОР: САМ** для repo-фактов: код, тесты и документы проверены в сессии ресинка
+> issue #50 (`npm run verify` на `a8953d1` — 25 наборов, 1658 проверок, **1 красный
+> набор `verify_cabinet` — дефект гейта #92**, детали `docs/ISSUE-50-REPORT.md`;
+> `git`/`gh`-срез трекера 2026-09-26).
+> **АУДИТОР: ВНЕШНИЙ** для production-фактов: последний срез живого проекта
+> `phiavtroybgwyjdhqqkh` снят `Production read-only probe` из runner'а GitHub Actions
+> (`tools/prod-probe/probe.mjs`) **2026-09-25** (05:53Z). Свежего LIVE-среза нет:
+> запуск probe из агентской сессии — 403, egress из песочницы до `*.supabase.co` закрыт.
+> Всё, что не подтверждено тем срезом, остаётся **UNKNOWN** и не выдаётся за факт.
 
 ## Main SHA и активная ветка
 
-- **Актуальный `origin/main` при синхронизации:** `b0313e8` (2026-09-25); эта ветка продолжает его локально.
-- **Main Re-Audit `3ebce1c` (2026-09-25, сессия `arena/01a0d75b`):** гейт **26/26** наборов, **1227** проверок,
-  exit 0; независимый Challenger #51/#54 — `docs/ISSUE-51-54-CHALLENGER.md`
-- **Main Re-Audit `3d4210d` (2026-09-25):** гейт 25/25 наборов, 1180 проверок, exit 0; смоук 12 PASS, ALL PASS;
-  Pages: `quality-gate` 06:13:43→06:14:12Z, `deploy` 06:14:16→06:14:37Z (деплой после гейта)
-- **Наблюдение F4 в живом CI:** `Deploy Supabase Edge Functions` на `3d4210d` — `deploy-functions` **failure**
-  на шаге «Production reachability (gateway 404 = NOT deployed)» — ожидаемое красное, пока функции не задеплоены
-- Влито в main 2026-09-25: #47 (`b1dbf1a`), #48 (`ca3b23b`), #52 (`d28ae94`), #53 (`3d4210d`), #56 (`3ebce1c`), #58 (`938e7f6`)
-- Исторические baseline: `dcb4093`, `0320c40`, `5d5636d` (PR #44), `03c6fa5` (PR #43), `87e3951`, `4d490d2`.
+- **Актуальный `origin/main` при этой синхронизации:** `a8953d12cf4a623305936d951501321cafcd5d3e`
+  (merge PR #91, 2026-09-25T18:42Z). Ветка `arena/01a0dcec-psihologist-cabinet` продолжает его локально.
+- Исторические baseline: `dcb4093`, `0320c40`, `5d5636d` (PR #44), `03c6fa5` (PR #43),
+  `87e3951`, `4d490d2`, `2d2897b`, `b1dbf1a` (PR #47), `ca3b23b` (PR #48), `d28ae94` (PR #52),
+  `3d4210d` (PR #53), `3ebce1c` (PR #56), `938e7f6` (PR #58), `b0313e8` (PR #61).
+- Влито в main 2026-09-25 после `b0313e8`: #62 (`triage + client Google auth`),
+  #68 (`BA mobile`), #70/#71 (`claim-протокол` + Main Re-Audit #69), #72 (`RRSI §7`),
+  #73/#75 (`.ics` клиенту, #65), #77 (`reload кабинета`, #67/#76), #78 (`первый визит`, #74),
+  #80 (`specialist wording`), #81 (`тесты #36 + parity-флейк`), #82 (`SEO-портал`),
+  #83 (`карта проезда`, #66), #84/#86/#87/#90 (`#35 deploy-контур`), #85 (`snapshot parity`, #67),
+  #89 (`Google OAuth — единственный вход`, #88), #91 (`Google OAuth verification`).
 
-## Самая важная открытая задача — вход специалиста через Google (#88)
+## Канон входа специалиста (решение владельца, 2026-09-25)
 
-Канон входа с 2026-09-25 (issue #88): **Google OAuth via Supabase Auth only**.
-Email/OTP/`auth-code` для психолога — obsolete. Invitation-only SR-006 /
-`PSYCHOLOGIST-PORTAL-SECURITY-PLAN.md` для login-пути **сняты этим решением**.
+**Единственный вход специалиста — Google OAuth через Supabase Auth.** Email/OTP,
+`auth-code` и email-link для психолога **CANCELLED** (AUDIT CORRECTION владельца
+в #67, 2026-09-25T15:23Z; канон закреплён #88 → CLOSED, реализация PR #89).
+Ссылки на #46/#35/#40 как на «email-auth production queue» — исторические;
+восстанавливать OTP запрещено.
 
-Репозиторий: UI и boot переведены на Google. Production: **BLOCKED — OWNER
-ACTION REQUIRED** (провайдер Google выключен, миграция не применена).
-Клиентский Google при записи (#41) не является входом в кабинет.
+- **Сделано в репозитории:** кнопка Google, PKCE-callback на Pages без hash,
+  RPC поиска/привязки/создания профиля, онбординг, inactive-gate
+  (`public.is_active_own_psychologist()`), абсолютный срок сессии 30 дней,
+  выход, безопасные ошибки; privacy-страница + verification-файл + Client ID
+  для проверки домена Google (PR #91).
+- **Не сделано / BLOCKED — OWNER ACTION REQUIRED (#40, #35):** включить Google
+  provider в Supabase (Client ID/Secret, Site URL / Redirect URLs), применить
+  миграцию `supabase/migrations/20260925_google_specialist_signup.sql`,
+  задеплоить `telegram-notify` (#35 **только** telegram-notify после коррекции
+  владельца). LIVE-срез 2026-09-25: `external.google=false`.
+  Production E2E входа не проводился.
+- `key_verifier` — только сейф клиентов, не вход. Отключённый аккаунт не реактивируется входом.
+- Клиентский Google при записи с triage (#41) — другой актор (см. ниже).
 
-## Исполнение issue #46 (P0 EXECUTOR) — что сделано
+## Production — честный статус (LIVE-срез 2026-09-25, без свежей перепроверки)
 
-1. **Открыт LIVE-канал инспекции прода без секретов владельца:**
-   `tools/prod-probe/probe.mjs` + workflow `.github/workflows/prod-probe.yml`
-   (26 read-only зондов; отчёт публикуется комментарием в PR).
-2. **Production drift доказан живыми ответами, а не «неизвестно»:**
-   в проде отсутствуют SR-004 (`auth_login_codes.issued_token_hash/issues/consumed_at`),
-   SR-D1 (`schedule_overrides`, `public_schedule_overrides`,
-   `session_settings.min_notice_minutes`, `services.availability`),
-   а `create_booking` **недоступен роли anon** → публичная запись в проде не работает.
-3. **Edge Functions не задеплоены (LIVE):** `auth-code` и `telegram-notify` →
-   gateway `404 NOT_FOUND`. Деплой не имитировался: `BLOCKED — OWNER ACTION REQUIRED`.
-4. **Исправлены три красных набора** (гейт не защищал от регрессий):
-   `db-contract` (анти-спам не доходил до счётчика), `security-regression`
-   (даты попадали на выходные → T02 не выполнялся), `availability-db`
-   (коллизия недели в weekLimit). После фикса — 22/22 зелёные.
-5. **Auth-контракт #40 усилен (с тестами на настоящем PostgreSQL):**
-   вход больше не реактивирует отключённый аккаунт; канонический предикат
-   `public.is_active_own_psychologist()` закрывает RLS-доступ при деактивации;
-   абсолютный срок сессии — месяц (fail-closed), refresh его не удлиняет.
-6. **Документация:** `docs/ISSUE-46-EVIDENCE.md`, Блоки 7–8 в
-   `docs/OWNER-CHECKLIST-E2E.md` (read-only SQL для владельца + срок сессии).
-7. **PR #47 MERGED** (`b1dbf1a`), затем **PR #48 MERGED** (`ca3b23b`): честный канал
-   доставки кодового входа (`verificationHint` — «в запасном канале ссылка, а не код»)
-   + `#auth-code-hint` в форме (мёртвая ссылка `js/app.js:499` устранена).
-8. **Main Re-Audit мержа PR #48:** гейт 24/24 + `verify_pages.py` ALL PASS на `ca3b23b`
-   (`docs/ISSUE-TRIAGE-2026-09-25.md`, §9). Регрессий нет.
+**Production readiness НЕ подтверждена.** Основной путь (регистрация/вход
+специалиста, публичная запись) в production на момент среза не работал.
 
-## Production — честный статус
-
-**Production readiness НЕ подтверждена. Приложение в production НЕ работает**
-по основному пути (регистрация и публичная запись).
-
-LIVE-факты (срез 2026-09-25, `phiavtroybgwyjdhqqkh`; дрейф схемы закрыт
-владельцем между 04:55Z и 05:14Z — подробности `docs/ISSUE-46-EVIDENCE.md` §2bis):
-
-| Элемент | Статус | Класс |
+| Элемент | Статус (2026-09-25) | Класс |
 |---|---|---|
 | REST/PostgREST отвечает, каталог жив (2 активные анкеты) | работает | LIVE |
-| `auth-code` / `telegram-notify` | **не задеплоены** (404 NOT_FOUND; 05:14Z, 05:42Z, 05:53Z) | LIVE, блокер |
-| SR-001/SR-003 (`sessions.*`, `public_booked_slots.duration_min`) | применены | LIVE |
-| SR-004 (`auth_login_codes.issued_token_hash/issues/consumed_at`) | **применены** (было «отсутствует» до 05:14Z) | LIVE |
-| SR-D1 (`schedule_overrides`, `public_schedule_overrides`, колонки политик, `services.availability`) | **применены** | LIVE |
+| Схема SR-001/SR-003/SR-004/SR-D1 | применена владельцем 2026-09-25 (04:55Z–05:14Z) | LIVE |
 | `create_booking` для anon | **недоступен** (PGRST202) → публичная запись не работает | LIVE, блокер |
-| `client_risks` / `clients` / `payments` / `booking_attempts` для anon | закрыты (42501) — #22 в части грантов подтверждён | LIVE |
-| `auth_login_codes` строки для anon | `[]` (RLS без политик = deny) | LIVE |
-| Application origin | `https://a1dmitry.github.io/Psihologist-cabinet/` (не localhost) | LIVE |
-| Supabase Auth: `external.email=true`, `disable_signup=false`, `mailer_autoconfirm=false` | факт | LIVE |
-| Site URL / Redirect URLs в Auth | не подтверждено (Dashboard) | UNKNOWN |
-| Серверный срок сессии (≤ месяца) | не подтверждено | UNKNOWN |
-| Реальный registration E2E (код и ссылка) | не проведён | BLOCKED |
+| `client_risks`/`clients`/`payments`/`booking_attempts` для anon | закрыты (42501) | LIVE |
+| `auth_login_codes` строки для anon | `[]` (RLS deny) | LIVE |
+| Edge Functions (`telegram-notify`; `auth-code` — устарел по канону) | **не задеплоены** (gateway 404, 05:53Z); #35 LEAVE OPEN до не-404 ответа endpoint (комментарий владельца) | LIVE, блокер |
+| Application origin | `https://a1dmitry.github.io/Psihologist-cabinet/` | LIVE |
+| Supabase Auth | `external.email=true`, `external.google=false`, `disable_signup=false`, `mailer_autoconfirm=false` | LIVE |
+| Google provider / Site URL / Redirect URLs | не подтверждено | UNKNOWN |
+| Реальный вход/регистрация E2E (Google) | не проводился | BLOCKED |
 
-Root cause (FACT по внешнему каналу): `supabase/schema.sql` был применён не
-целиком — это устранено владельцем 2026-09-25; остаток — деплой Edge Functions
-и доступность `create_booking` для anon (причина различима только SQL-каналом).
+Repo-side деплой-контур после среза усилен (PR #84 preflight `auth-code`,
+#86 guard секретов в бандл, #87 advisory без секретов, #90 канон деплоя
+«вход только Google») — это repo-факты, **не** LIVE-доказательства деплоя.
 
-## Repo-level состояние
+Root cause (FACT по внешнему каналу): `supabase/schema.sql` применялся не целиком —
+устранено владельцем 2026-09-25; остаток — деплой `telegram-notify` и доступность
+`create_booking` для anon (причина различима только SQL-каналом владельца).
 
-По текущей ветке подтверждено наличие и работоспособность:
+## Repo-level состояние (факты на `a8953d1`)
 
-- registration domain / OTP flow, два входа (код и ссылка) в одну canonical-сессию;
-- отказ в доступе отключённому аккаунту (SQL + RLS + клиент);
-- абсолютный срок сессии (месяц) на клиенте + требование серверной настройки;
-- server-authoritative booking contract (`create_booking`) и D1 policy engine;
-- tenant isolation / anti-spam (по `created_at`), security-regression;
-- parity-матрица client↔server, booking E2E, harness guard;
-- read-only production probe (новый инструмент #46) + честная сводка измерения
-  (`measured`/`unreachable`, #54) и гейт workflow на «не измерено»;
-- честность самого гейта: silent-набор (0 проверок) и `FAIL` с любым отступом
-  краснеют (#51 и F2 из Challenger-аудита), деплой функций не бывает зелёным
-  без фактической доступности endpoint'ов;
-- Toyota Quality Gate / Producer + Challenger process.
+Подтверждено наличием кода и прогоном тестов (`npm run verify`, `tests/*`;
+**внимание:** гейт не полностью зелёный — дата-зависимый набор
+`tools/verify_cabinet.mjs` красный в Сб/Вс/Пн/Вт (дефект гейта, issue #92;
+продуктовый сценарий исправен; фикс — отдельной работой)):
 
-Это **repo + live-probe evidence**, а не production E2E.
+- **Вход специалиста:** Google OAuth через Supabase Auth (PKCE, RPC-привязка,
+  онбординг) — `tests/google-oauth-client.mjs` (60/60), `tests/google-specialist-signup.mjs`;
+- **Клиентский Google при triage-записи (#41):** GIS + `signInWithIdToken`,
+  изоляция сессий, отрицательные контроли — `tests/google-client-auth.mjs` (21/21);
+- **Сейф клиентов** (`key_verifier`), отключённый аккаунт не реактивируется;
+- **server-authoritative booking** (`create_booking`), D1 policy engine
+  (`js/domain/availability.js` + серверный близнец, parity-матрица, booking E2E);
+- **tenant isolation / anti-spam** (`client_risks`, `booking_attempts`);
+- **demo-pay honesty** (#21 п.4) — local-only UX, `tests/demo-pay-honesty.mjs`;
+- **reload-parity кабинета** (#67 TASK 1): single-source snapshot manifest +
+  `tests/db-snapshot-parity.mjs`; runtime «Задачи»/заметки/записи переживают reload;
+- **первый визит `/book/{slug}` и `/psy/{slug}`** (#74): мастер переживает загрузку
+  каталога — `tests/booking-first-visit.mjs` (14/14);
+- **`.ics` «В календарь» клиенту** (#65): `tests/ics-event.mjs`, `tests/ics-success-page.mjs`;
+- **карта проезда без Google-провала** (#66, MX-07): lazy-load по тапу, Яндекс embed
+  по умолчанию, Google — альтернатива; текстовые маршруты сохранены (`renderProfile()`);
+- **claim-протокол исполнителей** (#69): `tools/claim.mjs`, `.claims/**`,
+  `tests/executor-claims.mjs` в общем гейте, `RULES.md` §6.17;
+- **честность гейта** (#36/#51/#54): silent-suite и FAIL-отступ краснеют;
+  prod-probe сводка «измерено/недоступно» + workflow-гейт на `unreachable`;
+- **harness/безопасность:** `tests/harness-guard.mjs`, `tests/no-committed-secrets.mjs`;
+- **RRSI** (§7) — контур самообучения исполнителей (`docs/RRSI-CACHE.md`);
+- **SEO-портал** (#82): `js/services/seoService.js`, hash-роутинг `#/psy/{slug}`.
 
-## Открытые критические контуры
+Это **repo + тестовые доказательства**, а не production E2E.
+
+## Открытые контуры (трекер на 2026-09-26)
 
 | Issue | Priority | Current status |
 |---|---:|---|
-| #46 | P0 | EXECUTOR + Challenger (TASK 7) выполнены (PR #53, `docs/ISSUE-46-CHALLENGER.md`); production-разблокировка — за владельцем (деплой функций, SQL по `create_booking`); Main Re-Audit — после merge |
-| #35 | P1 | Edge Functions deployment — **LIVE-подтверждено: не задеплоены** (срез 05:53Z 2026-09-25); блокер на владельце; `supabase-deploy.yml` теперь краснеет без деплоя (F4) |
-| #40 | P1 | Требования закрыты в repo (входы, inactive-гейт, срок сессии) с тестами; production E2E — BLOCKED |
-| #21 | P1 | Server-authoritative booking — repo merged, включая п.4: демо-оплата при живом Supabase больше не пишет «оплата прошла» (local-only UX + negative `tests/demo-pay-honesty.mjs`); production-гейт: `create_booking` для anon недоступен (LIVE); Challenger + Main Re-Audit OPEN |
-| #22 | P2 | Tenant isolation / anti-spam — repo merged + тесты; `client_risks` закрыт в проде (LIVE) |
-| #34 | P1 | Challenger recovery + свежий Main Re-Audit — OPEN (проверялся 4d490d2, main ушёл на ca3b23b) |
-| #36 | P2 | Harness false-green — **DoD выполнен, к закрытию владельцем**: свежий независимый Challenger на `5f20349` ≡ `938e7f6` (`docs/ISSUE-36-CHALLENGER.md`): сырьё A1/A2/B/C повторено, все три канала красные; гейт 26/26. Закрытие — за владельцем: у App-токена нет `issues:write`, auto-close не срабатывает от merge App'ом |
-| #51 | P2 | Silent suite (0 проверок, exit 0) — **CLOSED**: независимый Challenger + Main Re-Audit на `3ebce1c` (`docs/ISSUE-51-54-CHALLENGER.md`): повтор атаки C2 → гейт красный; 26/26 зелёные |
-| #54 | P2 | Probe-сводка «drift 0» без измерений — **CLOSED**: Challenger PASS (`docs/ISSUE-51-54-CHALLENGER.md`): blackhole → `измерено: 0/26`, `HTTP_0` устранён, workflow-гейт на `unreachable>0`, live-прогон читаем (Actions 06:55Z) |
-| #50 | P2 | Docs resync — этот файл, `INFRA.md` и `ISSUE-46-EVIDENCE.md` синхронизированы с продом (05:53Z); остаток #50 — RECOVERY-ORCHESTRATION/ROADMAP, Challenger + Main Re-Audit |
-| #41 | P1 | Client Google identity — requirements open (LIVE: external.google=false) |
-| #27–#31 | BA | Продуктовый backlog; не дефекты |
+| #67 | P0 | Owner cabinet: TASK 1 (reload/«Задачи») исправлен (PR #77/#85) — production re-check и live-стек по TASK 1 открыты; TASK 2 (UPDATE услуг до public booking), TASK 3 («Настройки»), TASK 4 (error contract), TASK 5 (сейф UX) — не начаты. Auth-зависимость → #88 (коррекция владельца) |
+| #63 | P0 | Мобильный кабинет 1.0 (bottom tab bar, 15 разделов, карточные действия) — **не начат** (в `index.html` мобильной таб-полосы нет) |
+| #64 | P1 | Мобильные диалоги/CTA: sheets вместо prompt/confirm, sticky CTA, safe-area, guard двойной отправки — **не начат** (`prompt()`/`confirm()` на месте, `submitting`-флага нет) |
+| #66 | P2 | Карта проезда (MX-07) — **реализация в main** (PR #83, DoD выполнен: lazy-load, Яндекс по умолчанию, verify_pages зелёный). Остаток: закрытие (комментариев/claim-release в Issue нет; карточка `.claims/issue-66.*` — `active`/STALE) |
+| #69 | P0 PROCESS | Claim-протокол — **реализован в main** (PR #70/#71, Main Re-Audit #69, тесты в гейте). Остаток формальный: CLAIM-комментарии не публикуются (у интеграции нет `issues:write`) → «живая проверка маркера» ограничена карточками ветки; закрытие |
+| #50 | P2 | Этот ресинк (CURRENT-STATE/RECOVERY/ROADMAP + verification gate #19 + решение по Kaizen-кандидату) |
+| #35 | P1 | **Только** telegram-notify (коррекция владельца): деплой + endpoint smoke не-404; блокер — секреты владельца. LEAVE OPEN (комментарий владельца 2026-09-25) |
+| #40 | P1 | Google OAuth: repo-канон закрыт (#88); production-активация (Google provider, миграция, URL) + production E2E — BLOCKED на владельце |
+| #41 | P1 | Client Google identity при triage: repo-часть в main (PR #62, тесты 21/21); по Acceptance — production E2E (настоящий Google/Supabase) + независимый Challenger обязательны, local mocks не закрывают |
+| #27–#29, #31 | BA | Продуктовый backlog (не дефекты); триаж 2026-09-25: не стартовать до разблокировки production (#46-очередь закрыта владельцем; условие остаётся в силе для BA-слоя) |
 
-Закрыты 2026-09-25 и перепроверены: #15 (Quality Gate DONE), #49 (probe-мусор),
-#21, #22, #34, #51, #54 (владельцем; независимый Challenger + Main Re-Audit по
-#51/#54 — `docs/ISSUE-51-54-CHALLENGER.md`).
-Готов к закрытию владельцем (DoD выполнен, evidence на main): #36
-(`docs/ISSUE-36-CHALLENGER.md`).
-Закрыты ранее: #7, #8, #11, #14, #18, #19, #23, #30, #33 (вердикты — триаж §3).
-
-## Целевой authentication contract и фактическое состояние
-
-```text
-Google OAuth → Supabase Auth → auth.uid() → только свой активный кабинет
-```
-
-Канон issue #88 (2026-09-25): **единственный** вход специалиста — Google через
-Supabase Auth. Email/OTP/`auth-code` и email-link для психолога сняты из UI и
-из boot-пути. Клиентский Google при записи (#41) — другой актор.
-
-- **Сделано в репозитории:** кнопка Google, PKCE callback на Pages без hash,
-  RPC поиска/привязки/создания, онбординг, inactive-gate, срок сессии 30 дней,
-  выход, безопасные ошибки (без stack; код обращения на unexpected).
-- **Не сделано / BLOCKED — OWNER ACTION REQUIRED:** включить Google provider,
-  Site URL/Redirect URLs, Client ID/Secret, применить миграцию
-  `supabase/migrations/20260925_google_specialist_signup.sql`. LIVE-срез:
-  `external.google=false`. Production E2E не проводился.
-- `key_verifier` — только сейф клиентов, не вход.
-- Отключённый аккаунт не реактивируется входом.
+Закрыты и перепроверены триажем: #7, #8, #11, #14, #15, #18, #19, #21, #22, #23, #30,
+#33, #34, #36, #46, #49, #51, #54, #65, #74, #76, #88 (вердикты — `docs/ISSUE-TRIAGE-2026-09-25.md`,
+§§3–4; закрытия после триажа — по evidence в PR #58/#59/#60/#61 и владельцу).
 
 ## Schema / SR status
 
-`supabase/schema.sql` содержит SR-001…SR-004, SR-D1 и фиксы #21/#22 плюс
-канонический предикат `is_active_own_psychologist` (#40/#46).
-**Production отличается от репозитория** — конкретный список drift см. в
-`docs/ISSUE-46-EVIDENCE.md`, §2. Устранение — действие владельца (Блок 2).
+`supabase/schema.sql` содержит SR-001…SR-004, SR-D1, фиксы #21/#22, канонический
+предикат `is_active_own_psychologist` (#40/#46) и Google-migration-контракт
+(`supabase/migrations/20260925_google_specialist_signup.sql`). **Production
+отличалась от репозитория** на срезе 2026-09-25 — конкретный список drift —
+`docs/ISSUE-46-EVIDENCE.md`, §2. Применение остатков — действие владельца.
+Изменения схемы — только через `docs/SCHEMA-REQUESTS.md`.
 
 ## Quality Gate status
 
@@ -164,33 +141,35 @@ Supabase Auth. Email/OTP/`auth-code` и email-link для психолога с�
 MAIN → AUDIT → DEFECT/REQUIREMENT → ISSUE → PRODUCER → TESTS → CHALLENGER → MERGE → MAIN RE-AUDIT → STANDARDIZE
 ```
 
-Текущие блокеры:
+Текущие блокеры (в порядке зависимостей):
 
-1. production-активация владельцем: деплой `auth-code` / `telegram-notify` + SQL по
-   `create_booking` (схема SR-004/SR-D1 уже применена 2026-09-25) — `docs/OWNER-CHECKLIST-E2E.md`;
-2. реальный registration E2E после деплоя (код и ссылка) — `tools/prod-e2e.mjs`;
-3. закрытие #46 владельцем по готовым evidence (Challenger PASS) + Main Re-Audit;
-4. свежий Challenger по #34 на актуальном SHA и завершение #50 (RECOVERY/ROADMAP).
+1. Владелец: включить Google provider + URL/миграцию (#40) и задеплоить
+   `telegram-notify` (#35) → реальный вход/регистрация E2E (`tools/prod-e2e.mjs`);
+2. Владелец/SQL-канал: `create_booking` для anon (PGRST202) → публичная запись в production;
+3. #67 TASK 2–5 (owner cabinet) и мобильный пакет #63/#64 — по очереди;
+4. #41: production E2E + независимый Challenger; #66/#69 — закрытие по готовому evidence.
 
 ## Next actions — dependency order
 
-1. Merge PR #53 (Challenger #46 + честность гейта/деплоя/probe) → Main Re-Audit нового `main`.
-2. Владелец: Блок 1 (деплой функций: `SUPABASE_ACCESS_TOKEN` + `SUPABASE_PROJECT_ID`) → Блоки 3–4 (Resend/секреты/URL).
-3. Владелец: Блок 7 (SQL: `pg_proc` + гранты `create_booking`; при корректной сигнатуре — reload кэша PostgREST).
-4. Повторный прогон `Production read-only probe`: ждём `измерено: 26/26` и `drift 0` по Edge Functions.
-5. Владелец: Блок 5 (`tools/prod-e2e.mjs --email … --link …`) → реальный E2E: код, ссылка, reload, повторный вход.
-6. Закрытие #46 по готовому evidence (#36/#51/#54 закрыты — Challenger PASS,
-   `docs/ISSUE-36-CHALLENGER.md`, `docs/ISSUE-51-54-CHALLENGER.md`), затем фичи BA-очереди (#27–#31).
+1. Владелец: Блок Google provider (#40) + деплой `telegram-notify` (#35) → повторный
+   `Production read-only probe` (ждём `измерено: 26/26`, не-404 по функции).
+2. Владелец/SQL: гранты `create_booking` для anon → публичная запись живая.
+3. #67 TASK 2 (UPDATE услуг → public booking) → TASK 3 («Настройки») → TASK 4 (error contract).
+4. Мобильный пакет: #63 (bottom tab bar) → #64 (sheets/CTA) — presentation-layer,
+   «готово» только после `verify_pages.py` + `npm run verify`.
+5. Закрытие #66/#69 по готовому evidence; BA-очередь (#27–#31) — после production-разблокировки.
 
 ## Historical documents
 
 Исторические отчёты не переписываются: `docs/ISSUE-14-REPORT.md`,
-`docs/ISSUE-14-CHALLENGER.md`, `docs/ISSUE-15-REPORT.md`,
-`docs/QUALITY-GATE-REPORT.md`, `docs/D1-REPORT.md`, `docs/ISSUE-34-REPORT.md`,
-`docs/ISSUE-34-TRIAGE.md`, `docs/ISSUE-19-REPORT.md`, `docs/AUDIT-2026-09-25.md`.
+`docs/ISSUE-14-CHALLENGER.md`, `docs/ISSUE-15-REPORT.md`, `docs/QUALITY-GATE-REPORT.md`,
+`docs/D1-REPORT.md`, `docs/ISSUE-34-REPORT.md`, `docs/ISSUE-34-TRIAGE.md`,
+`docs/ISSUE-19-REPORT.md`, `docs/AUDIT-2026-09-25.md`, `docs/ISSUE-TRIAGE-2026-09-25.md`.
 
 ---
 
-*Синхронизировано: 2026-09-25 UTC; `main` @ `3d4210d` (PR #53 merged). Документ фиксирует repo-state и LIVE-факты прода (срез 05:53Z): схема
-применена владельцем, блокеры — Edge Functions и `create_booking` для anon.
-Документ НЕ сертифицирует production-готовность: реальный E2E не проведён.*
+*Синхронизировано: 2026-09-26 UTC (issue #50, исполнитель `EXEC--sg3Nf8dnc`);
+repo-state — `origin/main` @ `a8953d1` (PR #91 merged). Документ фиксирует
+repo-state и LIVE-факты прода срезом 2026-09-25 (05:53Z). Документ НЕ сертифицирует
+production-готовность: реальный E2E не проводился. Детали ресинка и verification
+gate закрытой #19 — `docs/ISSUE-50-REPORT.md`.*
