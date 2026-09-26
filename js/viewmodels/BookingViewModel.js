@@ -873,42 +873,22 @@ export class BookingViewModel extends BaseViewModel {
   }
 
   /**
-   * Демо-кнопка на публичной странице — не эквайринг и не server-ack (#21 п.4).
-   * Когда запись уже на сервере (Supabase настроен), «оплата прошла» было бы
-   * ложным успехом: меняется только localStorage, RPC/payments не вызываются.
-   * Локальный демо-контур без сервера может подтверждать запись в этом браузере.
-   */
-  get demoPayIsLocalOnly() {
-    return !supabaseSync.enabled();
-  }
-
-  /**
-   * Единственный источник копирайта панели оплаты: UI не решает сам,
-   * показывать ли демо-кнопки, которые притворяются эквайрингом.
+   * Единственный источник копирайта панели оплаты (#21 п.4 → ужесточено
+   * issue #121, R14): эквайринга на сайте нет, поэтому у панели ровно один
+   * режим — серверный резерв, который подтверждает специалист в кабинете.
+   * Демо-кнопок «оплатить (демо)» / «я перевёл(а)» нет ни при живом сервере,
+   * ни без него: без сервера запись вообще не создаётся (см. _persistBooking),
+   * а «оплата», меняющая только localStorage, — ложный успех.
    */
   get paymentCheckout() {
-    if (!this.awaitingPayment) return { visible: false, allowDemoPay: false };
+    if (!this.awaitingPayment) return { visible: false };
     const due = this.paymentInfo?.amountDueNow ?? this.paymentInfo?.amountDue ?? 0;
     const currency = this.paymentInfo?.currency || 'BYN';
-    const dueLabel = paymentService.formatAmount(due, currency);
-    if (this.demoPayIsLocalOnly) {
-      return {
-        visible: true,
-        mode: 'local-demo',
-        title: 'Подтверждение оплаты (демо)',
-        lead: this.successText,
-        dueLabel,
-        allowDemoPay: true,
-        footnote: 'Демо: оплата сохраняется только в этом браузере. На сервер она не уходит.'
-      };
-    }
     return {
       visible: true,
-      mode: 'server-hold',
       title: 'Ожидание оплаты',
       lead: this.successText,
-      dueLabel,
-      allowDemoPay: false,
+      dueLabel: paymentService.formatAmount(due, currency),
       footnote: 'Оплата на сайте не проводится. Переведите сумму по реквизитам психолога — он подтвердит запись в кабинете. Неоплаченный резерв снимается автоматически.'
     };
   }
@@ -1088,9 +1068,10 @@ export class BookingViewModel extends BaseViewModel {
     if (persisted.sessionId) session.id = persisted.sessionId;
     if (persisted.clientId) session.clientId = persisted.clientId;
     if (persisted.durationMin) session.durationMin = persisted.durationMin;
-    // При серверном успехе не оставляем служебную карточку в локальном кеше
-    // публичного браузера: на сервере она уже лежит в sessions.note (RLS — владелец).
-    if (this.triageAssessment && !persisted.localOnly) {
+    // Успех здесь — только серверный (issue #121: localOnly-успеха больше нет),
+    // поэтому служебную карточку опроса в локальном кеше публичного браузера
+    // не оставляем: на сервере она уже лежит в sessions.note (RLS — владелец).
+    if (this.triageAssessment) {
       session.note = formatBookingSessionNote(this.note, null);
       db.saveChanges();
     }
@@ -1140,15 +1121,19 @@ export class BookingViewModel extends BaseViewModel {
    * повторно проверяет занятость и анти-спам, поэтому клиентская проверка
    * доступности выше — это UX, а не гарантия.
    *
-   * @returns {Promise<{ok: boolean, message?: string, sessionId?: string, clientId?: string, durationMin?: number|null, localOnly?: boolean}>}
+   * Контракт результата (issue #121, R14; RULES §6.14): подтверждено (`ok:true`
+   * с серверными id) либо отклонено (`ok:false` + причина). Третьего —
+   * «сохранено только в этом браузере» — нет: ненастроенный сервер означает,
+   * что онлайн-запись недоступна, и клиент видит именно это, а не «заявка
+   * отправлена».
+   *
+   * @returns {Promise<{ok: boolean, message?: string, sessionId?: string, clientId?: string, durationMin?: number|null}>}
    */
   async _persistBooking(session, client) {
     if (!supabaseSync.enabled()) {
-      // Supabase не настроен — это не production-запись, и говорим об этом прямо
       return {
-        ok: true,
-        localOnly: true,
-        message: 'Запись сохранена только в этом браузере: сервер БД не настроен'
+        ok: false,
+        message: 'Онлайн-запись сейчас недоступна: сервер данных не настроен. Свяжитесь со специалистом по контактам на его странице.'
       };
     }
     try {
@@ -1176,38 +1161,8 @@ export class BookingViewModel extends BaseViewModel {
     }
   }
 
-  /**
-   * Демо-оплата / «чек» на публичной странице.
-   *
-   * Канон #21 п.4: либо реальный server-ack, либо честный local-only UX.
-   * Эквайринга нет — поэтому при живом Supabase метод отказывается подтверждать
-   * запись и не шлёт «Оплата прошла (сайт)» в Telegram. Poka-Yoke: даже если
-   * в разметке останется data-pay-demo, ложного успеха не будет.
-   */
-  completePayment(method = 'card_demo') {
-    if (!this.createdSessionId) {
-      this.error = 'Нет сессии для оплаты';
-      this.notify();
-      return false;
-    }
-    if (!this.demoPayIsLocalOnly) {
-      this.error = 'Демо-оплата не записывается на сервер. Оплатите по реквизитам психолога — он подтвердит запись в кабинете.';
-      this.notify();
-      return false;
-    }
-    const res = paymentService.paySession(this.createdSessionId, { method });
-    if (!res.ok) {
-      this.error = res.message;
-      this.notify();
-      return false;
-    }
-    reminderService.scheduleForSession(this.createdSessionId);
-
-    this.awaitingPayment = false;
-    this.done = true;
-    this.successText = `${this.nickname || this.name}, демо-оплата сохранена только в этом браузере. ${res.message} Запись: ${formatDay(this.date)} в ${this.selectionSlotText || this.time}.`;
-    this.showToast(res.message);
-    this.notify();
-    return true;
-  }
+  // issue #121 (R14): метода completePayment («Оплатить картой (демо)» /
+  // «Я перевёл(а) / чек») больше нет. На публичной странице не существует
+  // клиентского пути перевести запись в «оплачено»: единственный источник
+  // истины о платеже — кабинет специалиста / серверные события (R12, #119).
 }

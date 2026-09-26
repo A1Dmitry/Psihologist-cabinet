@@ -162,12 +162,10 @@
       </div>
       <p class="text-center text-xs text-slate-400 -mt-5 mb-8">Например: тревога, депрессия, отношения, самооценка, выгорание</p>
       <div id="portal-list" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5"></div>
-      <p class="text-center text-xs text-slate-400 mt-12">
-        Демо: natalia@example.com или ivan@example.com + пароль (задайте при первом входе) ·
-        <button type="button" id="btn-open-reply-demo" class="underline hover:text-indigo-600">ответ на напоминание</button> ·
-        <button onclick="resetPortalData()" class="underline hover:text-rose-500">сбросить данные</button>
-      </p>
-      <footer class="text-center text-sm text-slate-500 mt-6">
+      <!-- issue #121 (R14): демо-строка «email + пароль · ответ на напоминание ·
+           сбросить данные» снята: вход специалиста — только Google (#88),
+           демо-ответ и разрушительный сброс локального сейфа в production UI недопустимы. -->
+      <footer class="text-center text-sm text-slate-500 mt-12">
         Портал профессиональных услуг — онлайн-запись к специалистам и кабинет специалиста. Вход через Google используется только для идентификации (email, имя).
         <a href="%BASE%privacy.html" class="underline hover:text-indigo-600">Политика конфиденциальности</a>
       </footer>
@@ -994,6 +992,6 @@
     </div>
   </div>
 
-  <script type="module" src="%BASE%js/app.js?v=20260926-mobile"></script>
+  <script type="module" src="%BASE%js/app.js?v=20260926-r14"></script>
 </body>
 </html>
