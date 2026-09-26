@@ -114,3 +114,6 @@ export function isSupabaseConfigured() {
  * когда психолог открывает кабинет (outbox-режим).
  */
 export const NOTIFY_WEBHOOK_URL = '';
+
+/** Telegram Mini App authentication Edge Function. The bot token is server-only. */
+export const TELEGRAM_AUTH_URL = `${SUPABASE_URL}/functions/v1/telegram-auth`;

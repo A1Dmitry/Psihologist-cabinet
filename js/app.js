@@ -34,6 +34,7 @@ import { uiConfirm, uiPrompt, copyText } from './views/uiDialogs.js';
 import { bindCabinetMobile, closeMoreSheet, closeAllCabMenus } from './views/cabinetMobile.js';
 import { bookingTriageWizard } from './views/bookingTriageWizard.js';
 import { googleAuthService } from './services/googleAuthService.js';
+import { telegramAuthService } from './services/telegramAuthService.js';
 
 const portalVm = new PortalViewModel();
 const authVm = new AuthViewModel();
@@ -535,7 +536,18 @@ function renderAuth() {
   const title = $('#auth-title');
   const subtitle = $('#auth-subtitle');
   if (title) title.textContent = 'Вход в кабинет';
-  if (subtitle) subtitle.textContent = 'Войдите через Google. Это единственный способ входа специалиста.';
+  if (subtitle) subtitle.textContent = telegramAuthService.isAvailable()
+    ? 'Вы открыли Mini App в Telegram. Войдите через Telegram или Google.'
+    : 'Войдите через Google. Telegram-вход можно включить после привязки аккаунта в профиле кабинета.';
+
+  const telegramBtn = $('#btn-telegram-signin');
+  const telegramHint = $('#auth-telegram-hint');
+  if (telegramBtn) {
+    telegramBtn.classList.toggle('hidden', !telegramAuthService.isAvailable());
+    telegramBtn.disabled = !!authVm.googleBusy;
+    telegramBtn.textContent = authVm.googleBusy ? 'Входим через Telegram…' : 'Войти через Telegram';
+  }
+  telegramHint?.classList.toggle('hidden', !telegramAuthService.isAvailable());
 
   const err = $('#auth-error');
   if (err) {
@@ -581,7 +593,8 @@ function renderAuth() {
 function renderOnboarding() {
   const user = googleAuthService.getCurrentUser() || googleAuthService.getCachedUser();
   const emailEl = $('#onb-email');
-  if (emailEl) emailEl.textContent = user?.email || '';
+  if (emailEl) emailEl.textContent = user?.provider === 'telegram' || String(user?.email || '').endsWith('@telegram.invalid')
+    ? 'Telegram (без email)' : user?.email || '';
 
   const nameEl = $('#onb-name');
   const psy = cabinetVm.psychologist;
@@ -604,7 +617,9 @@ function renderCabinetAccount() {
   if (!wrap) return;
   const user = googleAuthService.getCurrentUser() || googleAuthService.getCachedUser();
   const psy = cabinetVm.psychologist;
-  const email = user?.email || psy?.email || '';
+  const rawEmail = user?.email || psy?.email || '';
+  const email = user?.provider === 'telegram' || String(rawEmail).endsWith('@telegram.invalid')
+    ? 'Telegram (без email)' : rawEmail;
   const name = user?.name || psy?.fullName || '';
   wrap.classList.toggle('hidden', !email && !name);
   const nameEl = $('#cab-account-name');
@@ -1511,7 +1526,13 @@ function renderCabProfile() {
   const ig = (p.socials || []).find(s => s.kind === 'instagram');
   $('#pf-telegram') && ($('#pf-telegram').value = tg?.url || '');
   $('#pf-instagram') && ($('#pf-instagram').value = ig?.url || '');
-  $('#pf-email') && ($('#pf-email').textContent = p.email);
+  $('#pf-email') && ($('#pf-email').textContent = String(p.email || '').endsWith('@telegram.invalid') ? 'Telegram (без email)' : p.email);
+  const tgLinkBtn = $('#btn-link-telegram-auth');
+  const tgAuthStatus = $('#pf-telegram-auth-status');
+  tgLinkBtn?.classList.toggle('hidden', !telegramAuthService.isAvailable());
+  if (tgAuthStatus) tgAuthStatus.textContent = telegramAuthService.isAvailable()
+    ? 'Подтвердите привязку текущего Telegram-аккаунта. Это позволит входить без Google в следующих запусках Mini App.'
+    : 'Для безопасной привязки откройте кабинет внутри Telegram Mini App.';
 
   renderPeList('pe-directions', p.directions);
   renderPeList('pe-edu-basic', p.education?.basic);
@@ -2241,7 +2262,7 @@ function bindEvents() {
     renderPortal();
   });
 
-  // ——— Единственный вход специалиста: Google (Supabase Auth OAuth + PKCE) ———
+  // ——— Веб-вход специалиста: Google (Supabase Auth OAuth + PKCE) ———
   $('#btn-google-signin')?.addEventListener('click', async () => {
     if (authVm.googleBusy) return;
     authVm.googleBusy = true;
@@ -2259,6 +2280,55 @@ function bindEvents() {
     }
   });
 
+  // Telegram initData проверяет Edge Function; Supabase-сессия выдаётся только
+  // для Telegram ID, заранее привязанного к этому же владельцу кабинета.
+  $('#btn-telegram-signin')?.addEventListener('click', async () => {
+    if (authVm.googleBusy) return;
+    authVm.googleBusy = true;
+    authVm.setGoogleError('', '');
+    renderAuth();
+    try {
+      let login = await telegramAuthService.signIn();
+      if (login.needsSignup) {
+        const create = await uiConfirm({
+          title: 'Создать кабинет через Telegram?',
+          message: 'Этот Telegram ещё не привязан. Если у вас уже есть кабинет, отмените и войдите через Google прямо здесь — Telegram привяжется автоматически. Продолжение создаст новый кабинет.',
+          confirmLabel: 'Создать кабинет'
+        });
+        if (!create) {
+          authVm.googleBusy = false;
+          renderAuth();
+          return;
+        }
+        login = await telegramAuthService.signIn({ createIfMissing: true });
+      }
+      if (login.needsSignup || !login.session?.access_token) throw new Error('Не удалось создать сессию Telegram. Закройте и заново откройте Mini App.');
+      const target = await finishGoogleLogin('Telegram');
+      authVm.googleBusy = false;
+      navigate(target.name, target.params || {}, { push: true });
+      if (login.created) showToast('Кабинет создан. Заполните профиль специалиста.');
+    } catch (ex) {
+      authVm.setGoogleError(ex?.message || 'Не удалось войти через Telegram.');
+      authVm.googleBusy = false;
+      renderAuth();
+    }
+  });
+
+  $('#btn-link-telegram-auth')?.addEventListener('click', async () => {
+    const button = $('#btn-link-telegram-auth');
+    const status = $('#pf-telegram-auth-status');
+    if (button) button.disabled = true;
+    if (status) status.textContent = 'Проверяем подпись Telegram и привязываем аккаунт…';
+    try {
+      await telegramAuthService.linkCurrentAccount();
+      if (status) status.textContent = 'Telegram привязан. Теперь можно входить в кабинет через Telegram Mini App.';
+      showToast('Telegram привязан для входа');
+    } catch (ex) {
+      if (status) status.textContent = ex?.message || 'Не удалось привязать Telegram.';
+      if (button) button.disabled = false;
+    }
+  });
+
   // ——— Онбординг: заполнение профиля после первого входа через Google ———
   $('#onb-form')?.addEventListener('submit', async e => {
     e.preventDefault();
@@ -2267,13 +2337,17 @@ function bindEvents() {
     authVm.busy = true;
     renderOnboarding();
     try {
-      const res = await googleAuthService.completeProfile({
+      const profile = {
         fullName: $('#onb-name')?.value || '',
         phone: $('#onb-phone')?.value || '',
         specialization: $('#onb-spec')?.value || '',
         city: $('#onb-city')?.value || '',
         about: $('#onb-about')?.value || ''
-      });
+      };
+      const authUser = googleAuthService.getCurrentUser() || googleAuthService.getCachedUser();
+      const res = authUser?.provider === 'telegram'
+        ? await telegramAuthService.completeProfile(profile)
+        : await googleAuthService.completeProfile(profile);
       if (!res.ok) {
         authVm.onboardingError = res.message;
         renderOnboarding();
@@ -2980,8 +3054,10 @@ window.enableDemoData = () => {
  *   onboarding — профиль ещё не заполнен; cabinet — всё готово;
  *   auth — привязка не удалась, причина показана рядом с кнопкой Google.
  */
-async function finishGoogleLogin() {
-  const linked = await googleAuthService.linkOrCreateCabinet();
+async function finishGoogleLogin(via = 'Google') {
+  const linked = via === 'Telegram'
+    ? await telegramAuthService.linkOrCreateCabinet()
+    : await googleAuthService.linkOrCreateCabinet();
   if (!linked.ok) {
     // Сессия GoTrue без кабинета бесполезна и мешает войти другим аккаунтом.
     try { await googleAuthService.signOut(); } catch { /* сеть необязательна */ }
@@ -2993,6 +3069,12 @@ async function finishGoogleLogin() {
     authVm.setGoogleError(loaded.message || linked.head, linked.resolution);
     return { name: 'auth', params: { mode: 'login' } };
   }
+  // Если Google использован только для первой привязки внутри Mini App,
+  // связываем проверенный Telegram ID с текущим owner без отдельного шага.
+  if (telegramAuthService.isAvailable()) {
+    try { await telegramAuthService.linkCurrentAccount(); }
+    catch (e) { console.warn('[Telegram auth] automatic link skipped:', e?.message || e); }
+  }
   if (!linked.profileCompleted) {
     return { name: 'onboarding', params: {} };
   }
@@ -3000,7 +3082,7 @@ async function finishGoogleLogin() {
   catch (e) { console.warn('[boot] pull cabinet after google', e?.message || e); }
   await cabinetVm.refreshClients();
   startTelegramLoops(loaded.psychologist.id);
-  showToast('Вход через Google выполнен');
+  showToast(`Вход через ${via} выполнен`);
   return { name: 'cabinet', params: {} };
 }
 
@@ -3024,6 +3106,7 @@ async function doLogout() {
 function boot() {
   bindEvents();
   (async () => {
+    telegramAuthService.prepare();
     // стартовый маршрут — из hash (Hash History: #/psy/{slug}, #/book/{slug});
     // legacy-ссылки без # нормализуются в hash без перезагрузки
     bookingVm.onAvailability = () => { if (route.name === 'booking') renderBooking(); };
@@ -3075,6 +3158,10 @@ function boot() {
     }
 
     route = routeFromUrl();
+    // Открытие по кнопке Mini App ведёт сразу в кабинет, а не на публичный каталог.
+    if (telegramAuthService.isAvailable() && route.name === 'portal') {
+      route = { name: 'cabinet', params: {} };
+    }
     if (route.name === 'cabinet' && !authService.isAuthenticated()) {
       route = { name: 'auth', params: { mode: 'login' } };
     }

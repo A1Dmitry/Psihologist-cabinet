@@ -35,7 +35,7 @@
 
 ## Канон входа специалиста (решение владельца, 2026-09-25)
 
-**Единственный вход специалиста — Google OAuth через Supabase Auth.** Email/OTP,
+**Веб-вход специалиста — Google OAuth через Supabase Auth.** Email/OTP,
 `auth-code` и email-link для психолога **CANCELLED** (AUDIT CORRECTION владельца
 в #67, 2026-09-25T15:23Z; канон закреплён #88 → CLOSED, реализация PR #89).
 Ссылки на #46/#35/#40 как на «email-auth production queue» — исторические;
@@ -54,6 +54,10 @@
   Production E2E входа не проводился.
 - `key_verifier` — только сейф клиентов, не вход. Отключённый аккаунт не реактивируется входом.
 - Клиентский Google при записи с triage (#41) — другой актор (см. ниже).
+
+### Telegram Mini App — изменение этого рабочего среза
+
+Добавлен вход и саморегистрация из `Specializs_bot` Mini App: сервер проверяет HMAC Telegram initData, безопасно привязывает текущего owner после Google-входа либо по явному подтверждению создаёт новый Telegram-only аккаунт. Репозиторная реализация включает Edge Function, приватную таблицу-миграцию, replay guard и автоматический onboarding; это **не подтверждение production-деплоя**. Для включения нужны owner actions: применить `20260926_telegram_miniapp_auth.sql`, задать `TELEGRAM_BOT_TOKEN` в Edge Function Secrets, задеплоить `telegram-auth` и пройти E2E из Telegram. Подробности и точные шаги — `docs/TELEGRAM-MINIAPP-AUTH.md`.
 
 ## Production — честный статус (LIVE-срез 2026-09-25, без свежей перепроверки)
 

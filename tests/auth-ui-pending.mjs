@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * UI-контракт входа специалиста (issue #88): Google OAuth — единственный путь.
+ * UI-контракт входа специалиста: Google web OAuth и Telegram Mini App auth.
  *
  *   node tests/auth-ui-pending.mjs
  *

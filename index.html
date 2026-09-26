@@ -132,7 +132,7 @@
   <!-- Tailwind CSS — предсобранный файл вместо runtime CDN (cdn.tailwindcss.com
        не для продакшена). Пересборка: см. tailwind.config.js и css/tailwind.src.css;
        полнота набора классов проверяется tools/verify_tailwind.mjs. -->
-  <link rel="stylesheet" href="%BASE%css/tailwind.css?v=20260926-mobile">
+  <link rel="stylesheet" href="%BASE%css/tailwind.css?v=20260926-telegram-auth">
   <meta name="google-site-verification" content="iHgb0gtomBxqJ_Tx8QHGLZoJVMjGUJ2wWXIIPmHuo2w" />
 </head>
 <body class="bg-slate-50 text-slate-800 antialiased min-h-screen">
@@ -168,7 +168,7 @@
         <button onclick="resetPortalData()" class="underline hover:text-rose-500">сбросить данные</button>
       </p>
       <footer class="text-center text-sm text-slate-500 mt-6">
-        Портал профессиональных услуг — онлайн-запись к специалистам и кабинет специалиста. Вход через Google используется только для идентификации (email, имя).
+        Портал профессиональных услуг — онлайн-запись к специалистам и кабинет специалиста. Google и Telegram используются для безопасной идентификации владельца кабинета.
         <a href="%BASE%privacy.html" class="underline hover:text-indigo-600">Политика конфиденциальности</a>
       </footer>
     </main>
@@ -180,13 +180,15 @@
       <div class="w-full max-w-md bg-white rounded-2xl border border-slate-100 shadow-sm p-8">
         <button onclick="navigate('portal')" class="text-sm text-slate-400 hover:text-indigo-600 mb-6">← На портал</button>
         <h1 id="auth-title" class="text-2xl font-bold mb-1">Вход в кабинет</h1>
-        <p id="auth-subtitle" class="text-sm text-slate-500 mb-6">Войдите через Google. Это единственный способ входа специалиста.</p>
+        <p id="auth-subtitle" class="text-sm text-slate-500 mb-6">Войдите через Google или привязанный Telegram в Mini App.</p>
 
         <div id="auth-error" class="hidden mb-4 text-sm text-rose-600 bg-rose-50 px-3 py-2 rounded-lg"></div>
 
-        <!-- Единственный вход специалиста: Supabase Auth OAuth (PKCE).
-             Возврат — origin + base path БЕЗ hash (GitHub Pages + Hash History).
-             Email/OTP/auth-code для психолога сняты (issue #88). -->
+        <!-- Google OAuth остаётся web-входом; Telegram Mini App использует
+             отдельный серверно проверяемый поток. Email/OTP для психолога снят. -->
+        <button id="btn-telegram-signin" type="button" class="hidden w-full mt-3 py-3 px-4 rounded-full bg-sky-500 text-white text-sm font-medium hover:bg-sky-600 disabled:opacity-60 disabled:cursor-not-allowed">Войти через Telegram</button>
+        <p id="auth-telegram-hint" class="hidden mt-2 text-xs text-slate-500">Если Telegram не привязан: можно создать кабинет или войти через Google — существующий кабинет привяжется автоматически.</p>
+
         <button id="btn-google-signin" type="button"
                 class="w-full flex items-center justify-center gap-3 py-3 px-4 rounded-full border border-slate-300 bg-white text-slate-700 text-sm font-medium hover:bg-slate-50 disabled:opacity-60 disabled:cursor-not-allowed">
           <svg class="h-5 w-5 flex-shrink-0" viewBox="0 0 48 48" aria-hidden="true">
@@ -603,6 +605,11 @@
             <h1 class="text-2xl font-bold mb-4">Профиль</h1>
             <div class="bg-white rounded-xl border p-6 max-w-lg space-y-3">
               <p class="text-sm text-slate-500">Email (вход): <span id="pf-email"></span></p>
+              <div class="rounded-xl border border-sky-100 bg-sky-50 p-4 space-y-2">
+                <div class="font-medium text-sm">Вход через Telegram</div>
+                <p id="pf-telegram-auth-status" class="text-xs text-slate-600">Для безопасной привязки откройте кабинет внутри Telegram Mini App.</p>
+                <button id="btn-link-telegram-auth" type="button" class="hidden px-4 py-2 rounded-full bg-sky-500 text-white text-sm">Привязать текущий Telegram</button>
+              </div>
               <div><label class="text-sm font-medium">ФИО</label><input id="pf-name" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
               <div><label class="text-sm font-medium">Телефон</label><input id="pf-phone" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
               <div><label class="text-sm font-medium">Специализация</label><input id="pf-spec" class="w-full mt-1 px-3 py-2 rounded-xl border"></div>
@@ -994,6 +1001,8 @@
     </div>
   </div>
 
-  <script type="module" src="%BASE%js/app.js?v=20260926-mobile"></script>
+  <!-- Telegram Mini App bridge: initData используется только сервером для проверки подписи. -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script type="module" src="%BASE%js/app.js?v=20260926-telegram-auth"></script>
 </body>
 </html>
