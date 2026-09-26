@@ -3,8 +3,9 @@
   "issue": 50,
   "executor": "EXEC--sg3Nf8dnc",
   "branch": "arena/01a0dcec-psihologist-cabinet",
-  "state": "active",
+  "state": "released",
   "taken_at": "2026-09-26T09:35:02.511Z",
   "expires_at": "2026-09-26T11:05:02.511Z",
-  "ttl_minutes": 90
+  "ttl_minutes": 90,
+  "released_at": "2026-09-26T09:44:00.796Z"
 }
