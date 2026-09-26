@@ -105,7 +105,7 @@ const must = [
   ['реквизиты: р/с', 'BY67ALFA30132A03540010270000'],
   ['реквизиты: назначение', 'Назначение платежа'],
   ['адрес практики', 'ул. Свердлова, 16'],
-  ['карта: адрес в data-map-query', 'data-map-query="Гродно, г. Гродно, ул. Свердлова, 16"'],
+  ['карта: адрес в data-map-query', 'data-map-query="г. Гродно, ул. Свердлова, 16"'],
   ['карта: заглушка data-map-box', 'data-map-box'],
   ['карта: Яндекс по умолчанию (кнопка)', 'data-map-load="yandex"'],
   ['карта: Google — альтернатива (кнопка)', 'data-map-load="google"'],
@@ -130,25 +130,38 @@ contains.push(['карта: embed-ссылка НЕ в исходном HTML', !
 
 // поведение: тап по кнопке подгружает iframe (Яндекс по умолчанию, Google — фолбэк)
 let mapBoxHtml = '';
-const mapBoxStub = {
+let mapFrameHtml = '';
+const mapFrameStub = {
+  classList: { remove: () => {} },
+  set innerHTML(v) { mapFrameHtml = String(v); }
+};
+const mapBtnObjects = {
+  yandex: { dataset: { mapLoad: 'yandex' }, className: '' },
+  google: { dataset: { mapLoad: 'google' }, className: '' }
+};
+const richMapBoxStub = {
   dataset: { mapQuery: 'Гродно, г. Гродно, ул. Свердлова, 16' },
-  set innerHTML(v) { mapBoxHtml = String(v); }
+  querySelector: sel => (sel === '[data-map-frame]' ? mapFrameStub : null),
+  querySelectorAll: sel => (sel === 'button[data-map-load]' ? [mapBtnObjects.yandex, mapBtnObjects.google] : [])
 };
 const mapBtnStub = provider => {
-  const btn = {
-    dataset: { mapLoad: provider },
-    closest: sel => (sel === 'button[data-map-load]' ? btn : sel === '[data-map-box]' ? mapBoxStub : null)
-  };
+  const btn = mapBtnObjects[provider];
+  btn.closest = sel => (sel === 'button[data-map-load]' ? btn : sel === '[data-map-box]' ? richMapBoxStub : null);
   return btn;
 };
 const mapEv = provider => ({ target: { closest: sel => sel === 'button[data-map-load]' ? mapBtnStub(provider) : null } });
+
 for (const fn of listeners['click'] || []) fn(mapEv('yandex'));
-contains.push(['карта: тап → iframe подгружен', mapBoxHtml.includes('<iframe')]);
-contains.push(['карта: тап → Яндекс-embed по умолчанию', mapBoxHtml.includes('https://yandex.ru/map-widget/v1/')]);
-contains.push(['карта: адрес в запросе embed', mapBoxHtml.includes(encodeURIComponent('Гродно'))]);
-mapBoxHtml = '';
+contains.push(['карта: тап → iframe подгружен в frame', mapFrameHtml.includes('<iframe')]);
+contains.push(['карта: тап → Яндекс-embed по умолчанию', mapFrameHtml.includes('https://yandex.ru/map-widget/v1/')]);
+contains.push(['карта: адрес в запросе embed', mapFrameHtml.includes(encodeURIComponent('Гродно'))]);
+contains.push(['карта: кнопка Яндекс стала активной', mapBtnObjects.yandex.className.includes('bg-slate-900')]);
+
+mapFrameHtml = '';
 for (const fn of listeners['click'] || []) fn(mapEv('google'));
-contains.push(['карта: Google-фолбэк по явной кнопке', mapBoxHtml.includes('maps.google.com') && mapBoxHtml.includes('output=embed')]);
+contains.push(['карта: Google-фолбэк по явной кнопке', mapFrameHtml.includes('maps.google.com') && mapFrameHtml.includes('output=embed')]);
+contains.push(['карта: переключение → кнопка Google стала активной', mapBtnObjects.google.className.includes('bg-slate-900')]);
+contains.push(['карта: переключение → кнопка Яндекс стала неактивной', mapBtnObjects.yandex.className.includes('border-slate-300')]);
 
 let failed = 0;
 for (const [n, okk] of contains) { console.log((okk ? 'PASS' : 'FAIL') + '  ' + n); if (!okk) failed++; }

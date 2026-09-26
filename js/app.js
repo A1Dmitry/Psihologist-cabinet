@@ -1532,23 +1532,34 @@ function renderProfile() {
   // недоступен и «подвешивает» страницу). По умолчанию — лёгкая заглушка
   // (адрес + кнопка), iframe (Яндекс по умолчанию, Google — альтернативой)
   // подгружается только по тапу — см. bindEvents() [data-map-load].
-  const mapQuery = [p.city, p.address].filter(Boolean).join(', ');
+  const rawAddr = (p.address || '').trim();
+  const city = (p.city || '').trim();
+  let mapQuery = rawAddr;
+  if (!mapQuery) {
+    mapQuery = city;
+  } else if (city && !rawAddr.toLowerCase().includes(city.toLowerCase())) {
+    mapQuery = `${city}, ${rawAddr}`;
+  }
+
   const addressHtml = (p.address || p.city) ? `
       <h3 class="font-semibold text-slate-900 mt-6">Адрес практики и проезд</h3>
-      <p class="mt-2 text-sm text-slate-700">${esc([p.address, p.city].filter(Boolean).join(', '))}</p>
+      <p class="mt-2 text-sm text-slate-700">${esc(rawAddr || city)}</p>
       ${p.address ? `
-      <div class="mt-3 rounded-xl overflow-hidden border" data-map-box data-map-query="${esc(mapQuery)}">
-        <div class="p-4 bg-slate-50 flex flex-col sm:flex-row sm:items-center gap-3">
-          <div class="text-sm text-slate-700 flex-1">📍 ${esc(p.address)}${p.city ? `, ${esc(p.city)}` : ''}</div>
-          <div class="flex flex-wrap gap-2 shrink-0">
-            <button type="button" data-map-load="yandex" class="px-4 py-2 rounded-full bg-slate-900 text-white text-sm font-medium">🗺️ Показать карту</button>
-            <button type="button" data-map-load="google" class="px-4 py-2 rounded-full border border-slate-300 bg-white text-slate-700 text-sm font-medium">Google</button>
+      <div class="mt-3 rounded-xl overflow-hidden border bg-slate-50" data-map-box data-map-query="${esc(mapQuery)}">
+        <div class="p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200">
+          <div class="text-sm font-medium text-slate-800 flex items-center gap-1.5">
+            <span>📍</span> ${esc(p.address)}${p.city && !p.address.toLowerCase().includes(p.city.toLowerCase()) ? `, ${esc(p.city)}` : ''}
+          </div>
+          <div class="flex flex-wrap items-center gap-2 shrink-0">
+            <button type="button" data-map-load="yandex" class="min-h-[44px] px-4 py-2 rounded-full bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors">🗺️ Показать карту</button>
+            <button type="button" data-map-load="google" class="min-h-[44px] px-4 py-2 rounded-full border border-slate-300 bg-white text-slate-700 text-sm font-medium hover:bg-slate-100 transition-colors">Google</button>
           </div>
         </div>
+        <div data-map-frame class="hidden w-full bg-slate-100"></div>
       </div>
       <div class="mt-2 flex flex-wrap gap-2">
-        <a href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(mapQuery)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium">🚗 Маршрут (Google Maps)</a>
-        <a href="https://yandex.ru/maps/?text=${encodeURIComponent(mapQuery)}" target="_blank" rel="noopener" class="px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium">🚕 Маршрут (Яндекс)</a>
+        <a href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(mapQuery)}" data-route-link target="_blank" rel="noopener noreferrer" class="min-h-[44px] inline-flex items-center px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50 transition-colors">🚗 Маршрут (Google Maps)</a>
+        <a href="https://yandex.ru/maps/?rtext=~${encodeURIComponent(mapQuery)}" data-route-link target="_blank" rel="noopener noreferrer" class="min-h-[44px] inline-flex items-center px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50 transition-colors">🚕 Маршрут (Яндекс)</a>
       </div>` : ''}` : '';
 
   // пометка первоисточника (фото/данные — с официального сайта специалиста, через БД портала)
@@ -2305,18 +2316,52 @@ function bindEvents() {
     if (add) addPeRow(add.dataset.peAdd);
   });
 
-  // —— Схема проезда: iframe подгружается только по тапу (MX-07, issue #66) ——
-  // Яндекс — по умолчанию (целевой рынок), Google — явная альтернатива.
+  // —— Схема проезда: iframe подгружается по тапу (MX-07, issue #66) ——
+  // Яндекс — по умолчанию (целевой рынок), Google — альтернатива.
+  // Сохраняется возможность переключения между картами и адресная плашка.
   document.addEventListener('click', e => {
     const btn = e.target.closest('button[data-map-load]');
     if (!btn) return;
     const box = btn.closest('[data-map-box]');
     if (!box) return;
-    const q = box.dataset.mapQuery || '';
-    const src = btn.dataset.mapLoad === 'google'
+    const q = (box.dataset && box.dataset.mapQuery) || '';
+    const provider = (btn.dataset && btn.dataset.mapLoad) || 'yandex';
+    const src = provider === 'google'
       ? `https://maps.google.com/maps?q=${encodeURIComponent(q)}&z=15&output=embed`
       : `https://yandex.ru/map-widget/v1/?text=${encodeURIComponent(q)}&z=15`;
-    box.innerHTML = `<iframe src="${esc(src)}" width="100%" height="260" style="border:0" loading="lazy" title="Схема проезда" referrerpolicy="no-referrer-when-downgrade"></iframe>`;
+
+    // Переключение подсветки кнопок
+    const allBtns = box.querySelectorAll ? box.querySelectorAll('button[data-map-load]') : [];
+    allBtns.forEach(b => {
+      const isAct = b === btn;
+      if (isAct) {
+        b.className = 'min-h-[44px] px-4 py-2 rounded-full bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors';
+      } else {
+        b.className = 'min-h-[44px] px-4 py-2 rounded-full border border-slate-300 bg-white text-slate-700 text-sm font-medium hover:bg-slate-100 transition-colors';
+      }
+    });
+
+    const iframeHtml = `<iframe src="${esc(src)}" width="100%" height="260" style="border:0" loading="lazy" title="Схема проезда (${provider === 'google' ? 'Google Maps' : 'Яндекс.Карты'})" referrerpolicy="no-referrer-when-downgrade"></iframe>`;
+
+    const frame = box.querySelector ? box.querySelector('[data-map-frame]') : null;
+    if (frame) {
+      frame.innerHTML = iframeHtml;
+      if (frame.classList) frame.classList.remove('hidden');
+    } else {
+      box.innerHTML = iframeHtml;
+    }
+  });
+
+  // Открытие внешних ссылок на маршруты (гарантирует открытие из iframe песочниц)
+  document.addEventListener('click', e => {
+    const routeA = e.target.closest('a[data-route-link]');
+    if (routeA && routeA.href) {
+      try {
+        window.open(routeA.href, '_blank', 'noopener,noreferrer');
+      } catch {
+        // fallback to default browser navigation
+      }
+    }
   });
 
   // ——— Занятость: блокировки + Google Calendar ———
