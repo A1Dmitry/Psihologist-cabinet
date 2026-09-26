@@ -1746,7 +1746,7 @@ function renderProfile() {
         </a>`).join('')}
       </div>` : ''}
 
-      ${eduBasic.length ? `<h3 class="font-semibold text-slate-900 mt-6">Психологическое образование</h3>${eduList(eduBasic)}` : ''}
+      ${eduBasic.length ? `<h3 class="font-semibold text-slate-900 mt-6">Образование</h3>${eduList(eduBasic)}` : ''}
       ${eduExtra.length ? `<h3 class="font-semibold text-slate-900 mt-6">Дополнительное образование</h3>${eduList(eduExtra)}` : ''}
 
       ${expHtml ? `<h3 class="font-semibold text-slate-900 mt-6">Опыт</h3>${expHtml}` : ''}
