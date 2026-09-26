@@ -1,11 +1,11 @@
 # Recovery orchestration — dependency ledger
 
-> **АУДИТОР: САМ** — repo-level synchronization audit, 2026-09-26 UTC (issue #50,
-> `EXEC-_k1zAnZrvi`). Это маршрут выполнения, а не новый источник требований
+> **АУДИТОР: САМ** — repo-level synchronization audit, 2026-09-26 UTC (issue #63,
+> `EXEC-ZLCS0Evg7b`; предыдущий цикл — issue #50, `EXEC-_k1zAnZrvi`). Это маршрут выполнения, а не новый источник требований
 > и не production-сертификация. Канонические критерии находятся в связанных Issues;
 > актуальное состояние — `docs/CURRENT-STATE.md`.
 
-**Current main:** `9171cc1090564346b7208b4a7e5dfe7b906e9394` (merge PR #98, 2026-09-26T12:12Z)
+**Current main:** `8c963113e8e49a754b8591dab1d32ed2b4fc5008` (merge PR #101 — #63 mobile cabinet, 2026-09-26T13:48:02Z)
 
 **Исторические baseline:** `03c6fa5`, `87e3951`, `4d490d2`, `2d2897b`, `b1dbf1a`, `b0313e8`, `a8953d1`, `a467553`
 относятся к предыдущим циклам (см. `docs/CURRENT-STATE.md`).
@@ -13,13 +13,13 @@
 | Очередь | Canonical issue | Условие перехода | Текущее состояние |
 |---|---|---|---|
 | P0 | #67 | TASK 1: production re-check без баннера + live-стек; TASK 2–5: UPDATE услуг до public booking, «Настройки», error contract, сейф UX; Challenger + Main Re-Audit по каждому TASK | OPEN / TASK 1 repo-фикс merged (PR #77/#85); TASK 2–5 не начаты |
-| P0 | #63 | Bottom tab bar + все 15 разделов со смартфона + карточные действия; `verify_pages.py` + `npm run verify`; Challenger + Main Re-Audit | OPEN / не начат |
-| P1 | #64 | Sheets вместо prompt/confirm, sticky CTA, safe-area, `submitting`-guard; двойной submit — негативный тест; Challenger + Main Re-Audit | OPEN / **реализовано в main** (PR #97, merge `a467553`; остаток: Challenger + устройство владельца) |
+| P0 | #63 | Bottom tab bar + все 15 разделов со смартфона + карточные действия; `verify_pages.py` + `npm run verify`; Challenger + Main Re-Audit | OPEN / **реализовано в main** (PR #101, merge `8c96311`; Main Re-Audit PASS — `docs/MAIN-AUDIT-63.md`; остаток: устройство владельца → закрытие) |
+| P1 | #64 | Sheets вместо prompt/confirm, sticky CTA, safe-area, `submitting`-guard; двойной submit — негативный тест; Challenger + Main Re-Audit | OPEN / **реализовано в main** (PR #97, merge `a467553`; — **CLOSED владельцем** 2026-09-26T12:55Z |
 | P1 | #35 | `telegram-notify` задеплоен; endpoint smoke не-404; raw live evidence (**только** telegram-notify — коррекция владельца 2026-09-25; LEAVE OPEN до не-404) | OPEN / деплой не подтверждён; блокер — секреты владельца |
 | P1 | #40 | Google provider включён (Client ID/Secret, Site URL/Redirects), миграция применена, реальный Google-вход E2E | OPEN / repo-канон закрыт (#88); production — OWNER ACTION REQUIRED |
 | P1 | #41 | Production E2E настоящего Google/Supabase + независимый Challenger (local mocks не закрывают) | OPEN / repo-часть merged (PR #62) |
-| P2 | #66 | DoD выполнен в main (PR #83) → закрытие по evidence | OPEN / к закрытию |
-| P2 | #69 | Реализован + Main Re-Audit (PR #70/#71) → закрытие; остаток: CLAIM-маркеры не публикуются (нет `issues:write`) — блокер зафиксирован в `docs/EXECUTOR-CLAIMS.md` §6 | OPEN / к закрытию |
+| P2 | #66 | DoD выполнен в main (PR #83) → закрытие по evidence | **CLOSED владельцем** 2026-09-26T12:55Z |
+| P2 | #69 | Реализован + Main Re-Audit (PR #70/#71) → закрытие; остаток: CLAIM-маркеры не публикуются (нет `issues:write`) — блокер зафиксирован в `docs/EXECUTOR-CLAIMS.md` §6 | **CLOSED владельцем** 2026-09-26T11:51Z |
 | P2 | #50 | Ресинк доков + verification gate #19 + решение Kaizen-кандидата | PR #99 `aff869f` — ресинк к 9171cc1 выполнен, Main Re-Audit → `docs/MAIN-AUDIT-50.md`; ожидает merge + независимый Challenger |
 
 Issues #18, #19, #21, #22, #30, #33, #34, #36, #46 больше не execution queues:
@@ -52,9 +52,9 @@ production DB inspection (SQL-канал владельца: create_booking дл
         ↓
 #67 TASK 2 → TASK 3 → TASK 4 (owner cabinet; TASK 5 — P2)
         ↓
-#63 (bottom tab bar) → #64 (sheets/CTA) — мобильный пакет
+#63 (в main, PR #101; ждёт устройство владельца) → #64 (CLOSED) — мобильный пакет
         ↓
-#41 production E2E + Challenger; закрытие #66/#69 по evidence
+#41 production E2E + Challenger (#66/#69 — CLOSED владельцем 2026-09-26)
         ↓
 BA-очередь #27–#31 (после production-разблокировки)
         ↓
