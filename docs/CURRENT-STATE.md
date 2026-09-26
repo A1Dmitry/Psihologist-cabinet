@@ -3,10 +3,10 @@
 > Единственный current-state source of truth. Исторические отчёты не переписываются и не заменяются этим документом.
 >
 > **АУДИТОР: САМ** для repo-фактов: код, тесты и документы проверены в сессии
-> issue #64 (`npm run verify` на снимке `main @ a467553` — 39 наборов, 1737 проверок,
-> **все зелёные**, включая новый `tests/mobile-ux.mjs`; гейт #92 исправлен в PR #95;
-> детали — `docs/ISSUE-64-REPORT.md`, `docs/MAIN-AUDIT-64.md`; `git`/`gh`-срез
-> трекера 2026-09-26T12:12Z).
+> issue #50 (`npm run verify` на снимке `main @ 9171cc1` — 39 наборов, 1737 проверок,
+> **все зелёные** при наличии БД, включая новый `tests/mobile-ux.mjs`; гейт #92 исправлен в PR #95;
+> детали — `docs/ISSUE-64-REPORT.md`, `docs/MAIN-AUDIT-64.md`, `docs/MAIN-AUDIT-50.md`; `git`/`gh`-срез
+> трекера 2026-09-26T14:25Z; QA-Challenger этой же сессии — `АУДИТОР: САМ`, независимый Challenger ожидается).
 > **АУДИТОР: ВНЕШНИЙ** для production-фактов: последний срез живого проекта
 > `phiavtroybgwyjdhqqkh` снят `Production read-only probe` из runner'а GitHub Actions
 > (`tools/prod-probe/probe.mjs`) **2026-09-25** (05:53Z). Свежего LIVE-среза нет:
@@ -15,15 +15,15 @@
 
 ## Main SHA и активная ветка
 
-- **Актуальный `origin/main` при этой синхронизации:** `a4675537e1e783f6fa79f7bc8068a6599dcc1a87`
-  (merge PR #97 — mobile UX #64, 2026-09-26T12:08Z; deploy GitHub Pages по этому SHA — success).
-  Ветка `arena/01a0dd90-psihologist-cabinet` продолжает его локально.
+- **Актуальный `origin/main` при этой синхронизации:** `9171cc1090564346b7208b4a7e5dfe7b906e9394`
+  (merge PR #98 — docs sync #64 Main Re-Audit, 2026-09-26T12:12Z; deploy GitHub Pages по этому SHA — success).
+  Ветка `arena/01a0ddb8-psihologist-cabinet` продолжает его локально.
 - Исторические baseline: `dcb4093`, `0320c40`, `5d5636d` (PR #44), `03c6fa5` (PR #43),
   `87e3951`, `4d490d2`, `2d2897b`, `b1dbf1a` (PR #47), `ca3b23b` (PR #48), `d28ae94` (PR #52),
   `3d4210d` (PR #53), `3ebce1c` (PR #56), `938e7f6` (PR #58), `b0313e8` (PR #61).
 - Влито в main 2026-09-26 после `a8953d1`: #93/#94 (`ресинк current-state` + Main Re-Audit #50),
   #95 (#92 — `verify_cabinet` без дата-зависимости, PR #95), #96 (#66 — карта/мессенджеры,
-  PR #96), #97 (#64 — мобильные диалоги/CTA + защита от двойной отправки).
+  PR #96), #97 (#64 — мобильные диалоги/CTA + защита от двойной отправки), #98 (Main Re-Audit #64 sync, PR #98).
 - Влито в main 2026-09-25 после `b0313e8`: #62 (`triage + client Google auth`),
   #68 (`BA mobile`), #70/#71 (`claim-протокол` + Main Re-Audit #69), #72 (`RRSI §7`),
   #73/#75 (`.ics` клиенту, #65), #77 (`reload кабинета`, #67/#76), #78 (`первый визит`, #74),
@@ -79,7 +79,7 @@ Root cause (FACT по внешнему каналу): `supabase/schema.sql` пр
 устранено владельцем 2026-09-25; остаток — деплой `telegram-notify` и доступность
 `create_booking` для anon (причина различима только SQL-каналом владельца).
 
-## Repo-level состояние (факты на `a8953d1`)
+## Repo-level состояние (факты на `9171cc1`)
 
 Подтверждено наличием кода и прогоном тестов (`npm run verify`, `tests/*`;
 **внимание:** гейт не полностью зелёный — дата-зависимый набор
@@ -125,7 +125,7 @@ Root cause (FACT по внешнему каналу): `supabase/schema.sql` пр
 | #64 | P1 | Мобильные диалоги/CTA: sheets вместо prompt/confirm, sticky CTA, safe-area, guard двойной отправки — **реализовано в main** (PR #97, merge `a467553`; DoD repo-части выполнен, `npm run verify` 39/39, 1737 проверок; негативные контроли — `docs/MAIN-AUDIT-64.md`). Остаток: независимый Challenger (§6.6) + подтверждение владельцем на устройстве → закрытие |
 | #66 | P2 | Карта проезда (MX-07) — **реализация в main** (PR #83, DoD выполнен: lazy-load, Яндекс по умолчанию, verify_pages зелёный). Остаток: закрытие (комментариев/claim-release в Issue нет; карточка `.claims/issue-66.*` — `active`/STALE) |
 | #69 | P0 PROCESS | Claim-протокол — **реализован в main** (PR #70/#71, Main Re-Audit #69, тесты в гейте). Остаток формальный: CLAIM-комментарии не публикуются (у интеграции нет `issues:write`) → «живая проверка маркера» ограничена карточками ветки; закрытие |
-| #50 | P2 | Этот ресинк (CURRENT-STATE/RECOVERY/ROADMAP + verification gate #19 + решение по Kaizen-кандидату) |
+| #50 | P2 | Этот ресинк (CURRENT-STATE/RECOVERY/ROADMAP + verification gate #19 + решение по Kaizen-кандидату) — **синхронизация к 9171cc1 выполнена в PR #99 (`aff869f`), Main Re-Audit → `docs/MAIN-AUDIT-50.md`; ожидает merge + независимый Challenger (§6.6) → закрытие |
 | #35 | P1 | **Только** telegram-notify (коррекция владельца): деплой + endpoint smoke не-404; блокер — секреты владельца. LEAVE OPEN (комментарий владельца 2026-09-25) |
 | #40 | P1 | Google OAuth: repo-канон закрыт (#88); production-активация (Google provider, миграция, URL) + production E2E — BLOCKED на владельце |
 | #41 | P1 | Client Google identity при triage: repo-часть в main (PR #62, тесты 21/21); по Acceptance — production E2E (настоящий Google/Supabase) + независимый Challenger обязательны, local mocks не закрывают |
@@ -175,13 +175,13 @@ MAIN → AUDIT → DEFECT/REQUIREMENT → ISSUE → PRODUCER → TESTS → CHALL
 `docs/ISSUE-14-CHALLENGER.md`, `docs/ISSUE-15-REPORT.md`, `docs/QUALITY-GATE-REPORT.md`,
 `docs/D1-REPORT.md`, `docs/ISSUE-34-REPORT.md`, `docs/ISSUE-34-TRIAGE.md`,
 `docs/ISSUE-19-REPORT.md`, `docs/AUDIT-2026-09-25.md`, `docs/ISSUE-TRIAGE-2026-09-25.md`,
-`docs/ISSUE-50-REPORT.md`, `docs/ISSUE-64-REPORT.md`, `docs/MAIN-AUDIT-64.md`.
+`docs/ISSUE-50-REPORT.md`, `docs/ISSUE-64-REPORT.md`, `docs/MAIN-AUDIT-64.md`, `docs/MAIN-AUDIT-50.md`.
 
 ---
 
-*Синхронизировано: 2026-09-26 UTC (issue #64 → Main Re-Audit, исполнитель
-`EXEC-zIPWd7Mtyl`; артефакт перехода Main Re-Audit → СТАНДАРТИЗАЦИЯ, RULES §6.7 п. 6);
-repo-state — `origin/main` @ `a467553` (PR #97 merged, deploy Pages success).
+*Синхронизировано: 2026-09-26 UTC (issue #50 — ресинк current-state + QA-Challenger, исполнитель
+`EXEC-_k1zAnZrvi`; артефакт перехода Main Re-Audit → СТАНДАРТИЗАЦИЯ, RULES §6.7 п. 6; QA 14:25Z);
+repo-state — `origin/main` @ `9171cc1` (PR #98 merged, deploy Pages success), голова PR #99 `aff869f`.
 Документ фиксирует repo-state и LIVE-факты прода срезом 2026-09-25 (05:53Z) —
 свежего LIVE-среза в этой сессии нет (egress закрыт). Документ НЕ сертифицирует
 production-готовность: реальный E2E не проводился. Детали — `docs/ISSUE-64-REPORT.md`,
