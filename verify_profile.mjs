@@ -118,6 +118,7 @@ const must = [
   ['Telegram из соцсетей', 't.me'],
   ['Instagram из соцсетей', 'instagram'],
   ['email', 'mikhailouskayanataliya@gmail.com'],
+  ['иконки мессенджеров SVG', '<svg class="w-4 h-4 fill-current shrink-0"'],
   ['кнопка записи', 'Записаться на консультацию'],
   ['источник профиля', 'nataliamikhailouskaya.by'],
   ['SEO-ссылка на запись', '/book/']
