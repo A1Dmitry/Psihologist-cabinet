@@ -20,7 +20,7 @@
 | P1 | #41 | Production E2E настоящего Google/Supabase + независимый Challenger (local mocks не закрывают) | OPEN / repo-часть merged (PR #62) |
 | P2 | #66 | DoD выполнен в main (PR #83) → закрытие по evidence | OPEN / к закрытию |
 | P2 | #69 | Реализован + Main Re-Audit (PR #70/#71) → закрытие; остаток: CLAIM-маркеры не публикуются (нет `issues:write`) — блокер зафиксирован в `docs/EXECUTOR-CLAIMS.md` §6 | OPEN / к закрытию |
-| P2 | #50 | Ресинк доков + verification gate #19 + решение Kaizen-кандидата | этот документ; ресинк выполнен |
+| P2 | #50 | Ресинк доков + verification gate #19 + решение Kaizen-кандидата | PR #99 `aff869f` — ресинк к 9171cc1 выполнен, Main Re-Audit → `docs/MAIN-AUDIT-50.md`; ожидает merge + независимый Challenger |
 
 Issues #18, #19, #21, #22, #30, #33, #34, #36, #46 больше не execution queues:
 #18 закрыта (преемник #46, закрыт 2026-09-25; production-остаток — #35/#40);
@@ -91,6 +91,6 @@ A merge or green CI does not close a production/security gate. If a required P0/
 
 ---
 
-*Синхронизировано: 2026-09-26 UTC (issue #50 — ресинк, исполнитель
-`EXEC-_k1zAnZrvi`); current main @ `9171cc1090564346b7208b4a7e5dfe7b906e9394` (PR #98). Production-строки — по LIVE-срезу
-2026-09-25 (см. `docs/CURRENT-STATE.md`), без свежей перепроверки.*
+*Синхронизировано: 2026-09-26 UTC (issue #50 — ресинк + QA-Challenger 14:25Z, исполнитель
+`EXEC-_k1zAnZrvi`); current main @ `9171cc1090564346b7208b4a7e5dfe7b906e9394` (PR #98), голова PR #99 `aff869f`. Production-строки — по LIVE-срезу
+2026-09-25 (см. `docs/CURRENT-STATE.md`), без свежей перепроверки. Main Re-Audit → `docs/MAIN-AUDIT-50.md`.*

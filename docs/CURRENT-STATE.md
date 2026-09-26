@@ -5,8 +5,8 @@
 > **АУДИТОР: САМ** для repo-фактов: код, тесты и документы проверены в сессии
 > issue #50 (`npm run verify` на снимке `main @ 9171cc1` — 39 наборов, 1737 проверок,
 > **все зелёные** при наличии БД, включая новый `tests/mobile-ux.mjs`; гейт #92 исправлен в PR #95;
-> детали — `docs/ISSUE-64-REPORT.md`, `docs/MAIN-AUDIT-64.md`; `git`/`gh`-срез
-> трекера 2026-09-26T14:09Z).
+> детали — `docs/ISSUE-64-REPORT.md`, `docs/MAIN-AUDIT-64.md`, `docs/MAIN-AUDIT-50.md`; `git`/`gh`-срез
+> трекера 2026-09-26T14:25Z; QA-Challenger этой же сессии — `АУДИТОР: САМ`, независимый Challenger ожидается).
 > **АУДИТОР: ВНЕШНИЙ** для production-фактов: последний срез живого проекта
 > `phiavtroybgwyjdhqqkh` снят `Production read-only probe` из runner'а GitHub Actions
 > (`tools/prod-probe/probe.mjs`) **2026-09-25** (05:53Z). Свежего LIVE-среза нет:
@@ -125,7 +125,7 @@ Root cause (FACT по внешнему каналу): `supabase/schema.sql` пр
 | #64 | P1 | Мобильные диалоги/CTA: sheets вместо prompt/confirm, sticky CTA, safe-area, guard двойной отправки — **реализовано в main** (PR #97, merge `a467553`; DoD repo-части выполнен, `npm run verify` 39/39, 1737 проверок; негативные контроли — `docs/MAIN-AUDIT-64.md`). Остаток: независимый Challenger (§6.6) + подтверждение владельцем на устройстве → закрытие |
 | #66 | P2 | Карта проезда (MX-07) — **реализация в main** (PR #83, DoD выполнен: lazy-load, Яндекс по умолчанию, verify_pages зелёный). Остаток: закрытие (комментариев/claim-release в Issue нет; карточка `.claims/issue-66.*` — `active`/STALE) |
 | #69 | P0 PROCESS | Claim-протокол — **реализован в main** (PR #70/#71, Main Re-Audit #69, тесты в гейте). Остаток формальный: CLAIM-комментарии не публикуются (у интеграции нет `issues:write`) → «живая проверка маркера» ограничена карточками ветки; закрытие |
-| #50 | P2 | Этот ресинк (CURRENT-STATE/RECOVERY/ROADMAP + verification gate #19 + решение по Kaizen-кандидату) |
+| #50 | P2 | Этот ресинк (CURRENT-STATE/RECOVERY/ROADMAP + verification gate #19 + решение по Kaizen-кандидату) — **синхронизация к 9171cc1 выполнена в PR #99 (`aff869f`), Main Re-Audit → `docs/MAIN-AUDIT-50.md`; ожидает merge + независимый Challenger (§6.6) → закрытие |
 | #35 | P1 | **Только** telegram-notify (коррекция владельца): деплой + endpoint smoke не-404; блокер — секреты владельца. LEAVE OPEN (комментарий владельца 2026-09-25) |
 | #40 | P1 | Google OAuth: repo-канон закрыт (#88); production-активация (Google provider, миграция, URL) + production E2E — BLOCKED на владельце |
 | #41 | P1 | Client Google identity при triage: repo-часть в main (PR #62, тесты 21/21); по Acceptance — production E2E (настоящий Google/Supabase) + независимый Challenger обязательны, local mocks не закрывают |
@@ -175,13 +175,13 @@ MAIN → AUDIT → DEFECT/REQUIREMENT → ISSUE → PRODUCER → TESTS → CHALL
 `docs/ISSUE-14-CHALLENGER.md`, `docs/ISSUE-15-REPORT.md`, `docs/QUALITY-GATE-REPORT.md`,
 `docs/D1-REPORT.md`, `docs/ISSUE-34-REPORT.md`, `docs/ISSUE-34-TRIAGE.md`,
 `docs/ISSUE-19-REPORT.md`, `docs/AUDIT-2026-09-25.md`, `docs/ISSUE-TRIAGE-2026-09-25.md`,
-`docs/ISSUE-50-REPORT.md`, `docs/ISSUE-64-REPORT.md`, `docs/MAIN-AUDIT-64.md`.
+`docs/ISSUE-50-REPORT.md`, `docs/ISSUE-64-REPORT.md`, `docs/MAIN-AUDIT-64.md`, `docs/MAIN-AUDIT-50.md`.
 
 ---
 
-*Синхронизировано: 2026-09-26 UTC (issue #50 — ресинк current-state, исполнитель
-`EXEC-_k1zAnZrvi`; артефакт перехода Main Re-Audit → СТАНДАРТИЗАЦИЯ, RULES §6.7 п. 6);
-repo-state — `origin/main` @ `9171cc1` (PR #98 merged, deploy Pages success).
+*Синхронизировано: 2026-09-26 UTC (issue #50 — ресинк current-state + QA-Challenger, исполнитель
+`EXEC-_k1zAnZrvi`; артефакт перехода Main Re-Audit → СТАНДАРТИЗАЦИЯ, RULES §6.7 п. 6; QA 14:25Z);
+repo-state — `origin/main` @ `9171cc1` (PR #98 merged, deploy Pages success), голова PR #99 `aff869f`.
 Документ фиксирует repo-state и LIVE-факты прода срезом 2026-09-25 (05:53Z) —
 свежего LIVE-среза в этой сессии нет (egress закрыт). Документ НЕ сертифицирует
 production-готовность: реальный E2E не проводился. Детали — `docs/ISSUE-64-REPORT.md`,
