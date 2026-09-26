@@ -1528,12 +1528,12 @@ function renderProfile() {
     website: `<svg class="w-4 h-4 fill-current shrink-0" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>`
   };
 
-  const btnClassActive = (color) => `min-h-[44px] inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors shadow-sm ${color}`;
-  const btnClassDisabled = `min-h-[44px] inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed opacity-60`;
+  const btnClassActive = (color) => `w-full h-11 inline-flex items-center justify-center gap-2 px-3 rounded-xl text-sm font-medium transition-colors shadow-sm ${color}`;
+  const btnClassDisabled = `w-full h-11 inline-flex items-center justify-center gap-2 px-3 rounded-xl text-sm font-medium bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed opacity-60`;
 
   const contactBtns = [
     p.phone
-      ? `<a href="tel:+${esc(digits)}" class="${btnClassActive('bg-slate-900 text-white hover:bg-slate-800')}">${icons.phone} ${esc(p.phone)}</a>`
+      ? `<a href="tel:+${esc(digits)}" class="${btnClassActive('bg-slate-900 text-white hover:bg-slate-800')}">${icons.phone} <span class="truncate">${esc(p.phone)}</span></a>`
       : `<span class="${btnClassDisabled}" title="Телефон не указан">${icons.phone} Телефон</span>`,
 
     digits
@@ -1584,16 +1584,16 @@ function renderProfile() {
           <div class="text-sm font-medium text-slate-800 flex items-center gap-1.5">
             <span>📍</span> ${esc(p.address)}${p.city && !p.address.toLowerCase().includes(p.city.toLowerCase()) ? `, ${esc(p.city)}` : ''}
           </div>
-          <div class="flex flex-wrap items-center gap-2 shrink-0">
-            <button type="button" data-map-load="yandex" class="min-h-[44px] px-4 py-2 rounded-full bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors">🗺️ Показать карту</button>
-            <button type="button" data-map-load="google" class="min-h-[44px] px-4 py-2 rounded-full border border-slate-300 bg-white text-slate-700 text-sm font-medium hover:bg-slate-100 transition-colors">Google</button>
+          <div class="flex items-center gap-2 shrink-0">
+            <button type="button" data-map-load="yandex" class="h-10 px-4 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors inline-flex items-center justify-center gap-1.5 min-w-[140px]">🗺️ Показать карту</button>
+            <button type="button" data-map-load="google" class="h-10 px-4 rounded-xl border border-slate-300 bg-white text-slate-700 text-sm font-medium hover:bg-slate-100 transition-colors inline-flex items-center justify-center gap-1.5 min-w-[100px]">Google</button>
           </div>
         </div>
         <div data-map-frame class="hidden w-full bg-slate-100"></div>
       </div>
-      <div class="mt-2 flex flex-wrap gap-2">
-        <a href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(mapQuery)}" data-route-link target="_blank" rel="noopener noreferrer" class="min-h-[44px] inline-flex items-center px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50 transition-colors">🚗 Маршрут (Google Maps)</a>
-        <a href="https://yandex.ru/maps/?rtext=~${encodeURIComponent(mapQuery)}" data-route-link target="_blank" rel="noopener noreferrer" class="min-h-[44px] inline-flex items-center px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50 transition-colors">🚕 Маршрут (Яндекс)</a>
+      <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+        <a href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(mapQuery)}" data-route-link target="_blank" rel="noopener noreferrer" class="h-11 inline-flex items-center justify-center gap-2 px-4 rounded-xl border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 text-sm font-medium transition-colors shadow-sm">🚗 Маршрут (Google Maps)</a>
+        <a href="https://yandex.ru/maps/?rtext=~${encodeURIComponent(mapQuery)}" data-route-link target="_blank" rel="noopener noreferrer" class="h-11 inline-flex items-center justify-center gap-2 px-4 rounded-xl border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 text-sm font-medium transition-colors shadow-sm">🚕 Маршрут (Яндекс)</a>
       </div>` : ''}` : '';
 
   // пометка первоисточника (фото/данные — с официального сайта специалиста, через БД портала)
@@ -1668,7 +1668,7 @@ function renderProfile() {
       ${addressHtml}
 
       ${contactBtns ? `<h3 class="font-semibold text-slate-900 mt-6">Связь и мессенджеры</h3>
-      <div class="mt-2 flex flex-wrap gap-2">${contactBtns}</div>` : ''}
+      <div class="mt-3 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">${contactBtns}</div>` : ''}
     </div>
     ${srcHost ? `<p class="mt-4 text-xs text-slate-400 text-center">Профиль из БД портала · фото и данные — с официального сайта: <a href="${esc(p.sourceUrl)}" target="_blank" rel="noopener" class="underline">${esc(srcHost)}</a></p>` : ''}`;
 
