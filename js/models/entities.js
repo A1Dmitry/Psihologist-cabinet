@@ -425,7 +425,7 @@ export class Payment {
     amount = 0,
     currency = 'BYN',
     kind = 'full', // deposit | full | balance
-    method = 'manual', // manual | card_demo | transfer | receipt
+    method = 'manual', // manual | transfer | receipt
     status = PaymentStatus.UNPAID,
     receiptCode = '',
     externalRef = '',

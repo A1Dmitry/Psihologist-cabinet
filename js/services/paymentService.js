@@ -83,10 +83,11 @@ export class PaymentService {
   }
 
   /**
-   * Симуляция оплаты клиентом (демо-эквайринг / чек)
-   * method: card_demo | transfer | receipt
+   * Регистрация оплаты по сессии (локальная запись Payment + статус сессии).
+   * Вызывается только ручной отметкой специалиста (markPaidByPsychologist);
+   * клиентского пути «оплатить на сайте» нет (issue #121). method: receipt | transfer
    */
-  paySession(sessionId, { method = 'card_demo', receiptCode = '', note = '' } = {}) {
+  paySession(sessionId, { method = 'receipt', receiptCode = '', note = '' } = {}) {
     const session = db.sessions.find(s => s.id === sessionId);
     if (!session) return { ok: false, message: 'Сессия не найдена' };
     if (['cancelled', 'expired', 'done'].includes(session.status)) {
@@ -121,7 +122,7 @@ export class PaymentService {
       method,
       status: kind === 'full' ? PaymentStatus.FULLY_PAID : PaymentStatus.DEPOSIT_PAID,
       receiptCode: code,
-      externalRef: method === 'card_demo' ? `demo_${uid('tx')}` : '',
+      externalRef: '',
       paidAt: new Date().toISOString(),
       note
     });

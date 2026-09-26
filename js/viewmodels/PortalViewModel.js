@@ -19,6 +19,20 @@ export class PortalViewModel extends BaseViewModel {
     super();
     this.query = '';
     this.cityFilter = '';
+    /** Источник каталога: 'loading' | 'server' | 'none' (строго серверный режим). */
+    this.source = 'loading';
+    this.serverError = '';
+  }
+
+  /**
+   * Каталог загружен с сервера и по нему можно выносить окончательные
+   * вердикты («специалист не найден», noindex). Единственный источник истины
+   * для всех экранов (RULES §6.14): раньше предикат `source === 'server' ||
+   * source === 'demo'` был скопирован в четыре места app.js, и состояние
+   * 'demo' (issue #121, R14) приходилось помнить в каждом из них.
+   */
+  get catalogReady() {
+    return this.source === 'server';
   }
 
   get psychologists() {

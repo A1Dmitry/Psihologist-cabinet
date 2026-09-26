@@ -163,43 +163,9 @@ export class ReminderService {
     return created;
   }
 
-  /** «Отправка» due-напоминаний (демо-тик / кнопка в кабинете) */
-  processDue(psychologistId = null) {
-    const now = Date.now();
-    let sent = 0;
-    const outbox = [];
-
-    db.reminders.forEach(r => {
-      if (r.status !== 'scheduled') return;
-      if (psychologistId && r.psychologistId !== psychologistId) return;
-      if (new Date(r.scheduledFor).getTime() > now) return;
-
-      const session = db.sessions.find(s => s.id === r.sessionId);
-      if (!session || ['cancelled', 'expired', 'no_show', 'done'].includes(session.status)) {
-        r.status = 'skipped';
-        return;
-      }
-      // уже ответил клиент
-      if (session.clientResponse === 'confirmed' || session.clientResponse === 'declined') {
-        r.status = 'skipped';
-        return;
-      }
-
-      r.status = 'sent';
-      r.sentAt = new Date().toISOString();
-      sent++;
-      const client = db.clients.find(c => c.id === r.clientId);
-      outbox.push({
-        reminderId: r.id,
-        to: client?.phone || client?.contact || 'клиент',
-        body: r.messageBody,
-        token: r.responseToken
-      });
-    });
-
-    if (sent) db.saveChanges();
-    return { sent, outbox };
-  }
+  // issue #121: processDue() («отправка» due без доставки, outbox для кабинета)
+  // удалён. Единственный путь в статус `sent` — telegramService.sendDueReminders
+  // после ответа Telegram; серверный lifecycle напоминаний — R09 (#116).
 
   /** Клиент подтверждает или отказывается по токену */
   respond(token, response) {

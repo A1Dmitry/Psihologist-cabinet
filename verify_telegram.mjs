@@ -101,7 +101,7 @@ ok('index: поле токена', SRC.html.includes('id="tg-token"'));
 ok('index: «Найти чат»', SRC.html.includes('btn-tg-find-chat'));
 ok('index: 3 переключателя в UI', ['tg-notify-booking','tg-notify-reminders','tg-notify-payments'].every(x => SRC.html.includes(`id="${x}"`)));
 ok('index: «Проверить подключения»', SRC.html.includes('btn-tg-link-clients'));
-ok('index: cache-bust поднят', SRC.html.includes('app.js?v=20260926-mobile'));
+ok('index: cache-bust поднят', SRC.html.includes('app.js?v=20260926-r14'));
 ok('config: NOTIFY_WEBHOOK_URL экспорт', /export const NOTIFY_WEBHOOK_URL = ''/.test(SRC.cfg));
 ok('app: outbox-цикл после входа', /startTelegramLoops\(/.test(SRC.app));
 ok('app: рендер+биндинг вкладки', SRC.app.includes('renderCabTelegram') && SRC.app.includes('bindTelegramTab'));
@@ -109,9 +109,9 @@ ok('app: share-кнопка на карточке', SRC.app.includes('Подел
 ok('app: telegram-блок в карточке клиента', SRC.app.includes('renderClientTelegramBlock'));
 ok('app: приглашение t.me?start=', SRC.app.includes('?start='));
 ok('BVM: уведомление о новой записи через webhook', SRC.bvm.includes("notifyViaWebhook(\n      this.psychologist.id, 'booking'"));
-ok('BVM: демо-оплата НЕ шлёт webhook «оплата прошла» (#21 п.4)',
+ok('BVM: публичная страница НЕ шлёт webhook «оплата прошла» (#21 п.4 → #121: demo pay снят целиком)',
   !SRC.bvm.includes("notifyViaWebhook(this.psychologist.id, 'payment'")
-  && SRC.bvm.includes('demoPayIsLocalOnly'));
+  && !SRC.bvm.includes('completePayment(') && !SRC.bvm.includes('demoPayIsLocalOnly'));
 ok('CVM: saveTelegramSettings', SRC.cvm.includes('saveTelegramSettings'));
 ok('CVM: setClientTelegramChat', SRC.cvm.includes('setClientTelegramChat'));
 ok('CVM: оплата → Telegram', SRC.cvm.includes("sendToPsychologist('payment'"));
