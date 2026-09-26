@@ -392,17 +392,30 @@ console.log('\n11. Заявки из очереди и часовые пояса
     psychologistId: psyId, name: 'Игорь Ковалёв', phone: '+375293334455',
     note: 'просил вторник утром'
   });
-  vm.setWaitingPreference(w.id, { desiredDate: plus(9), desiredTime: '09:00', recurring: true });
-  ok(vm.waitingQueue.all.some(q => q.id === w.id && q.desiredDate === plus(9) && q.kind === 'recurring'),
+  // #92: день заявки детерминирован (вторник через неделю, как в заметке), а не
+  // plus(9): при today = Пн дата plus(9) — среда, а серия клиента «Ср 09:00» из
+  // секции 7 занимает этот слот все 8 недель → created: 0 и ложное красное.
+  const waitDate = timezoneService.addDaysStr(tuesday, 7);
+  vm.setWaitingPreference(w.id, { desiredDate: waitDate, desiredTime: '09:00', recurring: true });
+  ok(vm.waitingQueue.all.some(q => q.id === w.id && q.desiredDate === waitDate && q.kind === 'recurring'),
     'пожелание из очереди видно в кабинете (день/время/постоянное время)');
   ok(db.waitingItems.length === waitingBefore + 1, 'заявка на постоянное время в очереди');
   const before = vm.series.length;
+  const idsBefore = new Set(vm.series.map(sr => sr.id));
   const res = await vm.createSeriesFromWaiting(w.id, { time: '09:00' });
   ok(res.ok === true, 'из заявки создана серия');
   ok(vm.series.length === before + 1, 'серия появилась в кабинете');
   ok(!db.waitingItems.find(x => x.id === w.id), 'заявка ушла из очереди после планирования');
-  const newSeries = vm.series[vm.series.length - 1];
-  ok(db.sessions.some(s => s.seriesId === newSeries.id && s.time === '09:00'), 'встречи серии стоят в расписании');
+  // #92: новую серию идентифицируем по id из результата операции, а не по позиции.
+  // vm.series = sessionSeriesService.list() сортирует по (weekday, time), поэтому
+  // «последний элемент» был новой серией только при weekdayOf(today+9) > 4 —
+  // набор краснел в Сб/Вс/Пн/Вт и ложно зеленел в Ср/Чт/Пт.
+  const newSeries = res.series;
+  const added = vm.series.filter(sr => !idsBefore.has(sr.id));
+  ok(!!newSeries && added.length === 1 && added[0].id === newSeries.id,
+    'в кабинете появилась именно серия из заявки (по id, не по позиции в списке)');
+  ok(db.sessions.some(s => s.seriesId === newSeries?.id && s.time === '09:00'), 'встречи серии стоят в расписании',
+    `created=${res.created}, skipped=${JSON.stringify(res.skipped || [])}`);
 
   const zoned = db.sessions.find(s => s.clientId === client.id);
   zoned.clientTimezone = 'Europe/Berlin';
