@@ -116,6 +116,13 @@ const inMinMedia = rule => {
   return i > 0 && mediaAbove(i).includes('min-width: 768px');
 };
 
+/** z-index правила: работает и для исходника, и для минифицированной сборки.
+ *  `\.cab-menu\s*\{` не матчит `.cab-menu-wrap{`/`.cab-menu-toggle{` — только само правило. */
+function zIndexOf(text, selector) {
+  const m = text.match(new RegExp(selector.replace(/\./g, '\\.') + '\\s*\\{[^}]*z-index:\\s*(\\d+)'));
+  return m ? Number(m[1]) : NaN;
+}
+
 check('MX-02: .cab-tabbar прижат к низу + safe-area снизу',
   /\.cab-tabbar\s*\{[^}]*position:\s*fixed[^}]*bottom:\s*0[^}]*env\(safe-area-inset-bottom/.test(srcCss)
   && css.includes('.cab-tabbar{'));
@@ -187,6 +194,22 @@ check('MX-04: десктоп: обёртки прозрачны (display:content
 check('MX-04: мобильный: панель «…» скрыта, открывается классом .cab-menu-open',
   inMaxMedia('.cab-menu {\n    display: none;') && /\.cab-menu\.cab-menu-open\s*\{\s*display:\s*block/.test(srcCss)
   && css.includes('.cab-menu.cab-menu-open'));
+// Панель «…» открывается ВНИЗ от строки (top: calc(100% + 4px)), поэтому у строк
+// в нижней части экрана она попадает в полосу фиксированного таб-бара
+// (.cab-tabbar: position fixed, z-index 40). Если z-index панели ниже — последние
+// пункты меню (а это деструктивные «Удалить»/«Неявка») накрыты таб-баром и тап
+// уходит в таб-бар: действие недоступно (MX-04). Выше модалок (z-50 в разметке)
+// панель поднимать нельзя: uiConfirm/sheet обязаны перекрывать меню.
+check('MX-04: панель «…» выше фиксированного таб-бара и sticky-CTA (z-index, исходник)',
+  zIndexOf(srcCss, '.cab-menu') > zIndexOf(srcCss, '.cab-tabbar')
+  && zIndexOf(srcCss, '.cab-menu') > zIndexOf(srcCss, '.book-cta'),
+  `src: .cab-menu=${zIndexOf(srcCss, '.cab-menu')}, .cab-tabbar=${zIndexOf(srcCss, '.cab-tabbar')}, .book-cta=${zIndexOf(srcCss, '.book-cta')}`);
+check('MX-04: панель «…» выше таб-бара и в СОБРАННОМ css/tailwind.css (его отдаёт сайт/превью)',
+  zIndexOf(css, '.cab-menu') > zIndexOf(css, '.cab-tabbar'),
+  `css: .cab-menu=${zIndexOf(css, '.cab-menu')}, .cab-tabbar=${zIndexOf(css, '.cab-tabbar')} — сборка не обновлена из css/tailwind.src.css`);
+check('MX-04: панель «…» ниже модалок (z-50) — uiConfirm и sheet перекрывают меню',
+  zIndexOf(srcCss, '.cab-menu') < 50 && zIndexOf(css, '.cab-menu') < 50,
+  `src=${zIndexOf(srcCss, '.cab-menu')}, css=${zIndexOf(css, '.cab-menu')}`);
 check('MX-04: мобильный: primary и пункты меню ≥44px',
   /\.cab-primary\s*\{[^}]*min-height:\s*44px/.test(srcCss) && inMaxMedia('.cab-primary')
   && /\.cab-menu > button\s*\{[^}]*min-height:\s*44px/.test(srcCss)
@@ -362,6 +385,46 @@ check('Поведение: делегированный клик по тоггл
   panelA.classList.contains('cab-menu-open') && !panelB.classList.contains('cab-menu-open'));
 fire('click', orphan); // тап вне
 check('Поведение: тап вне панели закрывает меню', !panelA.classList.contains('cab-menu-open'));
+
+// MX-04 (ре-аудит #63, 2026-09-26): тап по ПУНКТУ меню обязан закрывать панель.
+// Действие пункта может не вызывать перерендер (ссылка «В календарь» открывает
+// новую вкладку) или закончиться отменой диалога (uiConfirm/uiPrompt —
+// «Неявка»/«Удалить»/«+ запись о сессии»): в обоих случаях список не
+// перерисовывается, и открытая панель остаётся поверх строки с доступным
+// деструктивным пунктом. Прежняя ветка «тап вне панели» этот случай не ловила:
+// target ВНУТРИ .cab-menu → закрытия не было.
+const itemLink = makeEl('');      // «В календарь» (<a href target=_blank>) — перерендера нет
+const itemDanger = makeEl('');    // «Неявка»/«Удалить» — подтверждение может быть отменено
+itemDanger.classes.add('cab-menu-danger');
+panelA.appendChild(itemLink);
+panelA.appendChild(itemDanger);
+
+// предусловие каждой проверки выставляется явно и проверяется: toggleCabMenu —
+// переключатель, поэтому «просто вызвать» на уже открытой панели означало бы
+// закрыть её и получить ложное зелёное без единого тапа (урок реестра RRSI:
+// состояние фиксируется до действия, а не предполагается).
+cab.closeAllCabMenus();
+const openedLink = cab.toggleCabMenu('cab-menu-j-s1');
+fire('click', itemLink);
+check('Поведение: тап по пункту меню без перерендера («В календарь») закрывает панель',
+  openedLink === true && !panelA.classList.contains('cab-menu-open')
+  && toggleA.getAttribute('aria-expanded') === 'false',
+  `предусловие open=${openedLink}; после тапа open=${panelA.classList.contains('cab-menu-open')}, aria-expanded=${toggleA.getAttribute('aria-expanded')}`);
+
+cab.closeAllCabMenus();
+const openedDanger = cab.toggleCabMenu('cab-menu-j-s1');
+fire('click', itemDanger);
+check('Поведение: тап по деструктивному пункту закрывает панель (отмена диалога не оставляет «Удалить» на виду)',
+  openedDanger === true && !panelA.classList.contains('cab-menu-open'),
+  `предусловие open=${openedDanger}; после тапа open=${panelA.classList.contains('cab-menu-open')}`);
+
+cab.closeAllCabMenus();
+fire('click', toggleA);
+check('Поведение: тоггл «…» по-прежнему ОТКРЫВАЕТ панель (закрытие не перехватывает собственный тап)',
+  panelA.classList.contains('cab-menu-open') && toggleA.getAttribute('aria-expanded') === 'true',
+  `open=${panelA.classList.contains('cab-menu-open')}`);
+fire('click', orphan); // вернуть состояние «всё закрыто» следующей проверке
+
 cab.toggleCabMenu('cab-menu-j-s1');
 cab.openMoreSheet();
 fireKey('Escape');

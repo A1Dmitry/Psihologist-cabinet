@@ -143,13 +143,20 @@ body {
     color: #475569;
     font-size: 18px;
   }
-  /* Панель «…»: скрыта, пока нет .cab-menu-open. */
+  /* Панель «…»: скрыта, пока нет .cab-menu-open.
+   * z-index: панель открывается ВНИЗ от строки (top: calc(100% + 4px)), поэтому у
+   * строк в нижней части экрана она попадает в полосу фиксированного таб-бара
+   * (.cab-tabbar — position: fixed, z-index 40) и sticky-CTA воронки (.book-cta,
+   * 40). При z-index 30 последние пункты меню — а это деструктивные
+   * «Удалить»/«Неявка» — оказывались накрыты таб-баром: тап уходил в навигацию,
+   * действие было недоступно (MX-04, #63). 45 = выше таб-бара/CTA, но ниже
+   * модалок и sheet (z-50 в разметке): uiConfirm обязан перекрывать меню. */
   .cab-menu {
     display: none;
     position: absolute;
     right: 0;
     top: calc(100% + 4px);
-    z-index: 30;
+    z-index: 45;
     min-width: 12rem;
     padding: 0.25rem;
     background: #fff;
