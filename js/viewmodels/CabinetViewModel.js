@@ -475,14 +475,6 @@ export class CabinetViewModel extends BaseViewModel {
     return true;
   }
 
-  processReminders() {
-    const res = reminderService.processDue(this.psyId);
-    this.showToast(res.sent ? `Отправлено напоминаний: ${res.sent}` : 'Нет напоминаний к отправке');
-    this.lastReminderOutbox = res.outbox || [];
-    this.notify();
-    return res;
-  }
-
   get reminders() {
     return this.psyId ? reminderService.remindersOf(this.psyId) : [];
   }

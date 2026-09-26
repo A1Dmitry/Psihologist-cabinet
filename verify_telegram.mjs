@@ -109,9 +109,9 @@ ok('app: share-кнопка на карточке', SRC.app.includes('Подел
 ok('app: telegram-блок в карточке клиента', SRC.app.includes('renderClientTelegramBlock'));
 ok('app: приглашение t.me?start=', SRC.app.includes('?start='));
 ok('BVM: уведомление о новой записи через webhook', SRC.bvm.includes("notifyViaWebhook(\n      this.psychologist.id, 'booking'"));
-ok('BVM: демо-оплата НЕ шлёт webhook «оплата прошла» (#21 п.4)',
+ok('BVM: публичная страница НЕ шлёт webhook «оплата прошла» (#21 п.4 → #121: demo pay снят целиком)',
   !SRC.bvm.includes("notifyViaWebhook(this.psychologist.id, 'payment'")
-  && SRC.bvm.includes('demoPayIsLocalOnly'));
+  && !SRC.bvm.includes('completePayment(') && !SRC.bvm.includes('demoPayIsLocalOnly'));
 ok('CVM: saveTelegramSettings', SRC.cvm.includes('saveTelegramSettings'));
 ok('CVM: setClientTelegramChat', SRC.cvm.includes('setClientTelegramChat'));
 ok('CVM: оплата → Telegram', SRC.cvm.includes("sendToPsychologist('payment'"));

@@ -12,6 +12,13 @@ import { supabaseSync } from '../services/supabaseSync.js';
 import { googleClientAuthService } from '../services/googleClientAuthService.js';
 
 const MODAL_ID = 'booking-triage-modal';
+/**
+ * issue #121 (R14): без настроенного сервера заявки не отправляются вовсе
+ * (BookingViewModel._persistBooking → отказ), поэтому и опрос прикрепить
+ * нельзя. Раньше здесь был «демо-режим» с кнопкой «Добавить в демо-заявку»,
+ * который выдавал локальную подмену за отправку. Текст — один на все экраны.
+ */
+const SERVER_UNAVAILABLE_NOTICE = 'Отправка заявок сейчас недоступна: сервер данных не настроен. Опрос можно пройти для себя, но прикрепить его к заявке нельзя.';
 let activeWizard = null;
 
 function findControls(note) {
@@ -114,7 +121,7 @@ function renderIntro(wizard) {
   const { content, state } = wizard;
   const deliveryNotice = supabaseSync.enabled()
     ? 'Чтобы прикрепить результат, нужно будет отдельно подтвердить Google email. Только после этого и явного согласия ответы, служебная подсказка и подтверждённые имя/email будут добавлены к заявке выбранному специалисту. До отправки заявки ответы не сохраняются.'
-    : 'Серверная отправка не настроена: в демонстрационном режиме результат останется только в этом браузере и не дойдёт до специалиста. Не вводите реальные сведения.';
+    : SERVER_UNAVAILABLE_NOTICE;
   content.innerHTML = `
     <p class="text-sm leading-relaxed text-slate-600 mb-3">
       Ответьте на восемь необязательных вопросов, чтобы было проще описать ваш запрос.
@@ -248,18 +255,17 @@ function renderGoogleAuthState(wizard) {
   const changeAccount = content.querySelector('[data-google-change-account]');
   const save = content.querySelector('[data-triage-save]');
   const consent = content.querySelector('[data-triage-final-consent]');
-  const demo = !supabaseSync.enabled();
   const configured = googleClientAuthService.isConfigured();
   const accepted = !!consent?.checked;
 
-  if (demo) {
-    if (status) status.textContent = 'Демо-режим: Google не проверяется, реальная заявка не отправляется. Не вводите реальные сведения.';
+  if (!supabaseSync.enabled()) {
+    if (status) status.textContent = SERVER_UNAVAILABLE_NOTICE;
     buttonHost?.classList.add('hidden');
     oneTap?.classList.add('hidden');
     changeAccount?.classList.add('hidden');
     if (save) {
-      save.disabled = !accepted;
-      save.textContent = 'Добавить в демо-заявку';
+      save.disabled = true;
+      save.textContent = 'Отправка недоступна';
     }
     return;
   }
@@ -326,7 +332,7 @@ function renderComplete(wizard) {
   const { content, state } = wizard;
   const saveNotice = supabaseSync.enabled()
     ? 'После отправки заявки выбранный специалист получит краткий результат и Google-подтверждённые имя/email. Результат не ставит диагноз и не назначает формат помощи автоматически.'
-    : 'Сервер не настроен: результат останется только в демонстрационном браузере и не будет отправлен специалисту. Не вводите реальные сведения.';
+    : SERVER_UNAVAILABLE_NOTICE;
   content.innerHTML = `
     <div class="rounded-xl bg-emerald-50 border border-emerald-100 p-4 mb-4">
       <h3 class="font-semibold text-emerald-900 mb-1">Спасибо</h3>
@@ -374,26 +380,30 @@ function renderComplete(wizard) {
   content.querySelector('[data-triage-save]')?.addEventListener('click', async event => {
     const save = event.currentTarget || content.querySelector('[data-triage-save]');
     if (!state.finalConsent) return;
+    // Poka-Yoke (issue #121): даже принудительный клик по disabled-кнопке
+    // не прикрепляет опрос к заявке, которую всё равно нельзя отправить.
+    if (!supabaseSync.enabled()) {
+      renderGoogleAuthState(wizard);
+      return;
+    }
     save.disabled = true;
-    if (supabaseSync.enabled()) {
-      try {
-        const verified = await googleClientAuthService.getVerifiedSession();
-        if (!verified) throw new Error('Сессия Google истекла. Войдите ещё раз.');
-        state.googleSession = verified.session;
-        state.googleUser = verified.user;
-        wizard.vm.clientAuthSession = verified.session;
-        wizard.vm.clientGoogleUser = verified.user;
-      } catch (error) {
-        const status = content.querySelector('[data-triage-auth-status]');
-        if (status) status.textContent = `Не удалось проверить сессию Google. ${error?.message || 'Войдите ещё раз.'}`;
-        state.googleSession = null;
-        state.googleUser = null;
-        wizard.vm.clientAuthSession = null;
-        wizard.vm.clientGoogleUser = null;
-        renderGoogleAuthState(wizard);
-        mountGoogleButton(wizard);
-        return;
-      }
+    try {
+      const verified = await googleClientAuthService.getVerifiedSession();
+      if (!verified) throw new Error('Сессия Google истекла. Войдите ещё раз.');
+      state.googleSession = verified.session;
+      state.googleUser = verified.user;
+      wizard.vm.clientAuthSession = verified.session;
+      wizard.vm.clientGoogleUser = verified.user;
+    } catch (error) {
+      const status = content.querySelector('[data-triage-auth-status]');
+      if (status) status.textContent = `Не удалось проверить сессию Google. ${error?.message || 'Войдите ещё раз.'}`;
+      state.googleSession = null;
+      state.googleUser = null;
+      wizard.vm.clientAuthSession = null;
+      wizard.vm.clientGoogleUser = null;
+      renderGoogleAuthState(wizard);
+      mountGoogleButton(wizard);
+      return;
     }
     wizard.vm.triageAssessment = state.assessment;
     closeWizard();

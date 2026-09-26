@@ -165,5 +165,58 @@ ok('GOOGLE_CLIENT_ID — только публичный client id (не Client 
   truthy(!/secret/i.test(src), 'в выражении GOOGLE_CLIENT_ID упомянут secret');
 });
 
+/* ── D. Персональные платёжные реквизиты не коммитятся ──────────────────── */
+/*
+ * Банковский счёт и регистрационные данные ИП (получатель, юр. адрес, УНП, БИК)
+ * — персональные данные владельца кабинета, а не конфигурация проекта. Они
+ * заполняются специалистом в кабинете и живут в БД; в сид-данных, демо-каталоге,
+ * тестах и документации допустимы только заведомо вымышленные значения.
+ * Poka-Yoke: сюда «возвращались» реальные реквизиты вместе с обновлением seed.
+ */
+const REPO_TEXT_FILES = walk(ROOT, [], /\.(js|mjs|css|html|sql|md|json|py)$/)
+  .filter(p => !/[\\/](\.git|node_modules|\.arena)[\\/]/.test(p));
+
+const isPlaceholder = (s) => /TEST|EXAMPLE|XXXX|ПРИМЕР|ОБРАЗЕЦ/i.test(s);
+
+ok('нет реальных IBAN-счетов в файлах репозитория', () => {
+  const bad = [];
+  for (const f of REPO_TEXT_FILES) {
+    for (const m of read(f).matchAll(/\bBY\d{2}[A-Z]{4}[A-Z0-9]{20}\b/g)) {
+      if (!isPlaceholder(m[0])) bad.push(`${rel(f)} → ${m[0]}`);
+    }
+  }
+  truthy(bad.length === 0, `персональные расчётные счета в репозитории: ${bad.join('; ')}`);
+});
+
+ok('нет реальных БИК/SWIFT банков в файлах репозитория', () => {
+  const bad = [];
+  for (const f of REPO_TEXT_FILES) {
+    for (const m of read(f).matchAll(/\b[A-Z]{4}BY2[A-Z0-9]\b/g)) {
+      if (!isPlaceholder(m[0])) bad.push(`${rel(f)} → ${m[0]}`);
+    }
+  }
+  truthy(bad.length === 0, `БИК/SWIFT в репозитории: ${bad.join('; ')}`);
+});
+
+ok('нет регистрационных УНП в значениях полей', () => {
+  const bad = [];
+  const ALLOWED_UNP = new Set(['', '100000000', '000000000', '123456789']);
+  for (const f of REPO_TEXT_FILES) {
+    for (const m of read(f).matchAll(/["']?unp["']?\s*[:=]\s*["'](\d{6,12})["']/gi)) {
+      if (!ALLOWED_UNP.has(m[1])) bad.push(`${rel(f)} → unp=${m[1]}`);
+    }
+  }
+  truthy(bad.length === 0, `регистрационные УНП в репозитории: ${bad.join('; ')} (допустимы только вымышленные)`);
+});
+
+ok('сид не содержит заполненных персональных реквизитов', () => {
+  const seed = read(join(ROOT, 'supabase/seed.sql'));
+  const block = /payment_requisites[\s\S]{0,4000}?/.test(seed);
+  truthy(block, 'в seed.sql нет колонки payment_requisites — тест устарел');
+  truthy(!/"recipient"\s*:\s*"[^"]+"/.test(seed), 'в seed.sql заполнен получатель платежа (персональные данные)');
+  truthy(!/"legalAddress"\s*:\s*"[^"]+"/.test(seed), 'в seed.sql заполнен юр. адрес (персональные данные)');
+  truthy(!/"account"\s*:\s*"[^"]+"/.test(seed), 'в seed.sql заполнен расчётный счёт (персональные данные)');
+});
+
 console.log(`\n${failed ? `${failed} FAILED` : 'ALL PASS'}: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

@@ -100,7 +100,14 @@ Root cause (FACT по внешнему каналу): `supabase/schema.sql` пр
 - **server-authoritative booking** (`create_booking`), D1 policy engine
   (`js/domain/availability.js` + серверный близнец, parity-матрица, booking E2E);
 - **tenant isolation / anti-spam** (`client_risks`, `booking_attempts`);
-- **demo-pay honesty** (#21 п.4) — local-only UX, `tests/demo-pay-honesty.mjs`;
+- **публичная оплата без клиентского «оплачено»** (#21 п.4 → ужесточено #121):
+  `tests/demo-pay-honesty.mjs` — демо-кнопок нет ни в каком режиме;
+- **production UI без demo (#121, R14)** — в ветке `arena/01a0df81` (`1ffcc6e`, ждёт подтверждения
+  владельца): сняты «email + пароль», «сбросить данные» (`resetToSeed` из UI), «Показать демо-данные»,
+  demo pay, демо-вход `/reply`; без сервера запись честно недоступна (`_persistBooking` → `ok:false`),
+  портал не рисует seed-фикстуру в фазе загрузки; `PortalViewModel.catalogReady` — единый предикат;
+  в кабинете снята симуляция отправки напоминаний (`1f7f654`) — `tests/production-ui-no-demo.mjs`
+  (40, A12 — свип всего продукта на «демо»), отчёт `docs/ISSUE-121-REPORT.md`;
 - **reload-parity кабинета** (#67 TASK 1): single-source snapshot manifest +
   `tests/db-snapshot-parity.mjs`; runtime «Задачи»/заметки/записи переживают reload;
 - **первый визит `/book/{slug}` и `/psy/{slug}`** (#74): мастер переживает загрузку
@@ -132,6 +139,7 @@ Root cause (FACT по внешнему каналу): `supabase/schema.sql` пр
 | #66 | P2 | Карта проезда (MX-07) — **реализация в main** (PR #83, DoD выполнен: lazy-load, Яндекс по умолчанию, verify_pages зелёный). — **CLOSED владельцем** 2026-09-26T12:55Z (комментарий «Task completed») |
 | #69 | P0 PROCESS | Claim-протокол — **реализован в main** (PR #70/#71, Main Re-Audit #69, тесты в гейте). Остаток формальный: CLAIM-комментарии не публикуются (у интеграции нет `issues:write`) → «живая проверка маркера» ограничена карточками ветки; **CLOSED владельцем** 2026-09-26T11:51Z (комментарий «Task completed») |
 | #50 | P2 | Этот ресинк (CURRENT-STATE/RECOVERY/ROADMAP + verification gate #19 + решение по Kaizen-кандидату) — **синхронизация к 9171cc1 выполнена в PR #99 (`aff869f`), Main Re-Audit → `docs/MAIN-AUDIT-50.md`; **CLOSED** 2026-09-26T13:18Z (auto-close merge PR #99) |
+| #121 | P2 (R14) | Production UI без demo-записи/входа email+пароль/сброса — **сделано в ветке** `arena/01a0df81-psihologist-cabinet` (`1ffcc6e` публичная страница + `1f7f654` кабинет по решению владельца «больше никаких демо»: симуляция «Отправить due сейчас»/«Демо-исходящие»/«Симулировать ответ» и `card_demo` сняты). Гейт 41/41 **1855**, смоук 13/13, fail-before-fix 28 FAIL → ALL PASS (40), свип продукта A12 = 0 упоминаний демо. Осталось: merge в `main` (владелец), Challenger/Main Re-Audit — OPEN; CLAIM-маркер и закрытие Issue интеграцией — нет `issues:write`. Границы без демо-масок: клиент в локальном зеркале после отказа сервера — R01/R02; серверный lifecycle напоминаний/ответа по ссылке — R09 |
 | #35 | P1 | **Только** telegram-notify (коррекция владельца): деплой + endpoint smoke не-404; блокер — секреты владельца. LEAVE OPEN (комментарий владельца 2026-09-25) |
 | #40 | P1 | Google OAuth: repo-канон закрыт (#88); production-активация (Google provider, миграция, URL) + production E2E — BLOCKED на владельце |
 | #41 | P1 | Client Google identity при triage: repo-часть в main (PR #62, тесты 21/21); по Acceptance — production E2E (настоящий Google/Supabase) + независимый Challenger обязательны, local mocks не закрывают |

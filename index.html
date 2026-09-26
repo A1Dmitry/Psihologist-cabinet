@@ -529,10 +529,12 @@
               <div>
                 <h1 class="text-2xl font-bold">Напоминания клиентам</h1>
                 <p class="text-sm text-slate-500 mt-1">Подтверждение или отказ до сессии · по умолчанию за 24 ч (повтор за 12 ч)</p>
+                <p class="text-xs text-slate-500 mt-1">Отправка — через Telegram-бота клиентам, подключившим бота (раздел «Telegram»), пока открыт кабинет. Статус «Отправлено» ставится только после ответа Telegram.</p>
               </div>
-              <button id="btn-process-reminders" class="px-4 py-2 rounded-full bg-indigo-600 text-white text-sm font-medium">Отправить due сейчас</button>
             </div>
-            <div id="reminder-outbox" class="hidden mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm"></div>
+            <!-- issue #121: кнопка «Отправить due сейчас» и блок «Демо-исходящие сообщения» /
+                 «Симулировать ответ клиента» сняты — они помечали напоминания отправленными
+                 без доставки. Реальная отправка: telegramService.sendDueReminders (цикл кабинета). -->
             <div id="reminders-list" class="bg-white rounded-xl border divide-y"></div>
           </div>
           <div id="tab-payments" class="cab-tab hidden">

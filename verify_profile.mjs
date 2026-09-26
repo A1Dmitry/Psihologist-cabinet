@@ -62,7 +62,8 @@ const PSY_ROW = {
   experience_items: [{ organisation: 'Областной клинический центр', details: 'психолог', years: 10, isCurrent: false }],
   socials: [{ kind: 'telegram', url: 'https://t.me/natalia_psy', title: 'telegram' }, { kind: 'instagram', url: 'https://www.instagram.com/natalia_psy/', title: 'instagram' }],
   payment_links: [{ label: 'Оплата консультации', url: 'https://api.bepaid.by/products/prd_x/pay', kind: 'service' }],
-  payment_requisites: { recipient: 'Михайловская Н.Н.', legalAddress: 'г. Гродно', unp: '591945736', account: 'BY67ALFA30132A03540010270000', bankName: 'Альфа-Банк', bik: 'ALFABY2X', purpose: 'Оплата психологических услуг', donationUrl: '' },
+  // Реквизиты — вымышленные (реальные банковские/регистрационные данные в репозитории не хранятся)
+  payment_requisites: { recipient: 'ИП Тестовый Т.Т.', legalAddress: 'г. Тестоград, ул. Примерная, 1', unp: '100000000', account: 'BY00TEST00000000000000000000', bankName: 'Тест-Банк', bik: 'TESTBY2X', purpose: 'Оплата психологических услуг', donationUrl: '' },
   is_active: true, created_at: '2026-01-01T00:00:00Z'
 };
 const SVC_ROWS = [
@@ -101,8 +102,8 @@ const must = [
   ['опыт', 'Опыт'],
   ['кнопки оплаты (label)', 'Оплата консультации'],
   ['кнопки оплаты (bepaid url)', 'bepaid.by'],
-  ['реквизиты: УНП', '591945736'],
-  ['реквизиты: р/с', 'BY67ALFA30132A03540010270000'],
+  ['реквизиты: УНП', '100000000'],
+  ['реквизиты: р/с', 'BY00TEST00000000000000000000'],
   ['реквизиты: назначение', 'Назначение платежа'],
   ['адрес практики', 'ул. Свердлова, 16'],
   ['карта: адрес в data-map-query', 'data-map-query="г. Гродно, ул. Свердлова, 16"'],

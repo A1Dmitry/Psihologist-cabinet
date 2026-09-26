@@ -291,40 +291,11 @@ window.addEventListener('hashchange', () => {
 window.navigate = navigate;
 // debug/тесты: доступ к внутренностям роутера (Hash History)
 window.__router = { routeFromUrl, routeUrl, normalizeLegacyUrl, hashPath, sameRoute };
-window.resetPortalData = async () => {
-  if (!(await uiConfirm({
-    title: 'Сбросить данные портала?',
-    message: 'Локальное зеркало будет пересобрано заново. Данные на сервере не удаляются.',
-    confirmLabel: 'Сбросить'
-  }))) return;
-  db.resetToSeed();
-  authService.logout();
-  navigate('portal');
-
-  // Supabase: подтянуть общие данные (если указан anon key)
-  (async () => {
-    if (!isSupabaseConfigured()) {
-      console.info('[Supabase] anon key не задан — работа из localStorage. Укажите ключ в js/services/supabaseConfig.js');
-      return;
-    }
-    try {
-      const r = await supabaseSync.pullAll();
-      console.info('[Supabase]', r.message || r);
-      if (r.ok) {
-        // обновить каталог
-        if (typeof renderPortal === 'function') renderPortal();
-        showToast?.(r.message || 'Данные с сервера загружены');
-      } else {
-        console.warn('[Supabase]', r.message);
-      }
-    } catch (e) {
-      console.error('[Supabase] sync failed', e);
-      showToast?.('Supabase: ' + (e.message || e), true);
-    }
-  })();
-
-  showToast('Демо-данные восстановлены');
-};
+// issue #121 (R14): глобального `resetPortalData` больше нет. Он вызывал
+// `db.resetToSeed()` с публичной страницы — стирал локальный снапшот целиком,
+// включая зашифрованные карточки клиентов (сейф), заметки и задачи владельца.
+// Разрушительный сброс личных данных в production UI недопустим; seed-каталог
+// остаётся только фикстурой тестов (tools/verify_cabinet.mjs).
 
 // ——— Views ———
 function render() {
@@ -431,7 +402,6 @@ function renderSourceBadge() {
   if (!el) return;
   const map = {
     server: { text: 'Данные: сервер', cls: 'bg-emerald-100 text-emerald-700' },
-    demo: { text: 'ДЕМО-данные', cls: 'bg-amber-100 text-amber-700' },
     none: { text: 'Нет связи с сервером', cls: 'bg-rose-100 text-rose-700' },
     loading: { text: 'Загрузка…', cls: 'bg-slate-100 text-slate-500' }
   };
@@ -457,7 +427,13 @@ function renderPortal() {
     }
   }
 
-  const cities = portalVm.cities;
+  // Строго серверный режим (issue #121, R14): каталог, города и карточки
+  // рисуются только из подтверждённого серверного каталога. Пока он грузится,
+  // локальное зеркало может содержать seed-фикстуру dbContext (пустой кэш
+  // первого визита) — раньше она успевала отрисоваться 19 карточками и уходила
+  // только после ответа сервера (проба в docs/ISSUE-121-REPORT.md).
+  const catalogReady = portalVm.catalogReady;
+  const cities = catalogReady ? portalVm.cities : [];
   const citySel = $('#portal-city');
   if (citySel) {
     citySel.innerHTML = '<option value="">Все города</option>' + cities.map(c =>
@@ -467,12 +443,21 @@ function renderPortal() {
 
   if (!box) return;
 
-  // строго серверный режим: без сервера показываем причину, не локальные данные
-  if (portalVm.source === 'none' || (portalVm.source === 'loading' && !list.length)) {
+  if (!catalogReady && portalVm.source !== 'none') {
+    box.innerHTML = `
+      <div class="bg-white rounded-2xl border p-8 max-w-2xl mx-auto text-center" aria-busy="true">
+        <div class="text-4xl mb-3">⏳</div>
+        <h3 class="font-bold text-lg mb-1">Загружаем каталог с сервера…</h3>
+      </div>`;
+    return;
+  }
+
+  // без сервера показываем причину, не локальные данные
+  if (!catalogReady) {
     box.innerHTML = `
       <div class="bg-white rounded-2xl border p-8 max-w-2xl mx-auto text-center">
-        <div class="text-4xl mb-3">${portalVm.source === 'loading' ? '⏳' : '🔌'}</div>
-        <h3 class="font-bold text-lg mb-1">${portalVm.source === 'loading' ? 'Загружаем каталог с сервера…' : 'Нет связи с сервером данных'}</h3>
+        <div class="text-4xl mb-3">🔌</div>
+        <h3 class="font-bold text-lg mb-1">Нет связи с сервером данных</h3>
         ${portalVm.serverError ? `<p class="text-sm text-rose-600 mb-4">${esc(portalVm.serverError)}</p>` : ''}
         <div class="text-sm text-slate-600 bg-slate-50 rounded-xl p-4 text-left mb-5">
           <div class="font-medium mb-2">Как подключить серверные данные:</div>
@@ -486,7 +471,6 @@ function renderPortal() {
         <div class="flex flex-wrap gap-3 justify-center">
           <button onclick="retryServerData()" class="px-6 py-2.5 rounded-full bg-indigo-600 text-white text-sm font-medium">Повторить</button>
           <button onclick="runServerDiagnostics('portal-diag')" class="px-6 py-2.5 rounded-full border border-indigo-300 text-indigo-700 text-sm font-medium">Проверить сервер</button>
-          <button onclick="enableDemoData()" class="px-6 py-2.5 rounded-full border border-slate-300 text-slate-600 text-sm font-medium">Показать демо-данные</button>
         </div>
         <div id="portal-diag" class="mt-5 text-left"></div>
       </div>`;
@@ -497,12 +481,7 @@ function renderPortal() {
     box.innerHTML = '<div class="col-span-full text-center text-slate-400 py-12">Специалисты не найдены</div>';
     return;
   }
-  const demoStrip = portalVm.source === 'demo'
-    ? `<div class="mb-6 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 max-w-2xl mx-auto">
-         ⚠ Показаны демонстрационные данные (не из БД). <button onclick="retryServerData()" class="underline font-medium">Загрузить серверные</button>
-       </div>`
-    : '';
-  box.innerHTML = demoStrip + list.map(p => {
+  box.innerHTML = list.map(p => {
     const svcs = db.servicesOf(p.id);
     const online = svcs.some(s => s.format === 'online');
     return `
@@ -1431,7 +1410,7 @@ function renderCabReminders() {
       <div>
         <div class="font-medium">${cl?.name || '—'} · ${s ? s.date + ' ' + s.time : ''}</div>
         <div class="text-slate-500 text-xs mt-1">на ${r.scheduledFor ? new Date(r.scheduledFor).toLocaleString('ru-RU') : '—'} · ${stMap[r.status] || r.status}</div>
-        ${r.status === 'sent' ? `<button type="button" data-open-token="${r.responseToken}" class="text-xs text-indigo-600 mt-1">Открыть ответ клиента (демо)</button>` : ''}
+        ${r.status === 'sent' ? `<button type="button" data-open-token="${r.responseToken}" class="text-xs text-indigo-600 mt-1">Записать ответ клиента</button>` : ''}
       </div>
       <div class="text-xs text-slate-400 max-w-xs line-clamp-2">${(r.messageBody || '').slice(0, 120)}…</div>
     </div>`;
@@ -1578,7 +1557,7 @@ function renderProfile() {
     // issue #74: та же каноническая правила, что и в renderBooking — «не найдено»
     // показываем только когда каталог точно загружен. Пока он грузится, первый
     // визит по прямой ссылке /psy/{slug} не должен пугать «Страница не найдена».
-    const catalogReady = portalVm.source === 'server' || portalVm.source === 'demo';
+    const catalogReady = portalVm.catalogReady;
     body.innerHTML = catalogReady
       ? '<div class="text-center py-20 text-slate-400">Страница не найдена. <button class="text-indigo-600" onclick="navigate(\'portal\')">К каталогу</button></div>'
       : (portalVm.source === 'none'
@@ -1588,7 +1567,7 @@ function renderProfile() {
     // Пока каталог ещё грузится, noindex НЕ ставим — иначе валидная страница
     // успела бы попасть под noindex на первой отрисовке.
     try {
-      if (portalVm.source === 'server' || portalVm.source === 'demo') applyNoIndex('profile: специалист не найден');
+      if (catalogReady) applyNoIndex('profile: специалист не найден');
     } catch (e) { console.warn('seo', e); }
     return;
   }
@@ -1819,7 +1798,7 @@ function renderBooking() {
     // мастера только скрывается: раньше «Специалист не найден» ставился через
     // innerHTML прямо в #book-body и безвозвратно стирал #book-step-*,
     // #book-services и т.д. — после загрузки каталога рисовать было некуда.
-    const catalogReady = portalVm.source === 'server' || portalVm.source === 'demo';
+    const catalogReady = portalVm.catalogReady;
     const ph = $('#book-placeholder');
     if (ph) {
       ph.innerHTML = catalogReady
@@ -2084,18 +2063,15 @@ function renderBooking() {
     formBlock?.classList.add('hidden');
     if (payActions) {
       payActions.classList.remove('hidden');
+      // issue #121 (R14): панель оплаты — только серверный резерв. Демо-кнопок
+      // «Оплатить картой (демо)» / «Я перевёл(а)» больше нет ни в каком режиме:
+      // эквайринга на сайте нет, оплату подтверждает специалист в кабинете.
       const checkout = bookingVm.paymentCheckout;
-      const demoButtons = checkout.allowDemoPay ? `
-          <div class="flex flex-col sm:flex-row gap-2">
-            <button type="button" data-pay-demo="card_demo" class="px-5 py-2.5 rounded-full bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">Оплатить картой (демо)</button>
-            <button type="button" data-pay-demo="transfer" class="px-5 py-2.5 rounded-full border border-indigo-300 text-indigo-700 text-sm font-medium">Я перевёл(а) / чек</button>
-          </div>` : '';
       payActions.innerHTML = `
         <div class="rounded-2xl border border-orange-200 bg-orange-50 p-6 space-y-4">
           <h3 class="font-bold text-lg text-orange-900">${checkout.title || 'Ожидание оплаты'}</h3>
           <p class="text-sm text-orange-900/80">${checkout.lead || ''}</p>
           <p class="text-sm">К оплате сейчас: <strong>${checkout.dueLabel || ''}</strong></p>
-          ${demoButtons}
           <p class="text-xs text-slate-500">${checkout.footnote || ''}</p>
         </div>`;
     }
@@ -2784,16 +2760,9 @@ function bindEvents() {
   });
 
   // async — внутри подтверждение отмены сессии через uiConfirm (#64).
+  // issue #121 (R14): обработчика demo pay (`[data-pay-demo]`) больше нет —
+  // на публичной странице нет клиентского пути «отметить оплаченным».
   document.addEventListener('click', async e => {
-    const payBtn = e.target.closest('[data-pay-demo]');
-    if (payBtn) {
-      const method = payBtn.dataset.payDemo;
-      if (bookingVm.completePayment(method)) navigate('success');
-      else {
-        renderBooking();
-        if (bookingVm.error) showToast(bookingVm.error, true);
-      }
-    }
     const markPaid = e.target.closest('[data-mark-paid]');
     if (markPaid) {
       cabinetVm.markSessionPaid(markPaid.dataset.markPaid);
@@ -2815,19 +2784,10 @@ function bindEvents() {
     }
   });
 
-  $('#btn-process-reminders')?.addEventListener('click', () => {
-    const res = cabinetVm.processReminders();
-    const box = $('#reminder-outbox');
-    if (box && res.outbox?.length) {
-      box.classList.remove('hidden');
-      box.innerHTML = '<div class="font-medium mb-2">Демо-исходящие сообщения:</div>' + res.outbox.map(o =>
-        `<div class="mb-3 border-b border-amber-100 pb-2"><div class="text-xs text-slate-500">→ ${o.to}</div><pre class="whitespace-pre-wrap text-xs mt-1">${o.body}</pre>
-         <button type="button" data-open-token="${o.token}" class="text-indigo-600 text-xs mt-1">Симулировать ответ клиента</button></div>`
-      ).join('');
-    }
-    renderCabinet();
-  });
-
+  // issue #121: симуляция «Отправить due сейчас» → «Демо-исходящие сообщения» /
+  // «Симулировать ответ клиента» снята: она помечала напоминания `sent` без
+  // доставки. Реальная отправка — telegramService.sendDueReminders (startTelegramLoops).
+  // Ниже — специалист записывает ответ клиента, полученный по телефону/в мессенджере.
   document.addEventListener('click', e => {
     const tok = e.target.closest('[data-open-token]');
     if (tok) {
@@ -2851,20 +2811,10 @@ function bindEvents() {
     showToast(res.message, !res.ok);
     renderClientReply();
   });
-  $('#btn-open-reply-demo')?.addEventListener('click', () => {
-    const sent = db.reminders.find(r => r.status === 'sent') || db.reminders.find(r => r.status === 'scheduled');
-    if (!sent) {
-      showToast('Сначала создайте сессию и нажмите «Отправить due» в кабинете', true);
-      return;
-    }
-    if (sent.status === 'scheduled') {
-      sent.status = 'sent';
-      sent.sentAt = new Date().toISOString();
-      db.saveChanges();
-    }
-    pendingReplyToken = sent.responseToken;
-    navigate('clientReply', { token: sent.responseToken });
-  });
+  // issue #121 (R14): демо-вход «ответ на напоминание» с публичной страницы
+  // (#btn-open-reply-demo) снят — он переводил напоминание в `sent` без
+  // доставки. Страница /reply?reply={token} по настоящей ссылке сохранена
+  // (жизненный цикл напоминаний — R09, #116).
 
   $('#btn-save-pay-settings')?.addEventListener('click', () => {
     cabinetVm.savePaymentSettings({
@@ -2988,9 +2938,9 @@ function openServiceModal() {
 }
 
 // ——— Boot ———
-// —— Источник данных каталога: 'server' | 'demo' | 'none' (строго серверный режим) ——
-portalVm.source = 'loading';
-portalVm.serverError = '';
+// —— Источник данных каталога: 'loading' | 'server' | 'none' (строго серверный
+// режим; состояние объявлено в PortalViewModel, предикат готовности —
+// portalVm.catalogReady). Состояния 'demo' нет (issue #121, R14). ——
 
 /** Жёстко серверная загрузка каталога. Никаких локальных подмен:
  *  ошибка/пусто → честный экран с причиной (см. renderPortal). */
@@ -3036,14 +2986,10 @@ async function loadServerCatalog() {
 }
 
 window.retryServerData = () => { loadServerCatalog(); };
-/** Демо — только по явному клику, с жёлтой плашкой «ДЕМО» */
-window.enableDemoData = () => {
-  db.resetToSeed();
-  portalVm.source = 'demo';
-  portalVm.serverError = '';
-  showToast('Включены демонстрационные данные (не из БД)');
-  render();  // перерисовать ТЕКУЩИЙ маршрут: глубокие ссылки /psy|/book ждут каталог
-};
+// issue #121 (R14): `enableDemoData` («Показать демо-данные») снят. Он подставлял
+// seed-каталог из dbContext в публичный UI при сетевой ошибке/ненастроенном
+// сервере, и через него была достижима «запись» без сервера. Ненастроенный или
+// недоступный сервер = честная недоступность (экран выше), а не демо.
 
 /**
  * Завершить вход через Google: сессия уже получена (PKCE обменян), дальше —
